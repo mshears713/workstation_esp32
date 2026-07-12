@@ -1,0 +1,4 @@
+dependencies:
+  esp-box-3:
+    version: '*'
+description: BSP Display example
