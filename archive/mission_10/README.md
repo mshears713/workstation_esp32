@@ -10,9 +10,6 @@ instead:
 - `archive/mission_09/` — the Earthside Handshake source as it stood right
   before Mission 10 (Capture the Transmission) was added. (Wi-Fi credentials
   are never archived - see `.gitignore`.)
-- `archive/mission_10/` — the Capture the Transmission source (including
-  `backend/`) as it stood right before Mission 11 (Computer Is Listening)
-  was added.
 
 ## Overview
 
@@ -52,16 +49,6 @@ events.
   below) - this mission does **not** add wake-word, transcription, or
   OpenAI calls, just microphone bring-up and getting the audio off the
   device as a playable WAV.
-- **Mission 11 — Computer Is Listening:** local, offline wake word and
-  command recognition (`main/voice_control.c`) using the official Espressif
-  ESP-SR AFE/WakeNet9/MultiNet7 pipeline. Saying **"computer"** opens a short
-  command window; saying **"capture," "go," "listen," or "okay"** within it
-  triggers the exact same Mission 10 capture-and-upload path the REC button
-  does. Manual REC
-  keeps working unconditionally as a fallback. See "Voice control (Mission
-  11)" below for the wake word, command phrase, and the mic-ownership design
-  that lets one ES7210 codec serve both continuous listening and bounded
-  recording.
 
 ## Inspecting a capture (Mission 10)
 
@@ -97,81 +84,6 @@ module) is now set in both `sdkconfig` and `sdkconfig.bsp.esp-box-3`, so
 `audio_capture_init()`'s PSRAM-first allocation should succeed. This
 requires a fresh build (the PSRAM/flash config changed, not just source),
 so expect the next build to take longer than an incremental one.
-
-## Voice control (Mission 11)
-
-Say **"computer"**, wait for the VOICE row to read `COMMAND WINDOW`, then
-say **"capture"**, **"go"**, **"listen"**, or **"okay"** - all four trigger
-the identical capture-and-upload sequence REC does (they're registered as
-synonyms of the same command, not four different actions) - watch the AUD
-row for the actual capture/upload progress, same as a manual press. If the
-command window closes without a recognized phrase (silence, unrelated
-speech, or the wrong words), VOICE reads `TIMEOUT/UNRECOGNIZED` and returns
-to `LISTENING` on its own - nothing is captured. Manual REC keeps working at
-any time, including while VOICE is in any state.
-
-**Wake word and command:** stock WakeNet9 `wn9_computer_tts` ("computer",
-`CONFIG_SR_WN_WN9_COMPUTER_TTS`) and MultiNet7 general English recognition
-(`CONFIG_SR_MN_EN_MULTINET7_QUANT`). The accepted command phrases
-(`"capture"`, `"go"`, `"listen"`, `"okay"` - see `voice_control.c`'s
-`COMMAND_PHRASES`) are registered at runtime via `esp_mn_commands_add()`,
-all under the same command ID (MultiNet supports multiple phrases per
-command by design), not through menuconfig, so they stay visible in source.
-Getting here took two real, hardware-confirmed dead ends, not guesswork:
-
-1. `"start recording"` - MultiNet7's runtime grapheme-to-phoneme conversion
-   (no precomputed phoneme column supplied) produced too inaccurate a
-   phoneme sequence for a two-word phrase to ever match (printed as
-   `STnRT RcKeRDgl` at boot, never once reached `ESP_MN_STATE_DETECTED`).
-2. `"record"` - a single word, but still never matched even at a very
-   permissive detection threshold (0.1). A diagnostic build that logged
-   MultiNet's live raw-decoded phonemes during the command window (via
-   `multinet->get_results()`, polled every ~500ms while
-   `ESP_MN_STATE_DETECTING`) showed real speech consistently decoding as
-   `RgKeR`/`RgKeRD` - close to, but not a structural match for, the
-   registered `RfKkD`. MultiNet7's FST beam search
-   (`ESP_MN_BEAM_SEARCH_WITH_FST`) requires the decoded path to align with
-   the registered grammar, not just sound similar, so no threshold could
-   have fixed this.
-
-That same diagnostic build registered five unrelated control words
-alongside "record" specifically to tell "this phrase is bad" apart from
-"the whole pipeline is broken." Four of them (`"capture"`, `"go"`,
-`"listen"`, `"okay"` - "yes" never showed up as recognized) produced real
-`ESP_MN_STATE_DETECTED` hits in that session - proving the pipeline itself
-works, and handing over four already-hardware-verified words instead of
-another guess. Rather than pick just one, all four are kept as accepted
-synonyms - useful in practice since Mike didn't reliably remember any
-single command word on its own. `multinet->set_det_threshold(model_data,
-0.1)` stays at the permissive value that session confirmed works; if any
-of these trigger on unrelated speech during quiet-room validation, raise it
-in `voice_control.c`. The on-screen/Black Box display name for the action
-stays the single word `"capture"` regardless of which synonym was actually
-spoken - see `voice_control.c`'s `COMMAND_TEXT_RECORD` and
-`COMMAND_PHRASES`. The wake word is similarly a single config line,
-`sdkconfig.bsp.esp-box-3`'s `CONFIG_SR_WN_WN9_COMPUTER_TTS`.
-
-**Mic ownership:** the ES7210 codec is one physical device, and Mission 10's
-bounded 4s capture and this mission's continuous WakeNet listening cannot
-both read it at once. Exactly one `esp_codec_dev_handle_t` is created (in
-`status_deck_ui.c`, once, via `bsp_audio_codec_microphone_init()`) and
-shared between `audio_capture_init()` and `voice_control_init()`. Normally
-`voice_control.c`'s feed task holds the codec open and reads continuously
-for WakeNet/MultiNet; when any accepted command phrase is recognized, it closes its own
-session, calls the same `audio_capture_start()` the REC button calls, waits
-for that capture-and-upload to return to idle, then reopens the codec and
-resumes listening. See the Mission 11 comment at the top of
-`voice_control.c` for the full handoff sequence.
-
-**Flash size:** Missions 01-10 had `CONFIG_ESPTOOLPY_FLASHSIZE_4MB` set,
-which is too small for the ESP-SR model partition (the WakeNet + MultiNet
-models need ~5MB in flash). This mission corrects it to 16MB - Espressif's
-documented flash size for the ESP32-S3-BOX-3, paired with the 8MB
-Octal-PSRAM module Mission 10 already confirmed. **Verify this against the
-real board** (`esptool.py flash_id`, or the module part number on the
-board) the first time you flash this mission - if this specific unit
-genuinely has less flash, `partitions.csv` needs to shrink to match, not
-the other way around.
 
 ## Run the backend (required before Mission 09's SND button or Mission 10's REC upload will work)
 

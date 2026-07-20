@@ -1,0 +1,17 @@
+# Espressif ESP32 Partition Table
+# Name,     Type, SubType, Offset,   Size, Flags
+# Mission 11: switched from the default single-app-large table to a custom
+# one so a "model" partition can hold the WakeNet9 (computer) + MultiNet7
+# (English) models ESP-SR flashes at build time - see the Model Selection
+# and Loading doc (idf.py flash writes this partition automatically from
+# whatever WakeNet/MultiNet models are enabled in sdkconfig). Sized to match
+# Espressif's own combined wake-word + English-command example
+# (esp-skainet/examples/en_speech_commands_recognition/partitions.csv), which
+# needs the same model mix. nvs keeps its existing 24K size so the Mission 07
+# Black Box's persisted NVS layout (boot_count/last_fault/last_cmd) is
+# unaffected; factory grows to 3200K, well past Mission 10's app image size,
+# to leave headroom for the AFE/WakeNet/MultiNet code this mission links in.
+nvs,      data, nvs,     ,        0x6000,
+phy_init, data, phy,     ,        0x1000,
+factory,  app,  factory, 0x010000, 3200K,
+model,    data, spiffs,  ,        5168K,

@@ -1,3 +1,7 @@
 build/
 sdkconfig.old
 managed_components/
+main/wifi_credentials.h
+**/wifi_credentials.h
+captures/*.wav
+__pycache__/

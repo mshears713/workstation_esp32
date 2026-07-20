@@ -8,6 +8,12 @@ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_CODEC_I2C_BACKWARD_COMPATIBLE=n
 
+# Mission 08: the default 1M single-app partition (partitions_singleapp.csv)
+# is too small once esp_wifi/esp_netif/lwip are linked in (~1.2MB binary).
+# Switches to ESP-IDF's built-in 1500K single-app table - still comfortably
+# inside the 4MB flash above, no custom partitions.csv needed.
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
 ## LVGL9 ##
 CONFIG_LV_CONF_SKIP=y
 CONFIG_LV_BUILD_EXAMPLES=n

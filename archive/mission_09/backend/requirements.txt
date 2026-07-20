@@ -1,0 +1,8 @@
+# Mission 09 Earthside Handshake backend.
+# Versions pinned to what's already installed in the project's global
+# Python environment (see README's "Run the backend" section) - this file
+# documents the dependency, it isn't required for `python backend/main.py`
+# to work on this machine.
+fastapi==0.115.6
+uvicorn==0.34.0
+pydantic==2.11.7

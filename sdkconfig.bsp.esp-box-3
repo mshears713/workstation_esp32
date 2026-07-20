@@ -4,9 +4,38 @@
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_BSP_SELECT_ESP_BOX_3=y
 
-CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_CODEC_I2C_BACKWARD_COMPATIBLE=n
+
+# Mission 10: ESP32-S3-BOX-3's module is the 8MB Octal-PSRAM variant (R8) -
+# audio_capture.c's capture buffer needs this to come from PSRAM rather than
+# internal SRAM. Octal mode is explicit (not left to the Kconfig default)
+# because Quad mode would fail PSRAM init at boot on this chip.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_TYPE_AUTO=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+
+# Mission 11: flash size corrected from 4MB (the Mission 01-10 setting) to
+# 16MB, Espressif's documented flash size for the ESP32-S3-BOX-3 (paired with
+# the 8MB Octal-PSRAM R8 module confirmed above) - the ESP-SR model partition
+# below (5168K) plus a grown factory app cannot fit in 4MB regardless. Verify
+# against the real board once connected (`esptool.py flash_id`, or the module
+# part number on the board) - if this unit genuinely differs, the partition
+# table below needs to shrink to match, not the other way around.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Mission 11 — Computer Is Listening: stock WakeNet9 "computer" wake word and
+# MultiNet7 general English command recognition, both compatible with
+# esp32s3. The command phrase itself ("start recording") is registered at
+# runtime via esp_mn_commands_add() in voice_control.c, not through the
+# menuconfig-based CN/EN_SPEECH_COMMAND_ID* options - keeps the actual
+# command text visible in source rather than buried in sdkconfig.
+CONFIG_SR_WN_WN9_COMPUTER_TTS=y
+CONFIG_SR_MN_EN_MULTINET7_QUANT=y
 
 ## LVGL9 ##
 CONFIG_LV_CONF_SKIP=y

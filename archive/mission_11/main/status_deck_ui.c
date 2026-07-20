@@ -482,12 +482,6 @@ static void handshake_status_changed_cb(handshake_state_t new_state, const char 
     portEXIT_CRITICAL(&handshake_pending_mux);
 }
 
-/* No pending-queue bridge for GO (unlike Handshake/Audio/Voice above) -
- * trigger_graph_run() is a single blocking call made from voice_control.c,
- * which already owns pushing GO's messages into the Black Box via its own
- * voice_pending queue. render_graph_overlay() below reads voice_status_t
- * directly, the same current-truth source render_voice_panel() uses. */
-
 /* ---- Audio Capture Deck: microphone state, bridged from a foreign task -
  * audio_capture.c's callback runs on its own worker task - never the LVGL
  * task. Same bridge shape as Connection Deck/Handshake above, and the same
@@ -576,24 +570,6 @@ static lv_obj_t *hs_label;
 static lv_obj_t *audio_label;
 static lv_obj_t *voice_label;
 static lv_obj_t *log_label;
-
-/* Command Window overlay (Mission 12): four-button recognition-test grid,
- * hidden by default, shown full-screen over the dashboard for the ~10s
- * MultiNet command window - see render_command_overlay() below. */
-static lv_obj_t *cmd_overlay;
-static lv_obj_t *cmd_status_label;
-static lv_obj_t *cmd_buttons[VOICE_COMMAND_COUNT];
-
-/* NOTE recording overlay (Mission 13) - see render_note_overlay() below. */
-static lv_obj_t *note_overlay;
-static lv_obj_t *note_id_label;
-static lv_obj_t *note_dot;
-static lv_obj_t *note_status_label;
-
-/* GO graph-trigger overlay (Mission 13) - see render_graph_overlay() below. */
-static lv_obj_t *go_overlay;
-static lv_obj_t *go_id_label;
-static lv_obj_t *go_status_label;
 
 /* Acceleration-magnitude trend chart. LVGL owns the sample buffer:
  * point_count fixes it at SENSOR_HISTORY_LEN entries and UPDATE_MODE_SHIFT
@@ -891,14 +867,13 @@ static void render_voice_panel(void)
     voice_status_t st;
     voice_control_get_status(&st);
 
-    /* 88: -Werror=format-truncation reasons from the declared sizes of
-     * st.active_request_id (REQUEST_ID_LEN=24) and st.last_result (48), not
-     * their actual short runtime content - same reasoning as
-     * audio_capture.c's hand-sized msg buffers. Worst case is the
-     * GRAPH_ACTIVE branch below: "VOICE: GO " (10) + up to 23 chars of
-     * active_request_id + " - " (3) + up to 47 chars of last_result + nul
-     * = 84. */
-    char buf[88];
+    /* 72, not 48: -Werror=format-truncation reasons from st.last_command's
+     * and st.fail_reason's declared array sizes (VOICE_COMMAND_NAME_LEN/
+     * VOICE_REASON_LEN, both 32), not their actual short runtime content -
+     * same reasoning as audio_capture.c's hand-sized msg buffers. Worst
+     * case is the DEGRADED branch below: "VOICE: DEGRADED " (16) + up to 31
+     * chars of fail_reason + " (REC still works)" (19) + nul = 67. */
+    char buf[72];
     lv_color_t color = lv_palette_main(LV_PALETTE_GREY);
     switch (st.state) {
     case VOICE_STATE_LISTENING:
@@ -909,32 +884,20 @@ static void render_voice_panel(void)
         snprintf(buf, sizeof(buf), "VOICE: WAKE DETECTED #%lu", (unsigned long)st.wake_count);
         color = lv_palette_main(LV_PALETTE_ORANGE);
         break;
-    case VOICE_STATE_COMMAND_WINDOW: {
-        int64_t remain_us = st.command_window_deadline_us - esp_timer_get_time();
-        int remain_s = remain_us > 0 ? (int)((remain_us + 999999) / 1000000) : 0;
-        snprintf(buf, sizeof(buf), "VOICE: COMMAND WINDOW %ds", remain_s);
+    case VOICE_STATE_COMMAND_WINDOW:
+        snprintf(buf, sizeof(buf), "VOICE: COMMAND WINDOW");
         color = lv_palette_main(LV_PALETTE_ORANGE);
         break;
-    }
     case VOICE_STATE_COMMAND_RECOGNIZED:
-        snprintf(buf, sizeof(buf), "VOICE: CMD \"%s\" id=%d #%lu", st.last_command,
-                 (int)st.last_command_id, (unsigned long)st.command_count);
+        snprintf(buf, sizeof(buf), "VOICE: CMD \"%s\" #%lu", st.last_command, (unsigned long)st.command_count);
         color = lv_palette_main(LV_PALETTE_GREEN);
         break;
-    case VOICE_STATE_NOTE_ACTIVE:
-        snprintf(buf, sizeof(buf), "VOICE: NOTE %s", st.active_request_id);
-        color = lv_palette_main(LV_PALETTE_GREEN);
-        break;
-    case VOICE_STATE_GRAPH_ACTIVE:
-        snprintf(buf, sizeof(buf), "VOICE: GO %s - %s", st.active_request_id, st.last_result);
+    case VOICE_STATE_CAPTURING:
+        snprintf(buf, sizeof(buf), "VOICE: CAPTURING (see AUD row)");
         color = lv_palette_main(LV_PALETTE_GREEN);
         break;
     case VOICE_STATE_TIMEOUT:
-        snprintf(buf, sizeof(buf), "VOICE: TIMEOUT");
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    case VOICE_STATE_UNRECOGNIZED:
-        snprintf(buf, sizeof(buf), "VOICE: UNRECOGNIZED");
+        snprintf(buf, sizeof(buf), "VOICE: TIMEOUT/UNRECOGNIZED");
         color = lv_palette_main(LV_PALETTE_ORANGE);
         break;
     case VOICE_STATE_DEGRADED:
@@ -945,197 +908,6 @@ static void render_voice_panel(void)
     }
     lv_label_set_text(voice_label, buf);
     lv_obj_set_style_text_color(voice_label, color, 0);
-}
-
-/* Four Mission 13 command words (Mission 12 tested six; RUN/TEST didn't
- * read reliably and were dropped), in on-screen grid order (2 columns x 2
- * rows: SEND/NOTE, GO/YES). cmd_buttons[i] is built from cmd_defs[i] in
- * this same order, so render_command_overlay() below can find "the button
- * for id X" by scanning this array rather than assuming id-1 == index
- * (keeps the two decoupled in case a future pass reorders the grid). */
-static const struct {
-    voice_command_id_t id;
-    const char *label;
-} cmd_defs[VOICE_COMMAND_COUNT] = {
-    { VOICE_CMD_SEND, "SEND" },
-    { VOICE_CMD_NOTE, "NOTE" },
-    { VOICE_CMD_GO,   "GO"   },
-    { VOICE_CMD_YES,  "YES"  },
-};
-
-#define CMD_BTN_INACTIVE_BG lv_palette_darken(LV_PALETTE_GREY, 2)
-#define CMD_BTN_ACTIVE_BG   lv_palette_main(LV_PALETTE_GREEN)
-
-/* Command Window overlay (Mission 12): shown full-screen the instant a
- * command window opens (or is about to - WAKE_DETECTED is included so
- * there is no one-tick flash of the plain dashboard between the wake word
- * and the button grid appearing), hidden the instant the console is back
- * to plain LISTENING. Countdown/status text and per-button highlight are
- * both derived from voice_control_get_status() current truth, same
- * current-truth-only split every other render_*_panel function here uses -
- * "how did we get here" is the Black Box's job, not this overlay's. Driven
- * off the same 200ms voice_ui_timer_cb as render_voice_panel, so both stay
- * in lockstep. */
-static void render_command_overlay(void)
-{
-    voice_status_t st;
-    voice_control_get_status(&st);
-
-    bool show = true;
-    char status_buf[40];
-    lv_color_t status_color = lv_palette_main(LV_PALETTE_BLUE);
-
-    switch (st.state) {
-    case VOICE_STATE_WAKE_DETECTED:
-    case VOICE_STATE_COMMAND_WINDOW: {
-        int64_t remain_us = st.command_window_deadline_us - esp_timer_get_time();
-        int remain_s = remain_us > 0 ? (int)((remain_us + 999999) / 1000000) : 0;
-        snprintf(status_buf, sizeof(status_buf), "Listening... %d", remain_s);
-        status_color = lv_palette_main(LV_PALETTE_BLUE);
-        break;
-    }
-    case VOICE_STATE_COMMAND_RECOGNIZED:
-        snprintf(status_buf, sizeof(status_buf), "%s", st.last_command);
-        status_color = lv_palette_main(LV_PALETTE_GREEN);
-        break;
-    case VOICE_STATE_TIMEOUT:
-        snprintf(status_buf, sizeof(status_buf), "TIMEOUT");
-        status_color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    case VOICE_STATE_UNRECOGNIZED:
-        snprintf(status_buf, sizeof(status_buf), "UNRECOGNIZED");
-        status_color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    default:
-        show = false;
-        status_buf[0] = '\0';
-        break;
-    }
-
-    if (show) {
-        lv_obj_clear_flag(cmd_overlay, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(cmd_overlay);
-    } else {
-        lv_obj_add_flag(cmd_overlay, LV_OBJ_FLAG_HIDDEN);
-    }
-    lv_label_set_text(cmd_status_label, status_buf);
-    lv_obj_set_style_text_color(cmd_status_label, status_color, 0);
-
-    for (int i = 0; i < VOICE_COMMAND_COUNT; i++) {
-        bool highlighted = (st.state == VOICE_STATE_COMMAND_RECOGNIZED) && (cmd_defs[i].id == st.last_command_id);
-        lv_obj_set_style_bg_color(cmd_buttons[i], highlighted ? CMD_BTN_ACTIVE_BG : CMD_BTN_INACTIVE_BG, 0);
-    }
-}
-
-/* NOTE recording overlay (Mission 13): visible for the whole NOTE cycle
- * (voice_control's VOICE_STATE_NOTE_ACTIVE covers recording through the
- * upload attempt and its brief result hold). The recording/upload detail
- * line is deliberately read from audio_capture_get_status() directly, not
- * from anything voice_control.c stores - same current-truth-only split
- * every other render_*_panel here uses, and it means this overlay shows
- * the exact same state render_audio_panel's AUD row would, just at
- * full-screen size with a STOP button. */
-static void render_note_overlay(void)
-{
-    voice_status_t vst;
-    voice_control_get_status(&vst);
-
-    bool show = (vst.state == VOICE_STATE_NOTE_ACTIVE);
-    if (show) {
-        lv_obj_clear_flag(note_overlay, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(note_overlay);
-    } else {
-        lv_obj_add_flag(note_overlay, LV_OBJ_FLAG_HIDDEN);
-        return;
-    }
-
-    char id_buf[40];
-    snprintf(id_buf, sizeof(id_buf), "ID: %s", vst.active_request_id);
-    lv_label_set_text(note_id_label, id_buf);
-
-    audio_cap_status_t ast;
-    audio_capture_get_status(&ast);
-
-    char status_buf[56];
-    lv_color_t color = lv_palette_main(LV_PALETTE_BLUE);
-    bool recording = false;
-    switch (ast.state) {
-    case AUDIO_CAP_ARMING:
-        snprintf(status_buf, sizeof(status_buf), "ARMING...");
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    case AUDIO_CAP_RECORDING: {
-        uint32_t s = ast.elapsed_ms / 1000;
-        snprintf(status_buf, sizeof(status_buf), "%02u:%02u", (unsigned)(s / 60), (unsigned)(s % 60));
-        color = lv_palette_main(LV_PALETTE_RED);
-        recording = true;
-        break;
-    }
-    case AUDIO_CAP_COMPLETE:
-    case AUDIO_CAP_UPLOADING:
-        snprintf(status_buf, sizeof(status_buf), "UPLOADING...");
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    case AUDIO_CAP_READY:
-        snprintf(status_buf, sizeof(status_buf), "NOTE SENT");
-        color = lv_palette_main(LV_PALETTE_GREEN);
-        break;
-    case AUDIO_CAP_FAILED:
-        if (strcmp(ast.fail_reason, "ENDPOINT NOT SET") == 0) {
-            snprintf(status_buf, sizeof(status_buf), "NOTE READY - ENDPOINT NOT SET");
-        } else {
-            snprintf(status_buf, sizeof(status_buf), "UPLOAD FAILED: %s", ast.fail_reason);
-        }
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    case AUDIO_CAP_IDLE:
-    default:
-        /* Brief window right after VOICE_STATE_NOTE_ACTIVE is set but
-         * before audio_capture's worker task has picked up the request
-         * yet, or right after the result hold ends but before
-         * voice_control.c returns to LISTENING. */
-        snprintf(status_buf, sizeof(status_buf), "STARTING...");
-        break;
-    }
-    lv_label_set_text(note_status_label, status_buf);
-    lv_obj_set_style_text_color(note_status_label, color, 0);
-
-    if (recording) {
-        lv_obj_clear_flag(note_dot, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(note_dot, LV_OBJ_FLAG_HIDDEN);
-    }
-}
-
-/* GO graph-trigger overlay (Mission 13): same shape as the NOTE overlay -
- * visible for the whole GRAPH_ACTIVE cycle, content read straight from
- * voice_status_t (run_go_command() blocks for the whole request+hold, same
- * as run_note_command() does for NOTE, so this is current truth the whole
- * time it's shown). */
-static void render_graph_overlay(void)
-{
-    voice_status_t vst;
-    voice_control_get_status(&vst);
-
-    if (vst.state != VOICE_STATE_GRAPH_ACTIVE) {
-        lv_obj_add_flag(go_overlay, LV_OBJ_FLAG_HIDDEN);
-        return;
-    }
-    lv_obj_clear_flag(go_overlay, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(go_overlay);
-
-    char id_buf[40];
-    snprintf(id_buf, sizeof(id_buf), "ID: %s", vst.active_request_id);
-    lv_label_set_text(go_id_label, id_buf);
-
-    lv_color_t color = lv_palette_main(LV_PALETTE_BLUE);
-    if (strcmp(vst.last_result, "GRAPH ACCEPTED") == 0) {
-        color = lv_palette_main(LV_PALETTE_GREEN);
-    } else if (strcmp(vst.last_result, "STARTING GRAPH") != 0) {
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-    }
-    lv_label_set_text(go_status_label, vst.last_result);
-    lv_obj_set_style_text_color(go_status_label, color, 0);
 }
 
 /* LVGL-task drain of voice_pending, populated by voice_status_changed_cb on
@@ -1159,9 +931,6 @@ static void voice_ui_timer_cb(lv_timer_t *t)
         log_event(EVT_VOICE, drained[i].message);
     }
     render_voice_panel();
-    render_command_overlay();
-    render_note_overlay();
-    render_graph_overlay();
 }
 
 /* ---- Button handlers: touch -> app_state -> render + serial log ----- */
@@ -1252,16 +1021,6 @@ static void rec_button_cb(lv_event_t *e)
         return;
     }
     handle_command("REC", true);
-}
-
-/* STOP control on the NOTE recording overlay (Mission 13). Calls straight
- * into audio_capture.c - no reason to route through voice_control.c, which
- * is already just polling audio_capture_get_status() waiting for this to
- * take effect. Harmless if pressed outside RECORDING (see
- * audio_capture_stop()'s doc comment). */
-static void note_stop_button_cb(lv_event_t *e)
-{
-    audio_capture_stop();
 }
 
 /* ---- Telemetry: 1 Hz timer, UI-only, no serial log spam --------------
@@ -1493,144 +1252,6 @@ void status_deck_ui(lv_obj_t *scr)
         lv_obj_center(btn_label);
     }
 
-    /* Command Window overlay (Mission 12): full-screen, built last so it
-     * naturally sits on top of the dashboard - render_command_overlay also
-     * calls lv_obj_move_foreground on every show, so this ordering isn't
-     * load-bearing on its own, just tidy. Hidden by default: LISTENING
-     * (the plain dashboard) is the normal state, this only appears for the
-     * ~10s command window plus its brief result/timeout indication. */
-    cmd_overlay = lv_obj_create(scr);
-    lv_obj_set_size(cmd_overlay, 320, 240);
-    lv_obj_align(cmd_overlay, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(cmd_overlay, lv_palette_darken(LV_PALETTE_BLUE_GREY, 4), 0);
-    lv_obj_set_style_bg_opa(cmd_overlay, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(cmd_overlay, 0, 0);
-    lv_obj_set_style_border_width(cmd_overlay, 0, 0);
-    lv_obj_set_style_pad_all(cmd_overlay, 8, 0);
-    lv_obj_clear_flag(cmd_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(cmd_overlay, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_t *cmd_title = lv_label_create(cmd_overlay);
-    lv_label_set_text(cmd_title, "COMMAND");
-    lv_obj_set_style_text_font(cmd_title, &lv_font_montserrat_20, 0);
-    lv_obj_align(cmd_title, LV_ALIGN_TOP_MID, 0, 4);
-
-    /* 2 columns x 2 rows (SEND/NOTE, GO/YES) via flex wrap - two 136px
-     * buttons plus an 8px gap is 280px, comfortably inside the 304px usable
-     * width. No per-button description text (directive: keep this screen
-     * simple) and not clickable (directive: touch activation isn't
-     * required this pass and none existed here before - clearing
-     * LV_OBJ_FLAG_CLICKABLE means a stray tap can't be confused with a
-     * real MultiNet recognition highlight). */
-    lv_obj_t *cmd_grid = lv_obj_create(cmd_overlay);
-    lv_obj_set_size(cmd_grid, 288, 96);
-    lv_obj_align(cmd_grid, LV_ALIGN_TOP_MID, 0, 32);
-    lv_obj_set_style_pad_all(cmd_grid, 0, 0);
-    lv_obj_set_style_pad_row(cmd_grid, 8, 0);
-    lv_obj_set_style_pad_column(cmd_grid, 8, 0);
-    lv_obj_set_style_bg_opa(cmd_grid, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(cmd_grid, 0, 0);
-    lv_obj_clear_flag(cmd_grid, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(cmd_grid, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(cmd_grid, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    for (int i = 0; i < VOICE_COMMAND_COUNT; i++) {
-        lv_obj_t *btn = lv_btn_create(cmd_grid);
-        lv_obj_set_size(btn, 136, 44);
-        lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_bg_color(btn, CMD_BTN_INACTIVE_BG, 0);
-        lv_obj_set_style_border_width(btn, 2, 0);
-        lv_obj_set_style_border_color(btn, lv_palette_main(LV_PALETTE_GREY), 0);
-
-        lv_obj_t *btn_label = lv_label_create(btn);
-        lv_label_set_text(btn_label, cmd_defs[i].label);
-        lv_obj_center(btn_label);
-
-        cmd_buttons[i] = btn;
-    }
-
-    /* Countdown while COMMAND_WINDOW is open ("Listening... 10" ... "...1"),
-     * then briefly replaced with the recognized word / TIMEOUT /
-     * UNRECOGNIZED - see render_command_overlay(). */
-    cmd_status_label = lv_label_create(cmd_overlay);
-    lv_label_set_text(cmd_status_label, "");
-    lv_obj_align(cmd_status_label, LV_ALIGN_BOTTOM_MID, 0, -8);
-
-    /* NOTE recording overlay (Mission 13) - same full-screen style as
-     * cmd_overlay above, own content: ID, a recording dot + elapsed timer
-     * (or ARMING/UPLOADING/result text - see render_note_overlay()), and a
-     * real touchable STOP button. */
-    note_overlay = lv_obj_create(scr);
-    lv_obj_set_size(note_overlay, 320, 240);
-    lv_obj_align(note_overlay, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(note_overlay, lv_palette_darken(LV_PALETTE_BLUE_GREY, 4), 0);
-    lv_obj_set_style_bg_opa(note_overlay, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(note_overlay, 0, 0);
-    lv_obj_set_style_border_width(note_overlay, 0, 0);
-    lv_obj_clear_flag(note_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(note_overlay, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_t *note_title = lv_label_create(note_overlay);
-    lv_label_set_text(note_title, "RECORDING NOTE");
-    lv_obj_set_style_text_font(note_title, &lv_font_montserrat_20, 0);
-    lv_obj_align(note_title, LV_ALIGN_TOP_MID, 0, 8);
-
-    note_id_label = lv_label_create(note_overlay);
-    lv_label_set_text(note_id_label, "ID:");
-    lv_obj_align(note_id_label, LV_ALIGN_TOP_MID, 0, 40);
-
-    /* Small filled circle, shown only while actually RECORDING - see
-     * render_note_overlay(). A real shape rather than a Unicode glyph so it
-     * renders regardless of which characters the bundled font covers. */
-    note_dot = lv_obj_create(note_overlay);
-    lv_obj_set_size(note_dot, 14, 14);
-    lv_obj_set_style_radius(note_dot, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(note_dot, lv_palette_main(LV_PALETTE_RED), 0);
-    lv_obj_set_style_border_width(note_dot, 0, 0);
-    lv_obj_clear_flag(note_dot, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_align(note_dot, LV_ALIGN_CENTER, -40, -10);
-
-    note_status_label = lv_label_create(note_overlay);
-    lv_label_set_text(note_status_label, "");
-    lv_obj_set_style_text_font(note_status_label, &lv_font_montserrat_20, 0);
-    lv_obj_align(note_status_label, LV_ALIGN_CENTER, 10, -10);
-
-    lv_obj_t *stop_btn = lv_btn_create(note_overlay);
-    lv_obj_set_size(stop_btn, 220, 56);
-    lv_obj_align(stop_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
-    lv_obj_set_style_bg_color(stop_btn, lv_palette_main(LV_PALETTE_RED), 0);
-    lv_obj_add_event_cb(stop_btn, note_stop_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *stop_label = lv_label_create(stop_btn);
-    lv_label_set_text(stop_label, "STOP");
-    lv_obj_set_style_text_font(stop_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(stop_label);
-
-    /* GO graph-trigger overlay (Mission 13) - same full-screen style,
-     * simpler content (no timer/dot/button - see render_graph_overlay()). */
-    go_overlay = lv_obj_create(scr);
-    lv_obj_set_size(go_overlay, 320, 240);
-    lv_obj_align(go_overlay, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(go_overlay, lv_palette_darken(LV_PALETTE_BLUE_GREY, 4), 0);
-    lv_obj_set_style_bg_opa(go_overlay, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(go_overlay, 0, 0);
-    lv_obj_set_style_border_width(go_overlay, 0, 0);
-    lv_obj_clear_flag(go_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(go_overlay, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_t *go_title = lv_label_create(go_overlay);
-    lv_label_set_text(go_title, "GRAPH");
-    lv_obj_set_style_text_font(go_title, &lv_font_montserrat_20, 0);
-    lv_obj_align(go_title, LV_ALIGN_TOP_MID, 0, 8);
-
-    go_id_label = lv_label_create(go_overlay);
-    lv_label_set_text(go_id_label, "ID:");
-    lv_obj_align(go_id_label, LV_ALIGN_TOP_MID, 0, 40);
-
-    go_status_label = lv_label_create(go_overlay);
-    lv_label_set_text(go_status_label, "");
-    lv_obj_set_style_text_font(go_status_label, &lv_font_montserrat_20, 0);
-    lv_obj_align(go_status_label, LV_ALIGN_CENTER, 0, 0);
-
     render_event_log();
 
     live_data_deck_init();
@@ -1660,9 +1281,6 @@ void status_deck_ui(lv_obj_t *scr)
     audio_capture_init(mic_dev, audio_status_changed_cb, NULL);
 
     render_voice_panel();
-    render_command_overlay();
-    render_note_overlay();
-    render_graph_overlay();
     voice_control_init(mic_dev, voice_status_changed_cb, NULL);
 
     lv_timer_create(telemetry_timer_cb, 1000, NULL);
