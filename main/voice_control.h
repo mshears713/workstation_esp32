@@ -11,9 +11,13 @@
  *        doing real work.
  * @details Public interface for the WakeNet/MultiNet voice pipeline. App-
  *          agnostic like audio_capture.h - knows how to get from continuous
- *          microphone frames to a recognized command word. YES stays
- *          recognition-only (state + Black Box log, no side effect). SEND
- *          and NOTE both trigger a bounded voice-note recording (see
+ *          microphone frames to a recognized command word. YES is
+ *          recognition-only (state + Black Box log, no side effect) unless
+ *          a low-confidence backend notification is pending (see
+ *          notification_client.h), in which case it fetches, plays over the
+ *          speaker, and acks it instead - see run_notification_command() in
+ *          voice_control.c. SEND and NOTE both trigger a bounded voice-note
+ *          recording (see
  *          run_send_command()/run_note_command() in voice_control.c, built
  *          on audio_capture.c's proven mic path) but upload to two different
  *          backend destinations - SEND to the local LangGraph pipeline,
@@ -44,6 +48,10 @@ typedef enum {
     VOICE_STATE_SEND_ACTIVE,        /* SEND recognized - recording+upload in progress, see run_send_command() */
     VOICE_STATE_NOTE_ACTIVE,        /* NOTE recognized - recording+upload in progress, see run_note_command() */
     VOICE_STATE_GRAPH_ACTIVE,       /* GO recognized - request in flight/result on screen, see run_go_command() */
+    /* YES recognized while a notification was pending - fetch+play+ack in
+     * progress, see run_notification_command(). YES with nothing pending
+     * still goes to COMMAND_RECOGNIZED as before, not this state. */
+    VOICE_STATE_NOTIFICATION_ACTIVE,
     VOICE_STATE_DEGRADED,           /* speech pipeline unavailable this boot - manual REC still works */
 } voice_state_t;
 

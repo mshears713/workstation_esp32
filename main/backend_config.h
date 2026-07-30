@@ -51,6 +51,17 @@
  *          duplicate}. graph_client.c still checks for an empty path and
  *          reports ENDPOINT NOT SET rather than attempting a request, in
  *          case either of these ever needs to go back to unset.
+ *
+ *          NOTIFICATIONS_BASE_PATH: root of the low-confidence spoken-
+ *          notification resource - see notification_client.c.
+ *          GET {base}/pending -> {pending, count, notification_id,
+ *          created_at}, polled lightly in the background to drive the
+ *          listening ring's blue/orange color. GET {base}/{id}/audio ->
+ *          raw 24kHz/16-bit/mono PCM (no WAV header - see the backend's
+ *          app/voice/tts.py), fetched only after the wake word + "yes".
+ *          POST {base}/{id}/ack -> marks it delivered. Notifications are
+ *          created by the backend's own low-confidence-transcript pipeline,
+ *          never by this device - there is no upload/create endpoint here.
  */
 #pragma once
 
@@ -61,3 +72,5 @@
 #define VOICE_INBOX_UPLOAD_PATH "/api/v1/voice-inbox"
 
 #define GRAPH_TRIGGER_PATH "/runs"
+
+#define NOTIFICATIONS_BASE_PATH "/api/v1/notifications"

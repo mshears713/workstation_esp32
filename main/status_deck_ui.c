@@ -165,6 +165,8 @@
 #include "audio_capture.h"
 #include "voice_control.h"
 #include "voice_listening_widget.h"
+#include "notification_client.h"
+#include "audio_playback.h"
 /* Mission 19: lv_sysmon's public API (lv_sysmon_show/hide_performance) has
  * no accessor for the FPS/CPU label object itself, only show/hide - moving
  * it into the LOG page's button row (see status_deck_ui()) needs the actual
@@ -748,6 +750,21 @@ static lv_obj_t *go_overlay;
 static lv_obj_t *go_id_label;
 static lv_obj_t *go_status_label;
 
+/* Notification-playback overlay: same shape as go_overlay (reads
+ * voice_status_t.last_result directly - run_notification_command() blocks
+ * for the whole fetch+play+ack cycle) plus a STOP button like the recording
+ * overlay's, since playback runs long enough (5-20s) to be worth
+ * interrupting, unlike GO's single HTTP round trip - see
+ * render_notification_overlay() below. */
+static lv_obj_t *notification_overlay;
+static lv_obj_t *notification_id_label;
+static lv_obj_t *notification_status_label;
+
+/* HOME page's animated listening ring - kept as a file-scope handle (not
+ * just a local in status_deck_ui()) so voice_ui_timer_cb can recolor it via
+ * voice_listening_widget_set_notification() every tick. */
+static lv_obj_t *voice_widget;
+
 /* SENS page (Mission 15): three stacked trend charts - acceleration
  * (unchanged from Mission 06), temperature and humidity (new, see the
  * Environment Deck comment above). All three are LVGL-owned ring buffers:
@@ -1143,6 +1160,41 @@ static void render_graph_overlay(void)
     lv_obj_set_style_text_color(go_status_label, color, 0);
 }
 
+/* Notification-playback overlay - see the static globals' comment above.
+ * Same current-truth-from-voice_status_t reasoning as render_graph_overlay:
+ * run_notification_command() blocks for the whole fetch+play+ack cycle. */
+static void render_notification_overlay(void)
+{
+    voice_status_t vst;
+    voice_control_get_status(&vst);
+
+    if (vst.state != VOICE_STATE_NOTIFICATION_ACTIVE) {
+        lv_obj_add_flag(notification_overlay, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_clear_flag(notification_overlay, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(notification_overlay);
+
+    char id_buf[40];
+    snprintf(id_buf, sizeof(id_buf), "ID: %s", vst.active_request_id);
+    lv_label_set_text(notification_id_label, id_buf);
+
+    lv_color_t color = lv_palette_main(LV_PALETTE_ORANGE);
+    if (strcmp(vst.last_result, "NOTIFICATION DELIVERED") == 0) {
+        color = lv_palette_main(LV_PALETTE_GREEN);
+    } else if (strcmp(vst.last_result, "NOTIFICATION FETCHING") == 0 ||
+               strcmp(vst.last_result, "FETCHING") == 0 ||
+               strcmp(vst.last_result, "PLAYING") == 0) {
+        color = lv_palette_main(LV_PALETTE_BLUE);
+    } else if (strncmp(vst.last_result, "NOTIFICATION FETCH FAILED", 26) == 0 ||
+               strcmp(vst.last_result, "NOTIFICATION PLAYBACK STOPPED") == 0 ||
+               strcmp(vst.last_result, "NOTIFICATION PLAYED - ACK FAILED") == 0) {
+        color = lv_palette_main(LV_PALETTE_RED);
+    }
+    lv_label_set_text(notification_status_label, vst.last_result);
+    lv_obj_set_style_text_color(notification_status_label, color, 0);
+}
+
 /* LVGL-task drain of voice_pending, populated by voice_status_changed_cb on
  * the voice detect task. 200ms, same cadence as Audio Capture Deck - wake/
  * command transitions benefit from the same livelier feedback a 4s
@@ -1166,6 +1218,15 @@ static void voice_ui_timer_cb(lv_timer_t *t)
     render_command_overlay();
     render_recording_overlay();
     render_graph_overlay();
+    render_notification_overlay();
+
+    /* Cheap thread-safe struct read, not a network call - the background
+     * poll task in notification_client.c is what actually talks to the
+     * backend (see its own interval). Just recolors the ring; never reads
+     * anything aloud on its own, per the directive. */
+    notification_status_t nst;
+    notification_client_get_status(&nst);
+    voice_listening_widget_set_notification(voice_widget, nst.pending);
 }
 
 /* ---- Button handlers: touch -> app_state -> render + serial log ----- */
@@ -1315,6 +1376,14 @@ static void talk_button_cb(lv_event_t *e)
 static void recording_stop_button_cb(lv_event_t *e)
 {
     audio_capture_stop();
+}
+
+/* STOP control on the notification-playback overlay - same "call straight
+ * into the owning module, harmless if pressed outside PLAYING" shape as
+ * recording_stop_button_cb above. */
+static void notification_stop_button_cb(lv_event_t *e)
+{
+    audio_playback_stop();
 }
 
 /* ---- Telemetry: 1 Hz timer, UI-only, no serial log spam --------------
@@ -1585,7 +1654,7 @@ void status_deck_ui(lv_obj_t *scr)
      * voice_listening_widget.c) so the bottom now reaches y=176, just
      * above the page's own bottom edge at 180 (and the nav bar right
      * below it), instead of leaving a visible gap. */
-    lv_obj_t *voice_widget = voice_listening_widget_create(page_home);
+    voice_widget = voice_listening_widget_create(page_home);
     lv_obj_align(voice_widget, LV_ALIGN_TOP_MID, 0, 28);
 
     /* ---- SENS: three stacked trend charts, each a third of the page ----- */
@@ -1908,6 +1977,44 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_set_style_text_font(go_status_label, &lv_font_montserrat_20, 0);
     lv_obj_align(go_status_label, LV_ALIGN_CENTER, 0, 0);
 
+    /* Notification-playback overlay - same full-screen style as the others,
+     * a STOP button like the recording overlay's since playback runs long
+     * enough (5-20s) to be worth interrupting - see
+     * render_notification_overlay() and notification_stop_button_cb(). */
+    notification_overlay = lv_obj_create(scr);
+    lv_obj_set_size(notification_overlay, 320, 240);
+    lv_obj_align(notification_overlay, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(notification_overlay, lv_palette_darken(LV_PALETTE_BLUE_GREY, 4), 0);
+    lv_obj_set_style_bg_opa(notification_overlay, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(notification_overlay, 0, 0);
+    lv_obj_set_style_border_width(notification_overlay, 0, 0);
+    lv_obj_clear_flag(notification_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(notification_overlay, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *notification_title = lv_label_create(notification_overlay);
+    lv_label_set_text(notification_title, "NOTIFICATION");
+    lv_obj_set_style_text_font(notification_title, &lv_font_montserrat_20, 0);
+    lv_obj_align(notification_title, LV_ALIGN_TOP_MID, 0, 8);
+
+    notification_id_label = lv_label_create(notification_overlay);
+    lv_label_set_text(notification_id_label, "ID:");
+    lv_obj_align(notification_id_label, LV_ALIGN_TOP_MID, 0, 40);
+
+    notification_status_label = lv_label_create(notification_overlay);
+    lv_label_set_text(notification_status_label, "");
+    lv_obj_set_style_text_font(notification_status_label, &lv_font_montserrat_20, 0);
+    lv_obj_align(notification_status_label, LV_ALIGN_CENTER, 0, -10);
+
+    lv_obj_t *notification_stop_btn = lv_btn_create(notification_overlay);
+    lv_obj_set_size(notification_stop_btn, 220, 56);
+    lv_obj_align(notification_stop_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_set_style_bg_color(notification_stop_btn, lv_palette_main(LV_PALETTE_RED), 0);
+    lv_obj_add_event_cb(notification_stop_btn, notification_stop_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *notification_stop_label = lv_label_create(notification_stop_btn);
+    lv_label_set_text(notification_stop_label, "STOP");
+    lv_obj_set_style_text_font(notification_stop_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(notification_stop_label);
+
     render_event_log();
 
     live_data_deck_init();
@@ -1934,9 +2041,23 @@ void status_deck_ui(lv_obj_t *scr)
 
     audio_capture_init(mic_dev, audio_status_changed_cb, NULL);
 
+    /* Speaker path, new alongside the long-standing mic path above: a
+     * separate physical codec (ES8311, not the mic's ES7210), so this is an
+     * independent bsp_audio_codec_speaker_init() call, not a second handle
+     * fighting over the mic. NULL is handled the same way a missing mic_dev
+     * is - audio_playback_play() logs and no-ops forever, nothing else is
+     * affected. */
+    esp_codec_dev_handle_t spk_dev = bsp_audio_codec_speaker_init();
+    if (!spk_dev) {
+        ESP_LOGE(TAG, "bsp_audio_codec_speaker_init failed - notification playback unavailable this boot");
+    }
+    audio_playback_init(spk_dev);
+    notification_client_init();
+
     render_command_overlay();
     render_recording_overlay();
     render_graph_overlay();
+    render_notification_overlay();
     voice_control_init(mic_dev, voice_status_changed_cb, NULL);
 
     lv_timer_create(telemetry_timer_cb, 1000, NULL);

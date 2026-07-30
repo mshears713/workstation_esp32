@@ -41,6 +41,8 @@
 #include "note_client.h"
 #include "voice_inbox_client.h"
 #include "graph_client.h"
+#include "notification_client.h"
+#include "audio_playback.h"
 #include "voice_control.h"
 
 static const char *TAG = "voice_control";
@@ -429,6 +431,92 @@ static void run_go_command(void)
     notify(VOICE_STATE_LISTENING, "LISTENING RESTORED");
 }
 
+/* YES-while-pending: fetch the oldest pending notification's audio, play it
+ * over the speaker, and ack it - see notification_client.h/audio_playback.h.
+ * Same mic-ownership handoff SEND/NOTE use around their recording (close
+ * the listening session, do the thing, reopen listening) even though
+ * playback uses the speaker (ES8311) rather than the mic (ES7210) and so
+ * doesn't strictly need the mic closed - the directive is to keep mic and
+ * speaker mutually exclusive rather than run them concurrently, and this is
+ * the same handoff shape already proven for SEND/NOTE. Blocks detect_task
+ * for the fetch+playback+ack cycle, same as every other command here. */
+static void run_notification_command(const char *notification_id)
+{
+    portENTER_CRITICAL(&s_mux);
+    s_status.state = VOICE_STATE_NOTIFICATION_ACTIVE;
+    s_status.command_count++;
+    s_status.last_command_id = VOICE_CMD_YES;
+    strncpy(s_status.last_command, "YES", sizeof(s_status.last_command) - 1);
+    s_status.last_command[sizeof(s_status.last_command) - 1] = '\0';
+    strncpy(s_status.active_request_id, notification_id, sizeof(s_status.active_request_id) - 1);
+    s_status.active_request_id[sizeof(s_status.active_request_id) - 1] = '\0';
+    strncpy(s_status.last_result, "FETCHING", sizeof(s_status.last_result) - 1);
+    s_status.last_result[sizeof(s_status.last_result) - 1] = '\0';
+    portEXIT_CRITICAL(&s_mux);
+
+    ESP_LOGI(TAG, "NOTIFICATION START %s", notification_id);
+    notify(VOICE_STATE_NOTIFICATION_ACTIVE, "NOTIFICATION START");
+
+    s_mic_owner = MIC_OWNER_CAPTURE;
+    voice_mic_close();
+
+    /* fail_reason's declared 40-byte capacity is what GCC's
+     * -Wformat-truncation sizes against below, not the short values it
+     * actually ever holds - same "size for the worst case the compiler can
+     * see" reasoning render_recording_overlay()'s title_buf comment
+     * documents, so this needs room for "NOTIFICATION FETCH FAILED: " (28
+     * chars) + a full 39-char fail_reason, not just what's typical. Only
+     * s_status.last_result (48 bytes) is what's actually shown/stored
+     * downstream - this is truncated into that via strncpy same as
+     * everywhere else in this file. */
+    char result_msg[80];
+    const uint8_t *pcm = NULL;
+    size_t pcm_len = 0;
+    char fail_reason[40] = "";
+
+    if (!notification_client_fetch_audio(notification_id, &pcm, &pcm_len, fail_reason, sizeof(fail_reason))) {
+        snprintf(result_msg, sizeof(result_msg), "NOTIFICATION FETCH FAILED: %s", fail_reason);
+        ESP_LOGW(TAG, "notification fetch failed: id=%s reason=%s", notification_id, fail_reason);
+    } else {
+        portENTER_CRITICAL(&s_mux);
+        strncpy(s_status.last_result, "PLAYING", sizeof(s_status.last_result) - 1);
+        s_status.last_result[sizeof(s_status.last_result) - 1] = '\0';
+        portEXIT_CRITICAL(&s_mux);
+        notify(VOICE_STATE_NOTIFICATION_ACTIVE, "NOTIFICATION PLAYING");
+
+        bool played = audio_playback_play(pcm, pcm_len, NOTIFICATION_AUDIO_SAMPLE_RATE_HZ);
+        if (!played) {
+            snprintf(result_msg, sizeof(result_msg), "NOTIFICATION PLAYBACK STOPPED");
+        } else if (!notification_client_ack(notification_id)) {
+            snprintf(result_msg, sizeof(result_msg), "NOTIFICATION PLAYED - ACK FAILED");
+        } else {
+            snprintf(result_msg, sizeof(result_msg), "NOTIFICATION DELIVERED");
+            /* Re-poll now rather than waiting for the background task's
+             * next scheduled pass, so the ring can drop back to blue right
+             * away when nothing else is pending - see
+             * notification_client_refresh_now()'s doc comment. */
+            notification_client_refresh_now();
+        }
+    }
+
+    s_mic_owner = MIC_OWNER_LISTENING;
+    if (!voice_mic_open()) {
+        set_degraded("MIC REOPEN FAILED");
+        return;
+    }
+
+    ESP_LOGI(TAG, "notification complete: id=%s -> %s", notification_id, result_msg);
+    portENTER_CRITICAL(&s_mux);
+    strncpy(s_status.last_result, result_msg, sizeof(s_status.last_result) - 1);
+    s_status.last_result[sizeof(s_status.last_result) - 1] = '\0';
+    portEXIT_CRITICAL(&s_mux);
+    notify(VOICE_STATE_NOTIFICATION_ACTIVE, result_msg);
+    vTaskDelay(pdMS_TO_TICKS(RESULT_DISPLAY_MS));
+
+    set_state(VOICE_STATE_LISTENING);
+    notify(VOICE_STATE_LISTENING, "LISTENING RESTORED");
+}
+
 static void feed_task(void *arg)
 {
     esp_afe_sr_data_t *afe_data = arg;
@@ -649,8 +737,19 @@ static void detect_task(void *arg)
                     run_go_command(); /* owns its own result display + return to LISTENING */
                     continue;
                 }
+                if (def->id == VOICE_CMD_YES) {
+                    notification_status_t nst;
+                    notification_client_get_status(&nst);
+                    if (nst.pending) {
+                        run_notification_command(nst.notification_id); /* owns its own result display + return to LISTENING */
+                        continue;
+                    }
+                    /* fall through: nothing pending, YES stays recognition-only below */
+                }
 
-                /* YES: recognition-only. */
+                /* YES with nothing pending (or any other recognized command
+                 * reaching here, which per COMMAND_DEFS is only ever YES):
+                 * recognition-only. */
                 set_command_recognized(def);
                 vTaskDelay(pdMS_TO_TICKS(COMMAND_HIGHLIGHT_MS));
             } else {

@@ -236,3 +236,18 @@ lv_obj_t *voice_listening_widget_create(lv_obj_t *parent)
 
     return cont;
 }
+
+void voice_listening_widget_set_notification(lv_obj_t *widget, bool pending)
+{
+    if (!widget) {
+        return;
+    }
+    /* Outer ring is always child index 0 - see the creation order above
+     * (build_outer_ring() is the first thing parented to cont). */
+    lv_obj_t *outer_ring = lv_obj_get_child(widget, 0);
+    if (!outer_ring) {
+        return;
+    }
+    lv_color_t color = pending ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_main(LV_PALETTE_BLUE);
+    lv_obj_set_style_arc_color(outer_ring, color, LV_PART_MAIN);
+}
