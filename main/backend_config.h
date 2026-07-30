@@ -27,13 +27,22 @@
  *          it "change in one place" rather than "regenerate a local-only
  *          file after every clone."
  *
- *          NOTE_UPLOAD_PATH: where a voice-triggered NOTE recording gets
+ *          NOTE_UPLOAD_PATH: where a voice-triggered SEND recording gets
  *          POSTed once it finishes - see note_client.c. multipart/form-data:
  *          request_id, source, duration_seconds, sample_rate_hz, and an
  *          `audio` file part (a real WAV, header included). 202 (new) or
  *          200 (duplicate request_id, idempotent) mean accepted;
  *          transcription/interpretation happens in the backend afterward -
  *          this firmware does not poll for that result.
+ *
+ *          VOICE_INBOX_UPLOAD_PATH: where a voice-triggered NOTE recording
+ *          gets POSTed once it finishes - see voice_inbox_client.c. Same
+ *          multipart/form-data shape as NOTE_UPLOAD_PATH above, but this is
+ *          a completely different backend destination: the backend
+ *          transcribes it and creates a page directly in a Notion "Voice
+ *          Inbox" database rather than running it through the local
+ *          LangGraph pipeline. Same 202/200 semantics, same
+ *          no-polling-for-the-result behavior.
  *
  *          GRAPH_TRIGGER_PATH: where GO's design-review graph trigger
  *          POSTs - see graph_client.c. POST {request_id} -> 202 (new run
@@ -45,8 +54,10 @@
  */
 #pragma once
 
-#define BACKEND_BASE_URL "http://192.168.1.31:8000"
+#define BACKEND_BASE_URL "http://10.0.0.187:8000"
 
 #define NOTE_UPLOAD_PATH "/api/v1/notes"
+
+#define VOICE_INBOX_UPLOAD_PATH "/api/v1/voice-inbox"
 
 #define GRAPH_TRIGGER_PATH "/runs"

@@ -7,17 +7,21 @@
 /**
  * @file
  * @brief Mission 13 - First Real Commands: wake word + four-command
- *        MultiNet window (SEND/NOTE/GO/YES), with NOTE and GO now doing
- *        real work.
+ *        MultiNet window (SEND/NOTE/GO/YES), with SEND, NOTE, and GO now
+ *        doing real work.
  * @details Public interface for the WakeNet/MultiNet voice pipeline. App-
  *          agnostic like audio_capture.h - knows how to get from continuous
- *          microphone frames to a recognized command word. SEND and YES
- *          stay recognition-only (state + Black Box log, no side effect).
- *          NOTE triggers a bounded voice-note recording (see
- *          run_note_command() in voice_control.c, built on audio_capture.c's
- *          proven mic path) and GO fires a one-shot backend graph-trigger
- *          request (see graph_client.h) - neither blocks WakeNet for longer
- *          than the mic-ownership handoff actually requires.
+ *          microphone frames to a recognized command word. YES stays
+ *          recognition-only (state + Black Box log, no side effect). SEND
+ *          and NOTE both trigger a bounded voice-note recording (see
+ *          run_send_command()/run_note_command() in voice_control.c, built
+ *          on audio_capture.c's proven mic path) but upload to two different
+ *          backend destinations - SEND to the local LangGraph pipeline,
+ *          NOTE to a Notion "Voice Inbox" page (see note_client.h vs.
+ *          voice_inbox_client.h). GO fires a one-shot backend graph-trigger
+ *          request (see graph_client.h). None of the three blocks WakeNet
+ *          for longer than the mic-ownership handoff/request actually
+ *          requires.
  */
 #pragma once
 
@@ -37,6 +41,7 @@ typedef enum {
     VOICE_STATE_COMMAND_RECOGNIZED, /* held briefly (~1-2s) so the matching button can be shown highlighted */
     VOICE_STATE_TIMEOUT,            /* held briefly - command window closed with no command matched */
     VOICE_STATE_UNRECOGNIZED,       /* held briefly - MultiNet detected a phrase not in the four-command set */
+    VOICE_STATE_SEND_ACTIVE,        /* SEND recognized - recording+upload in progress, see run_send_command() */
     VOICE_STATE_NOTE_ACTIVE,        /* NOTE recognized - recording+upload in progress, see run_note_command() */
     VOICE_STATE_GRAPH_ACTIVE,       /* GO recognized - request in flight/result on screen, see run_go_command() */
     VOICE_STATE_DEGRADED,           /* speech pipeline unavailable this boot - manual REC still works */
@@ -73,13 +78,14 @@ typedef struct {
      * rather than voice_control.c pushing a tick every second, so a slower
      * UI poll cadence still renders a correct countdown. */
     int64_t command_window_deadline_us;
-    /* Set when NOTE or GO starts; valid for that command's cycle (state ==
-     * VOICE_STATE_NOTE_ACTIVE / VOICE_STATE_GRAPH_ACTIVE). The "ID: ..."
-     * line on both overlays reads this. */
+    /* Set when SEND, NOTE, or GO starts; valid for that command's cycle
+     * (state == VOICE_STATE_SEND_ACTIVE / VOICE_STATE_NOTE_ACTIVE /
+     * VOICE_STATE_GRAPH_ACTIVE). The "ID: ..." line on both overlays reads
+     * this. */
     char active_request_id[REQUEST_ID_LEN];
     /* GO's outcome text ("GRAPH ACCEPTED", "ENDPOINT NOT SET", ...), valid
-     * while state == VOICE_STATE_GRAPH_ACTIVE. NOTE's overlay does not use
-     * this - it reads audio_capture_get_status() directly instead, since
+     * while state == VOICE_STATE_GRAPH_ACTIVE. SEND/NOTE's overlay does not
+     * use this - it reads audio_capture_get_status() directly instead, since
      * that's already current-truth for a recording in progress. */
     char last_result[48];
     char fail_reason[VOICE_REASON_LEN];        /* "" unless state == VOICE_STATE_DEGRADED */
@@ -106,6 +112,17 @@ void voice_control_init(esp_codec_dev_handle_t mic_dev, voice_event_cb_t cb, voi
 
 /** Thread-safe snapshot of current status for rendering. */
 void voice_control_get_status(voice_status_t *out);
+
+/**
+ * Requests a manual wake, as if the wake word had just been spoken - lets
+ * the UI's TALK button open the real MultiNet command window without
+ * anyone actually saying "computer". Safe to call from any task (the LVGL
+ * task, for a button press). Fire-and-forget: takes effect on detect_task's
+ * next poll, and is silently ignored if a command window is already open or
+ * the pipeline never started (VOICE_STATE_DEGRADED - there is no
+ * detect_task running to consume the request in that case).
+ */
+void voice_control_manual_wake(void);
 
 #ifdef __cplusplus
 }

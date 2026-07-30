@@ -68,6 +68,82 @@
  *          audio_capture_start() the REC button does; REC keeps working
  *          unconditionally as the fallback. The accelerometer chart lost
  *          another 16px (48px -> 32px) to make room for the new VOICE row.
+ *          Mission 14 splits the single crowded dashboard into three pages
+ *          behind a bottom nav bar (HOME/SENS/LOG), each a plain lv_obj_t
+ *          container toggled via LV_OBJ_FLAG_HIDDEN - the same show/hide
+ *          pattern the Command Window/recording/GO overlays already used, just
+ *          for mutually-exclusive pages instead of transient overlays. HOME
+ *          keeps the title and the UP/WIFI/HS/AUD/VOICE rows plus NET/SND;
+ *          SENS holds the ACC reading and its trend chart; LOG holds the
+ *          Black Box panel plus CLR. The overlays are unaffected - they
+ *          stay direct children of `scr`, full-screen, so they still cover
+ *          the nav bar exactly as before. REC is retired: the same manual
+ *          capture is now reached by pressing TALK (a new nav-bar button),
+ *          which fakes a wake-word detection via
+ *          voice_control_manual_wake() so the real MultiNet command window
+ *          opens without actually saying "computer" - see that function's
+ *          comment in voice_control.c. Unlike REC, TALK has no effect while
+ *          VOICE_STATE_DEGRADED (there is no detect_task running to consume
+ *          the manual-wake flag), so a voice-pipeline failure now also
+ *          removes the only path to a capture - a real, accepted tradeoff
+ *          of dropping REC, not an oversight.
+ *          Mission 15 reworks all three pages. HOME: UP and WIFI merge onto
+ *          one row (HS drops entirely - no more on-screen handshake status,
+ *          though handshake transitions still reach the Black Box), and
+ *          NET/SND move to LOG, next to CLR. The title becomes "OPERATION
+ *          HOMEBOUND" in blue. SENS drops the old numeric ACC readout
+ *          (sensor_label) and becomes three stacked trend charts, each a
+ *          third of the page: ACCEL (unchanged data), plus new TEMP and
+ *          HUMIDITY charts against the AHT30 on the SENSOR dock
+ *          (HUMITURE_ID) - the path Mission 06's comment named but never
+ *          wired up, brought in now with the same boot-probe-only,
+ *          no-runtime-retry contract as the IMU (see the Environment Deck
+ *          comment). LVGL 9's lv_chart has no numeric axis-tick-label API
+ *          (removed from v8), so each chart gets a one-line caption instead
+ *          stating its unit and fixed range. LOG's Black Box panel grows to
+ *          fill nearly the whole page (112px, was 48px) and now shows all
+ *          EVENT_HISTORY_LEN records instead of a truncated 3. The LVGL
+ *          built-in FPS/CPU overlay (CONFIG_LV_USE_PERF_MONITOR), previously
+ *          always on screen regardless of page, is now explicitly shown only
+ *          while LOG is active (see set_active_page()'s lv_sysmon_show/
+ *          hide_performance calls).
+ *          Mission 16 replaces HOME's dynamic VOICE status line with a
+ *          VoiceListeningWidget (voice_listening_widget.c/.h): a rotating
+ *          blue ring with a glisten highlight traveling around it, a white
+ *          mic icon at its center, and a static "VOICE LISTENING" caption -
+ *          purely decorative, always animating, no longer a live readout of
+ *          voice_control_get_status() (the Command Window/recording/GO overlays
+ *          and the Black Box still carry that). See render_command_overlay's
+ *          neighboring comment for what was dropped along with it.
+ *          Mission 17 clears the rest of HOME's center for that widget: the
+ *          AUD status row above it is dropped (same on-screen-vs-Black-Box
+ *          tradeoff as Mission 16's VOICE row - see audio_ui_timer_cb's
+ *          neighboring comment) and the widget's own caption is dropped too
+ *          (see voice_listening_widget.h). The ring grows from 76px to
+ *          130px to fill the freed space instead of leaving it empty.
+ *          Mission 18 adds detail to that same widget without touching
+ *          HOME's layout otherwise: a thin static inner ring, a subtle
+ *          halo, and a navy disc behind the mic icon (see
+ *          voice_listening_widget.c for the full layer breakdown), plus a
+ *          16px nudge upward (y=44 -> y=28) for more clearance above the
+ *          nav bar - see this file's own comment at that alignment call for
+ *          why that's safe despite the UP/WIFI row occupying an overlapping
+ *          y-range.
+ *          Mission 19 touches three unrelated things in one pass. HOME:
+ *          the VoiceListeningWidget keeps its y=28 top (already right) but
+ *          grows 130px -> 148px so its bottom now sits just above the nav
+ *          bar instead of leaving a gap. SENS: TEMP's axis moves from
+ *          0-50 Celsius to 60-90 Fahrenheit (a realistic indoor band,
+ *          converted from the AHT30's native Celsius reading - see
+ *          humiture_timer_cb), and all three charts gain a live numeric
+ *          value label to their left (*_value_label - narrowed each chart
+ *          from 304px to 250px to make room). LOG: the built-in FPS/CPU
+ *          readout (CONFIG_LV_USE_PERF_MONITOR) moves off its LVGL-default
+ *          fixed bottom-right corner of the whole display (which landed in
+ *          the nav bar's band, not this page's own button row) into the
+ *          NET/SND/CLR row itself - see that row's comment in
+ *          status_deck_ui() and the lv_display_private.h include above for
+ *          how and why.
  *          Built on the Mission 04 first_command BSP/LVGL foundation.
  */
 
@@ -88,6 +164,19 @@
 #include "handshake_client.h"
 #include "audio_capture.h"
 #include "voice_control.h"
+#include "voice_listening_widget.h"
+/* Mission 19: lv_sysmon's public API (lv_sysmon_show/hide_performance) has
+ * no accessor for the FPS/CPU label object itself, only show/hide - moving
+ * it into the LOG page's button row (see status_deck_ui()) needs the actual
+ * lv_obj_t*, which only exists on lv_display_t's private struct. This
+ * header is "private" by LVGL's own naming convention, not by build-system
+ * access control - the lvgl component's INCLUDE_DIRS exposes all of src/,
+ * private headers included, to every other component in this project, same
+ * as every other lvgl header used above. Reaching in here is a real,
+ * accepted fragility (a future LVGL upgrade could rename/restructure this
+ * field), not an oversight - see the reparenting comment in
+ * status_deck_ui() for why it was worth it anyway. */
+#include "display/lv_display_private.h"
 
 static const char *TAG = "status_deck";
 
@@ -118,10 +207,10 @@ static app_state_t app_state = {
 
 /* ---- Black Box Recorder: bounded structured event history ------------
  * RAM-only ring of typed records, not a single ever-growing string.
- * Capacity (EVENT_HISTORY_LEN) is deliberately larger than what the
- * compact on-screen panel renders (EVENT_DISPLAY_LINES) - the recorder
- * keeps more than the cockpit display shows, same idea as a real flight
- * data recorder vs. its cockpit readout. */
+ * Capacity is EVENT_HISTORY_LEN; the LOG page's panel renders
+ * EVENT_DISPLAY_LINES of it, which as of Mission 15 is the same number -
+ * see EVENT_DISPLAY_LINES's own comment for why that panel no longer needs
+ * to show fewer than the recorder keeps. */
 
 typedef enum {
     EVT_BOOT,
@@ -137,7 +226,11 @@ typedef enum {
 
 #define EVENT_HISTORY_LEN 8
 #define EVENT_MSG_LEN 28
-#define EVENT_DISPLAY_LINES 3 /* was 2 - the log panel grew, see status_deck_ui() */
+/* Mission 15: the LOG page now gives the log panel most of the screen (see
+ * status_deck_ui()), so the compact panel no longer has to show fewer lines
+ * than the recorder keeps - this now equals EVENT_HISTORY_LEN, i.e. every
+ * retained record is visible at once. */
+#define EVENT_DISPLAY_LINES EVENT_HISTORY_LEN
 
 typedef struct {
     event_type_t type;
@@ -373,6 +466,50 @@ static void sensor_event_handler(void *arg, sensor_event_base_t base, int32_t ev
     portEXIT_CRITICAL(&sensor_mux);
 }
 
+/* ---- Environment Deck (Mission 15): temperature/humidity from the AHT30
+ * on the SENSOR dock (HUMITURE_ID - see the Live Data Deck comment above,
+ * which named this path back in Mission 06 but never wired it up). Same
+ * boot-time-probe-only, no-runtime-retry contract and the same
+ * record-on-a-foreign-task/render-on-the-LVGL-task split as the IMU above,
+ * just on a HUMITURE_ACQUIRE_PERIOD_MS cadence instead of the IMU's fast
+ * 100ms one - temperature/humidity simply don't move within a second the
+ * way acceleration can. Temperature and humidity share one status/staleness
+ * pair rather than two: the AHT30 driver samples both in the same physical
+ * read, so iot_sensor_hub posting them as two separate events is a hub
+ * convention, not evidence of two independent freshness stories. */
+#define HUMITURE_ACQUIRE_PERIOD_MS 1000
+#define HUMITURE_STALE_THRESHOLD_US ((int64_t)3 * HUMITURE_ACQUIRE_PERIOD_MS * 1000)
+#define HUMITURE_HISTORY_LEN 60 /* ~60s of history at the 1000ms acquisition cadence */
+
+static portMUX_TYPE humiture_mux = portMUX_INITIALIZER_UNLOCKED;
+static bool humiture_present = false;        /* hardware detected at boot */
+static source_status_t humiture_status = SRC_UNKNOWN;
+static volatile bool temp_have_new_sample = false;
+static volatile bool humi_have_new_sample = false;
+static float last_temperature_c = 0.0f;
+static float last_humidity_pct = 0.0f;
+static int64_t humiture_last_good_us = 0;
+
+/* Runs on the sensor_hub task. No LVGL calls here - same contract as
+ * sensor_event_handler above. */
+static void humiture_event_handler(void *arg, sensor_event_base_t base, int32_t event_id, void *event_data)
+{
+    (void)arg;
+    (void)base;
+    sensor_data_t *data = (sensor_data_t *)event_data;
+    portENTER_CRITICAL(&humiture_mux);
+    if (event_id == SENSOR_TEMP_DATA_READY) {
+        last_temperature_c = data->temperature;
+        temp_have_new_sample = true;
+        humiture_last_good_us = esp_timer_get_time();
+    } else if (event_id == SENSOR_HUMI_DATA_READY) {
+        last_humidity_pct = data->humidity;
+        humi_have_new_sample = true;
+        humiture_last_good_us = esp_timer_get_time();
+    }
+    portEXIT_CRITICAL(&humiture_mux);
+}
+
 /* ---- Accel sample ring buffer: last ACCEL_SAMPLE_COUNT readings for the
  * Handshake payload ------------------------------------------------------
  * Separate from the chart's own LVGL-owned ring buffer above - that one
@@ -486,19 +623,18 @@ static void handshake_status_changed_cb(handshake_state_t new_state, const char 
  * trigger_graph_run() is a single blocking call made from voice_control.c,
  * which already owns pushing GO's messages into the Black Box via its own
  * voice_pending queue. render_graph_overlay() below reads voice_status_t
- * directly, the same current-truth source render_voice_panel() uses. */
+ * directly, the same current-truth source render_command_overlay() uses. */
 
 /* ---- Audio Capture Deck: microphone state, bridged from a foreign task -
  * audio_capture.c's callback runs on its own worker task - never the LVGL
  * task. Same bridge shape as Connection Deck/Handshake above, and the same
  * reasoning for keeping it a separate queue rather than a shared one:
- * unrelated foreign task, unrelated timing. Unlike Wi-Fi/handshake, audio
- * state also carries fast-changing progress (elapsed_ms/bytes_captured)
- * while RECORDING - that part is read straight from
- * audio_capture_get_status() on every render_audio_panel() call, not
- * queued, since it is current truth rather than a discrete transition; only
- * discrete transitions (ARM/START/COMPLETE/FAILED/READY) go through this
- * queue to become Black Box events. */
+ * unrelated foreign task, unrelated timing. Only discrete transitions
+ * (ARM/START/COMPLETE/FAILED/READY) go through this queue to become Black
+ * Box events - fast-changing progress (elapsed_ms/bytes_captured) while
+ * RECORDING has no on-screen reader as of Mission 17 (see audio_ui_timer_cb
+ * below), but render_recording_overlay() still reads it directly from
+ * audio_capture_get_status() for the recording overlay's live timer. */
 #define AUDIO_PENDING_LEN 4
 
 typedef struct {
@@ -524,9 +660,10 @@ static void audio_status_changed_cb(audio_cap_state_t new_state, const char *mes
 
 /* ---- Voice Deck (Mission 11): WakeNet/MultiNet state, bridged from the
  * voice_control.c detect task - never the LVGL task. Same bridge shape as
- * the Audio Capture Deck above; render_voice_panel() reads
- * voice_control_get_status() for current truth (state word, last command),
- * this queue only carries discrete transitions into the Black Box. */
+ * the Audio Capture Deck above; render_command_overlay/render_recording_overlay/
+ * render_graph_overlay below read voice_control_get_status() directly for
+ * current truth (state word, last command), this queue only carries
+ * discrete transitions into the Black Box. */
 #define VOICE_PENDING_LEN 4
 
 typedef struct {
@@ -570,12 +707,25 @@ static uint32_t handshake_sequence = 0;
 /* ---- UI widgets (set once in status_deck_ui) ------------------------- */
 
 static lv_obj_t *telemetry_label;
-static lv_obj_t *sensor_label;
 static lv_obj_t *conn_label;
-static lv_obj_t *hs_label;
-static lv_obj_t *audio_label;
-static lv_obj_t *voice_label;
 static lv_obj_t *log_label;
+
+/* Mission 14: three pages behind a bottom nav bar, replacing the single
+ * crowded dashboard - see the file header comment. Each page is a plain
+ * lv_obj_t container, shown/hidden as a group via set_active_page() below;
+ * nav_buttons[] holds the three tab buttons (HOME/SENS/LOG only - TALK is a
+ * one-shot action, not a tab, so it isn't highlighted). */
+typedef enum {
+    APP_PAGE_HOME = 0,
+    APP_PAGE_SENS,
+    APP_PAGE_LOG,
+    APP_PAGE_COUNT,
+} app_page_t;
+
+static lv_obj_t *page_home;
+static lv_obj_t *page_sens;
+static lv_obj_t *page_log;
+static lv_obj_t *nav_buttons[APP_PAGE_COUNT];
 
 /* Command Window overlay (Mission 12): four-button recognition-test grid,
  * hidden by default, shown full-screen over the dashboard for the ~10s
@@ -584,32 +734,52 @@ static lv_obj_t *cmd_overlay;
 static lv_obj_t *cmd_status_label;
 static lv_obj_t *cmd_buttons[VOICE_COMMAND_COUNT];
 
-/* NOTE recording overlay (Mission 13) - see render_note_overlay() below. */
-static lv_obj_t *note_overlay;
-static lv_obj_t *note_id_label;
-static lv_obj_t *note_dot;
-static lv_obj_t *note_status_label;
+/* Voice-triggered recording overlay (Mission 13): shared by SEND and NOTE -
+ * mic ownership is exclusive, so only one can ever be mid-recording at a
+ * time - see render_recording_overlay() below. */
+static lv_obj_t *recording_overlay;
+static lv_obj_t *recording_title;
+static lv_obj_t *recording_id_label;
+static lv_obj_t *recording_dot;
+static lv_obj_t *recording_status_label;
 
 /* GO graph-trigger overlay (Mission 13) - see render_graph_overlay() below. */
 static lv_obj_t *go_overlay;
 static lv_obj_t *go_id_label;
 static lv_obj_t *go_status_label;
 
-/* Acceleration-magnitude trend chart. LVGL owns the sample buffer:
- * point_count fixes it at SENSOR_HISTORY_LEN entries and UPDATE_MODE_SHIFT
- * makes each new value push the oldest one out, so this can never grow
- * unbounded - same "bounded ring, oldest data quietly ages out" pattern
- * as event_history[]. */
+/* SENS page (Mission 15): three stacked trend charts - acceleration
+ * (unchanged from Mission 06), temperature and humidity (new, see the
+ * Environment Deck comment above). All three are LVGL-owned ring buffers:
+ * point_count fixes each at its history length and UPDATE_MODE_SHIFT pushes
+ * the oldest value out on every new one, same "bounded ring" pattern as
+ * event_history[]. No numeric tick marks - LVGL 9's lv_chart dropped the v8
+ * axis-tick-label API, and a companion lv_scale widget doesn't fit next to
+ * a ~40px-tall chart at this display width - so each chart gets a one-line
+ * caption above it instead, stating the unit and the fixed axis range.
+ * Mission 19 adds a live numeric readout to the left of each chart
+ * (*_value_label) - unlike the caption, this updates every acquisition
+ * tick from the same snapshot already used to push the chart's next point,
+ * in sensor_timer_cb/humiture_timer_cb. */
 #define SENSOR_HISTORY_LEN 100 /* ~10s of history at the 100ms acquisition cadence */
 static lv_obj_t *chart;
 static lv_chart_series_t *accel_series;
+static lv_obj_t *accel_value_label;
+
+static lv_obj_t *temp_chart;
+static lv_chart_series_t *temp_series;
+static lv_obj_t *temp_value_label;
+static lv_obj_t *humi_chart;
+static lv_chart_series_t *humi_series;
+static lv_obj_t *humi_value_label;
 
 /* ---- Rendering: UI reads app_state / event_history, never the reverse - */
 
-/* Renders only the newest EVENT_DISPLAY_LINES of event_history - the
- * recorder keeps EVENT_HISTORY_LEN, the compact panel shows fewer.
- * Builds with snprintf + a clamped running offset rather than strcat, so
- * it cannot overflow buf regardless of how long a line's text gets. */
+/* Renders the newest EVENT_DISPLAY_LINES of event_history - as of Mission
+ * 15 that's all of EVENT_HISTORY_LEN, so this shows the recorder's full
+ * retained history, not a truncated view of it. Builds with snprintf + a
+ * clamped running offset rather than strcat, so it cannot overflow buf
+ * regardless of how long a line's text gets. */
 static void render_event_log(void)
 {
     char buf[EVENT_DISPLAY_LINES * (EVENT_MSG_LEN + 8)];
@@ -626,29 +796,6 @@ static void render_event_log(void)
     lv_label_set_text(log_label, shown ? buf : "(no events yet)");
 }
 
-/* Compact (right column of status row 1, alongside telemetry_label on the
- * left): status word shortened to CUR/STL since the text color already
- * carries the same distinction, same convention as WIFI/HS below it. */
-static void render_sensor_panel(void)
-{
-    char buf[24];
-    if (!sensor_present || sensor_status == SRC_ERROR) {
-        snprintf(buf, sizeof(buf), "ACC: N/A");
-        lv_obj_set_style_text_color(sensor_label, lv_palette_main(LV_PALETTE_GREY), 0);
-    } else if (sensor_status == SRC_UNKNOWN) {
-        snprintf(buf, sizeof(buf), "ACC: WAIT");
-        lv_obj_set_style_text_color(sensor_label, lv_palette_main(LV_PALETTE_GREY), 0);
-    } else {
-        double age_s = (esp_timer_get_time() - sensor_last_good_us) / 1e6;
-        const char *status_str = sensor_status == SRC_CURRENT ? "CUR" : "STL";
-        lv_color_t color = sensor_status == SRC_CURRENT ? lv_palette_main(LV_PALETTE_GREEN)
-                                                          : lv_palette_main(LV_PALETTE_ORANGE);
-        snprintf(buf, sizeof(buf), "ACC %.2fg %s %.0fs", (double)last_accel_g, status_str, age_s);
-        lv_obj_set_style_text_color(sensor_label, color, 0);
-    }
-    lv_label_set_text(sensor_label, buf);
-}
-
 static void log_sensor_event(const char *text)
 {
     log_event(EVT_SENSOR, text);
@@ -656,11 +803,11 @@ static void log_sensor_event(const char *text)
 
 /* Renders only current truth (state, IP, attempt/retry count) - the "how
  * did we get here" story lives in the Black Box event log via
- * wifi_ui_timer_cb below, not duplicated here. Compact (left column of
- * status row 2, alongside hs_label on the right): full IP shortened to its
- * last octet - the network prefix is implied and this is evidence the
- * device is on *some* address, not a substitute for the Black Box/serial
- * log if the exact IP ever matters. */
+ * wifi_ui_timer_cb below, not duplicated here. Compact (right column of the
+ * HOME page's top row, alongside telemetry_label on the left as of Mission
+ * 15): full IP shortened to its last octet - the network prefix is implied
+ * and this is evidence the device is on *some* address, not a substitute
+ * for the Black Box/serial log if the exact IP ever matters. */
 static void render_wifi_panel(void)
 {
     wifi_mgr_status_t st;
@@ -723,57 +870,10 @@ static void wifi_ui_timer_cb(lv_timer_t *t)
     render_wifi_panel();
 }
 
-/* Same current-truth-only split as render_wifi_panel: "how did we get
- * here" lives in the Black Box via handshake_ui_timer_cb, not duplicated
- * here. Shows the *previous* result's event_id/status while a new request
- * is SENDING (deliberately not blanked), since "what's the last confirmed
- * evidence" stays useful evidence even mid-retry. Compact (right column of
- * status row 2, alongside conn_label on the left): event_id truncated to 6
- * chars (was 8) and wordier states (SERVER ERROR, UNREACHABLE, BAD
- * RESPONSE) shortened - same "color already carries the state" reasoning
- * as ACC's CUR/STL above. */
-static void render_handshake_panel(void)
-{
-    handshake_status_t st;
-    handshake_client_get_status(&st);
-
-    char buf[24];
-    lv_color_t color = lv_palette_main(LV_PALETTE_GREY);
-    switch (st.state) {
-    case HS_SENDING:
-        snprintf(buf, sizeof(buf), "HS: SEND #%lu", (unsigned long)handshake_sequence);
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    case HS_ACCEPTED: {
-        double age_s = (esp_timer_get_time() - st.last_result_us) / 1e6;
-        snprintf(buf, sizeof(buf), "HS: OK #%.6s %.0fs", st.last_event_id, age_s);
-        color = lv_palette_main(LV_PALETTE_GREEN);
-        break;
-    }
-    case HS_TIMEOUT:
-        snprintf(buf, sizeof(buf), "HS: TIMEOUT");
-        color = lv_palette_main(LV_PALETTE_RED);
-        break;
-    case HS_NETWORK_ERROR:
-        snprintf(buf, sizeof(buf), "HS: UNREACH");
-        color = lv_palette_main(LV_PALETTE_RED);
-        break;
-    case HS_SERVER_ERROR:
-        snprintf(buf, sizeof(buf), "HS: ERR %d", st.last_http_status);
-        color = lv_palette_main(LV_PALETTE_RED);
-        break;
-    case HS_BAD_RESPONSE:
-        snprintf(buf, sizeof(buf), "HS: BAD RESP");
-        color = lv_palette_main(LV_PALETTE_RED);
-        break;
-    case HS_IDLE:
-    default:
-        snprintf(buf, sizeof(buf), "HS: READY");
-        break;
-    }
-    lv_label_set_text(hs_label, buf);
-    lv_obj_set_style_text_color(hs_label, color, 0);
-}
+/* Mission 15: no more on-screen HS status label (dropped from HOME along
+ * with hs_label - see the file header comment) - handshake transitions
+ * still reach the operator, just only through the Black Box/LOG page now,
+ * via the drain loop below. */
 
 /* LVGL-task drain of handshake_pending, populated by
  * handshake_status_changed_cb on the handshake worker task. 300ms rather
@@ -796,65 +896,13 @@ static void handshake_ui_timer_cb(lv_timer_t *t)
     for (int i = 0; i < count; i++) {
         log_event(EVT_HANDSHAKE, drained[i].message);
     }
-    render_handshake_panel();
 }
 
-/* Full-width row (unlike the half-width WIFI/HS panels) since a truthful
- * capture readout needs more than half the screen width: state word plus
- * either a live elapsed/target readout (RECORDING) or the artifact name
- * (READY) - see the Mission 10 directive's "let Mike answer: how long was
- * the capture / could the result be inspected" requirements. Progress
- * fields (elapsed_ms/bytes_captured) are read directly from
- * audio_capture_get_status() here rather than the pending queue, since they
- * are current truth that changes every render tick, not a discrete
- * transition - see the Audio Capture Deck comment above. */
-static void render_audio_panel(void)
-{
-    audio_cap_status_t st;
-    audio_capture_get_status(&st);
-
-    char buf[40];
-    lv_color_t color = lv_palette_main(LV_PALETTE_GREY);
-    switch (st.state) {
-    case AUDIO_CAP_ARMING:
-        snprintf(buf, sizeof(buf), "AUD: ARM");
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    case AUDIO_CAP_RECORDING:
-        snprintf(buf, sizeof(buf), "AUD: REC %.1f/%.1fs pk=%.2f",
-                 (double)st.elapsed_ms / 1000.0, (double)st.duration_target_ms / 1000.0,
-                 (double)st.peak_amplitude);
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    case AUDIO_CAP_COMPLETE:
-        snprintf(buf, sizeof(buf), "AUD: DONE %luB pk=%.2f rms=%.2f",
-                 (unsigned long)st.bytes_captured, (double)st.peak_amplitude, (double)st.rms_amplitude);
-        color = lv_palette_main(LV_PALETTE_GREEN);
-        break;
-    case AUDIO_CAP_UPLOADING:
-        /* No live progress readout here (unlike the old serial export) -
-         * a Wi-Fi POST of ~128KB typically completes in well under a
-         * second, so a blocking "uploading..." message is honest enough;
-         * see upload_capture()'s comment in audio_capture.c. */
-        snprintf(buf, sizeof(buf), "AUD: UPLOADING...");
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    case AUDIO_CAP_READY:
-        snprintf(buf, sizeof(buf), "AUD: RDY %s", st.artifact_name);
-        color = lv_palette_main(LV_PALETTE_GREEN);
-        break;
-    case AUDIO_CAP_FAILED:
-        snprintf(buf, sizeof(buf), "AUD: FAIL %s", st.fail_reason);
-        color = lv_palette_main(LV_PALETTE_RED);
-        break;
-    case AUDIO_CAP_IDLE:
-    default:
-        snprintf(buf, sizeof(buf), "AUD: READY (REC to capture)");
-        break;
-    }
-    lv_label_set_text(audio_label, buf);
-    lv_obj_set_style_text_color(audio_label, color, 0);
-}
+/* Mission 17: no more on-screen AUD status label (dropped from HOME to give
+ * the VoiceListeningWidget most of the page - see the file header comment)
+ * - same tradeoff already made for ACC/HS/VOICE's old text rows: capture
+ * transitions still reach the operator, just only through the Black
+ * Box/LOG page now, via the drain loop below. */
 
 /* LVGL-task drain of audio_pending, populated by audio_status_changed_cb on
  * the audio worker task. 200ms: faster than Handshake's 300ms because a 4s
@@ -877,75 +925,18 @@ static void audio_ui_timer_cb(lv_timer_t *t)
     for (int i = 0; i < count; i++) {
         log_event(EVT_AUDIO, drained[i].message);
     }
-    render_audio_panel();
 }
 
-/* Full-width row below AUD: current truth only (state word plus the last
- * recognized command once one exists) - "how did we get here" lives in the
- * Black Box via voice_ui_timer_cb below, same split as every other panel
- * here. DEGRADED is red and permanent for the boot (voice_control_init only
- * sets it once, on a real init failure) - manual REC keeps working
- * regardless, this row is just honest that the hands-free path isn't. */
-static void render_voice_panel(void)
-{
-    voice_status_t st;
-    voice_control_get_status(&st);
-
-    /* 88: -Werror=format-truncation reasons from the declared sizes of
-     * st.active_request_id (REQUEST_ID_LEN=24) and st.last_result (48), not
-     * their actual short runtime content - same reasoning as
-     * audio_capture.c's hand-sized msg buffers. Worst case is the
-     * GRAPH_ACTIVE branch below: "VOICE: GO " (10) + up to 23 chars of
-     * active_request_id + " - " (3) + up to 47 chars of last_result + nul
-     * = 84. */
-    char buf[88];
-    lv_color_t color = lv_palette_main(LV_PALETTE_GREY);
-    switch (st.state) {
-    case VOICE_STATE_LISTENING:
-        snprintf(buf, sizeof(buf), "VOICE: LISTENING (say \"computer\")");
-        color = lv_palette_main(LV_PALETTE_BLUE);
-        break;
-    case VOICE_STATE_WAKE_DETECTED:
-        snprintf(buf, sizeof(buf), "VOICE: WAKE DETECTED #%lu", (unsigned long)st.wake_count);
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    case VOICE_STATE_COMMAND_WINDOW: {
-        int64_t remain_us = st.command_window_deadline_us - esp_timer_get_time();
-        int remain_s = remain_us > 0 ? (int)((remain_us + 999999) / 1000000) : 0;
-        snprintf(buf, sizeof(buf), "VOICE: COMMAND WINDOW %ds", remain_s);
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    }
-    case VOICE_STATE_COMMAND_RECOGNIZED:
-        snprintf(buf, sizeof(buf), "VOICE: CMD \"%s\" id=%d #%lu", st.last_command,
-                 (int)st.last_command_id, (unsigned long)st.command_count);
-        color = lv_palette_main(LV_PALETTE_GREEN);
-        break;
-    case VOICE_STATE_NOTE_ACTIVE:
-        snprintf(buf, sizeof(buf), "VOICE: NOTE %s", st.active_request_id);
-        color = lv_palette_main(LV_PALETTE_GREEN);
-        break;
-    case VOICE_STATE_GRAPH_ACTIVE:
-        snprintf(buf, sizeof(buf), "VOICE: GO %s - %s", st.active_request_id, st.last_result);
-        color = lv_palette_main(LV_PALETTE_GREEN);
-        break;
-    case VOICE_STATE_TIMEOUT:
-        snprintf(buf, sizeof(buf), "VOICE: TIMEOUT");
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    case VOICE_STATE_UNRECOGNIZED:
-        snprintf(buf, sizeof(buf), "VOICE: UNRECOGNIZED");
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    case VOICE_STATE_DEGRADED:
-    default:
-        snprintf(buf, sizeof(buf), "VOICE: DEGRADED %s (REC still works)", st.fail_reason);
-        color = lv_palette_main(LV_PALETTE_RED);
-        break;
-    }
-    lv_label_set_text(voice_label, buf);
-    lv_obj_set_style_text_color(voice_label, color, 0);
-}
+/* Mission 16: no more on-screen dynamic VOICE status label - the HOME page
+ * center now shows a VoiceListeningWidget instead (a decorative, always-
+ * animating ring; see voice_listening_widget.c), not a text readout of
+ * voice_control_get_status(). Voice transitions still reach the operator:
+ * the Command Window/recording/GO overlays already render their own state
+ * directly from voice_control_get_status() independent of this, and every
+ * transition still lands in the Black Box via the drain loop in
+ * voice_ui_timer_cb below. The one thing genuinely lost is on-screen
+ * DEGRADED visibility when no overlay is showing (previously this row's red
+ * text) - that state is now only visible via the Black Box/LOG page. */
 
 /* Four Mission 13 command words (Mission 12 tested six; RUN/TEST didn't
  * read reliably and were dropped), in on-screen grid order (2 columns x 2
@@ -974,8 +965,8 @@ static const struct {
  * both derived from voice_control_get_status() current truth, same
  * current-truth-only split every other render_*_panel function here uses -
  * "how did we get here" is the Black Box's job, not this overlay's. Driven
- * off the same 200ms voice_ui_timer_cb as render_voice_panel, so both stay
- * in lockstep. */
+ * off the same 200ms voice_ui_timer_cb as render_recording_overlay/
+ * render_graph_overlay below, so all three stay in lockstep. */
 static void render_command_overlay(void)
 {
     voice_status_t st;
@@ -1027,36 +1018,50 @@ static void render_command_overlay(void)
     }
 }
 
-/* NOTE recording overlay (Mission 13): visible for the whole NOTE cycle
- * (voice_control's VOICE_STATE_NOTE_ACTIVE covers recording through the
- * upload attempt and its brief result hold). The recording/upload detail
- * line is deliberately read from audio_capture_get_status() directly, not
- * from anything voice_control.c stores - same current-truth-only split
- * every other render_*_panel here uses, and it means this overlay shows
- * the exact same state render_audio_panel's AUD row would, just at
- * full-screen size with a STOP button. */
-static void render_note_overlay(void)
+/* Voice-triggered recording overlay (Mission 13, generalized when NOTE
+ * gained its own recording flow): visible for the whole SEND or NOTE cycle
+ * (voice_control's VOICE_STATE_SEND_ACTIVE / VOICE_STATE_NOTE_ACTIVE cover
+ * recording through the upload attempt and its brief result hold - mic
+ * ownership is exclusive, so the two states never overlap, and one shared
+ * overlay covers both without losing any information). The recording/
+ * upload detail line is deliberately read from audio_capture_get_status()
+ * directly, not from anything voice_control.c stores - same current-truth-
+ * only split every other render_*_panel here uses, and (as of Mission 17)
+ * it is the only on-screen place that shows live capture progress at all,
+ * full-screen with a STOP button. Which command triggered it
+ * (vst.last_command, "SEND" or "NOTE") drives the title and result text so
+ * neither cycle is mislabeled as the other. */
+static void render_recording_overlay(void)
 {
     voice_status_t vst;
     voice_control_get_status(&vst);
 
-    bool show = (vst.state == VOICE_STATE_NOTE_ACTIVE);
+    bool show = (vst.state == VOICE_STATE_SEND_ACTIVE || vst.state == VOICE_STATE_NOTE_ACTIVE);
     if (show) {
-        lv_obj_clear_flag(note_overlay, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(note_overlay);
+        lv_obj_clear_flag(recording_overlay, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(recording_overlay);
     } else {
-        lv_obj_add_flag(note_overlay, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(recording_overlay, LV_OBJ_FLAG_HIDDEN);
         return;
     }
 
+    /* vst.last_command is a VOICE_COMMAND_NAME_LEN (32-byte) field - GCC's
+     * -Wformat-truncation sizes buffers against that declared capacity, not
+     * the short "SEND"/"NOTE"/"GO"/"YES" values it actually ever holds, so
+     * these need enough room for the worst case the compiler can see, not
+     * just the worst case that can happen at runtime. */
+    char title_buf[48];
+    snprintf(title_buf, sizeof(title_buf), "RECORDING %s", vst.last_command);
+    lv_label_set_text(recording_title, title_buf);
+
     char id_buf[40];
     snprintf(id_buf, sizeof(id_buf), "ID: %s", vst.active_request_id);
-    lv_label_set_text(note_id_label, id_buf);
+    lv_label_set_text(recording_id_label, id_buf);
 
     audio_cap_status_t ast;
     audio_capture_get_status(&ast);
 
-    char status_buf[56];
+    char status_buf[64]; /* see title_buf's comment above on why this must exceed 56 */
     lv_color_t color = lv_palette_main(LV_PALETTE_BLUE);
     bool recording = false;
     switch (ast.state) {
@@ -1077,12 +1082,12 @@ static void render_note_overlay(void)
         color = lv_palette_main(LV_PALETTE_ORANGE);
         break;
     case AUDIO_CAP_READY:
-        snprintf(status_buf, sizeof(status_buf), "NOTE SENT");
+        snprintf(status_buf, sizeof(status_buf), "%s SENT", vst.last_command);
         color = lv_palette_main(LV_PALETTE_GREEN);
         break;
     case AUDIO_CAP_FAILED:
         if (strcmp(ast.fail_reason, "ENDPOINT NOT SET") == 0) {
-            snprintf(status_buf, sizeof(status_buf), "NOTE READY - ENDPOINT NOT SET");
+            snprintf(status_buf, sizeof(status_buf), "%s READY - ENDPOINT NOT SET", vst.last_command);
         } else {
             snprintf(status_buf, sizeof(status_buf), "UPLOAD FAILED: %s", ast.fail_reason);
         }
@@ -1090,28 +1095,28 @@ static void render_note_overlay(void)
         break;
     case AUDIO_CAP_IDLE:
     default:
-        /* Brief window right after VOICE_STATE_NOTE_ACTIVE is set but
-         * before audio_capture's worker task has picked up the request
-         * yet, or right after the result hold ends but before
+        /* Brief window right after VOICE_STATE_SEND_ACTIVE/NOTE_ACTIVE is
+         * set but before audio_capture's worker task has picked up the
+         * request yet, or right after the result hold ends but before
          * voice_control.c returns to LISTENING. */
         snprintf(status_buf, sizeof(status_buf), "STARTING...");
         break;
     }
-    lv_label_set_text(note_status_label, status_buf);
-    lv_obj_set_style_text_color(note_status_label, color, 0);
+    lv_label_set_text(recording_status_label, status_buf);
+    lv_obj_set_style_text_color(recording_status_label, color, 0);
 
     if (recording) {
-        lv_obj_clear_flag(note_dot, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(recording_dot, LV_OBJ_FLAG_HIDDEN);
     } else {
-        lv_obj_add_flag(note_dot, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(recording_dot, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
-/* GO graph-trigger overlay (Mission 13): same shape as the NOTE overlay -
- * visible for the whole GRAPH_ACTIVE cycle, content read straight from
- * voice_status_t (run_go_command() blocks for the whole request+hold, same
- * as run_note_command() does for NOTE, so this is current truth the whole
- * time it's shown). */
+/* GO graph-trigger overlay (Mission 13): same shape as the recording
+ * overlay above - visible for the whole GRAPH_ACTIVE cycle, content read
+ * straight from voice_status_t (run_go_command() blocks for the whole
+ * request+hold, same as run_send_command()/run_note_command() do for
+ * SEND/NOTE, so this is current truth the whole time it's shown). */
 static void render_graph_overlay(void)
 {
     voice_status_t vst;
@@ -1158,9 +1163,8 @@ static void voice_ui_timer_cb(lv_timer_t *t)
     for (int i = 0; i < count; i++) {
         log_event(EVT_VOICE, drained[i].message);
     }
-    render_voice_panel();
     render_command_overlay();
-    render_note_overlay();
+    render_recording_overlay();
     render_graph_overlay();
 }
 
@@ -1239,27 +1243,76 @@ static void send_handshake_button_cb(lv_event_t *e)
     handle_command("SND", true);
 }
 
-/* RECORD control (Mission 10). Only logs/counts as a command when
- * audio_capture_start() actually accepts it - same in-flight-guard
- * discipline as SND above: a press rejected because a capture is already
- * running (or the mic never came up) had no effect, so it should not show
- * up in the command history or Black Box as if it did. render_audio_panel
- * already carries the truthful state/progress story on its own row; this
- * handler only ever starts a capture, never blocks waiting for one. */
-static void rec_button_cb(lv_event_t *e)
+/* ---- Nav bar (Mission 14): HOME/SENS/LOG page switching + TALK -------
+ * set_active_page shows the requested page's container and hides the other
+ * two, and re-colors nav_buttons[] so the current tab stays visibly
+ * highlighted - same "current truth, no history" spirit as the render_*
+ * panels above, just for which page is on screen rather than a data value. */
+static void set_active_page(app_page_t page)
 {
-    if (!audio_capture_start()) {
-        return;
+    lv_obj_t *pages[APP_PAGE_COUNT] = { page_home, page_sens, page_log };
+    for (int i = 0; i < APP_PAGE_COUNT; i++) {
+        if (i == (int)page) {
+            lv_obj_clear_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
+        }
+        lv_obj_set_style_bg_color(nav_buttons[i], i == (int)page ? lv_palette_main(LV_PALETTE_BLUE)
+                                                                   : lv_palette_main(LV_PALETTE_GREY), 0);
     }
-    handle_command("REC", true);
+
+    /* Mission 15: the LVGL-builtin FPS/CPU readout (CONFIG_LV_USE_PERF_
+     * MONITOR) is normally a permanent overlay on the display's system
+     * layer, independent of which screen/page is active - lv_display_create
+     * turns it on unconditionally at boot, before this file ever runs. To
+     * make it "on the LOG page" specifically, explicitly show/hide it here
+     * on every page switch rather than leaving LVGL's own always-on
+     * behavior in place. Mission 19 additionally reparents the label itself
+     * into LOG's own NET/SND/CLR row (see status_deck_ui()) - this call
+     * still just toggles LV_OBJ_FLAG_HIDDEN on it either way, regardless of
+     * which object is currently its parent. */
+    if (page == APP_PAGE_LOG) {
+        lv_sysmon_show_performance(NULL);
+    } else {
+        lv_sysmon_hide_performance(NULL);
+    }
 }
 
-/* STOP control on the NOTE recording overlay (Mission 13). Calls straight
- * into audio_capture.c - no reason to route through voice_control.c, which
- * is already just polling audio_capture_get_status() waiting for this to
- * take effect. Harmless if pressed outside RECORDING (see
- * audio_capture_stop()'s doc comment). */
-static void note_stop_button_cb(lv_event_t *e)
+static void home_nav_button_cb(lv_event_t *e)
+{
+    set_active_page(APP_PAGE_HOME);
+}
+
+static void sens_nav_button_cb(lv_event_t *e)
+{
+    set_active_page(APP_PAGE_SENS);
+}
+
+static void log_nav_button_cb(lv_event_t *e)
+{
+    set_active_page(APP_PAGE_LOG);
+}
+
+/* TALK: retires the old manual REC button. Rather than starting a capture
+ * directly, this fakes a wake-word detection so the real MultiNet command
+ * window opens (see voice_control_manual_wake()'s comment in
+ * voice_control.c) - pressing TALK then saying "send" is now how a manual
+ * capture happens. No in-flight guard needed here the way rec_button_cb had
+ * one: voice_control_manual_wake() is a fire-and-forget request that
+ * detect_task silently ignores if a window is already open or the pipeline
+ * never started, so there is no "rejected press" case for handle_command to
+ * avoid logging. */
+static void talk_button_cb(lv_event_t *e)
+{
+    voice_control_manual_wake();
+}
+
+/* STOP control on the shared SEND/NOTE recording overlay (Mission 13).
+ * Calls straight into audio_capture.c - no reason to route through
+ * voice_control.c, which is already just polling audio_capture_get_status()
+ * waiting for this to take effect. Harmless if pressed outside RECORDING
+ * (see audio_capture_stop()'s doc comment). */
+static void recording_stop_button_cb(lv_event_t *e)
 {
     audio_capture_stop();
 }
@@ -1300,6 +1353,14 @@ static void sensor_timer_cb(lv_timer_t *t)
     if (got_sample) {
         lv_chart_set_next_value(chart, accel_series, (int32_t)lroundf(accel_snapshot * 100));
         accel_samples_push(accel_snapshot);
+        /* Mission 19: live numeric readout, left of the chart - updated
+         * whenever a fresh sample lands, same as the chart point next to
+         * it; left showing the last real value (not blanked) while stale,
+         * same "last confirmed evidence" convention render_wifi_panel etc.
+         * use for their own current-truth reads. */
+        char accel_buf[8];
+        snprintf(accel_buf, sizeof(accel_buf), "%.2fg", (double)accel_snapshot);
+        lv_label_set_text(accel_value_label, accel_buf);
         if (sensor_status == SRC_UNKNOWN) {
             sensor_status = SRC_CURRENT;
             log_sensor_event("FIRST DATA");
@@ -1314,7 +1375,6 @@ static void sensor_timer_cb(lv_timer_t *t)
             log_sensor_event("SOURCE STALE");
         }
     }
-    render_sensor_panel();
 }
 
 /* Boot-time hardware probe: bsp_sensor_init/iot_sensor_create fail
@@ -1352,6 +1412,96 @@ static void live_data_deck_init(void)
     log_sensor_event("SENSOR INIT");
 }
 
+/* ---- Environment/chart: slow timer, matched to HUMITURE_ACQUIRE_PERIOD_MS
+ * -------------------------------------------------------------------------
+ * Same shape as sensor_timer_cb above, just against the shared humiture
+ * status/staleness pair instead of the IMU's - see the Environment Deck
+ * comment for why temperature and humidity aren't tracked separately. */
+static void humiture_timer_cb(lv_timer_t *t)
+{
+    if (!humiture_present) {
+        return;
+    }
+
+    portENTER_CRITICAL(&humiture_mux);
+    bool got_temp = temp_have_new_sample;
+    bool got_humi = humi_have_new_sample;
+    temp_have_new_sample = false;
+    humi_have_new_sample = false;
+    int64_t last_good = humiture_last_good_us;
+    float temp_snapshot = last_temperature_c;
+    float humi_snapshot = last_humidity_pct;
+    portEXIT_CRITICAL(&humiture_mux);
+
+    if (got_temp) {
+        /* AHT30 reports plain Celsius (see the Environment Deck comment) -
+         * converted to Fahrenheit here, once, and reused for both the
+         * chart point and the value label so they can never disagree. */
+        float temp_f = temp_snapshot * 9.0f / 5.0f + 32.0f;
+        lv_chart_set_next_value(temp_chart, temp_series, (int32_t)lroundf(temp_f));
+        char temp_buf[12];
+        snprintf(temp_buf, sizeof(temp_buf), "%.1fF", (double)temp_f);
+        lv_label_set_text(temp_value_label, temp_buf);
+    }
+    if (got_humi) {
+        lv_chart_set_next_value(humi_chart, humi_series, (int32_t)lroundf(humi_snapshot));
+        char humi_buf[8];
+        snprintf(humi_buf, sizeof(humi_buf), "%.0f%%", (double)humi_snapshot);
+        lv_label_set_text(humi_value_label, humi_buf);
+    }
+
+    if (got_temp || got_humi) {
+        if (humiture_status == SRC_UNKNOWN) {
+            humiture_status = SRC_CURRENT;
+            log_sensor_event("HUMITURE FIRST DATA");
+        } else if (humiture_status == SRC_STALE) {
+            humiture_status = SRC_CURRENT;
+            log_sensor_event("HUMITURE RECOVERED");
+        }
+    } else if (humiture_status == SRC_CURRENT) {
+        int64_t age_us = esp_timer_get_time() - last_good;
+        if (age_us > HUMITURE_STALE_THRESHOLD_US) {
+            humiture_status = SRC_STALE;
+            log_sensor_event("HUMITURE STALE");
+        }
+    }
+}
+
+/* Boot-time hardware probe, same contract as live_data_deck_init above: the
+ * AHT30 on the SENSOR dock is optional add-on hardware, so a failed probe
+ * here (dock not attached) is an expected, honestly-reported outcome, not
+ * an error - the TEMP/HUMIDITY charts simply stay empty for the boot, same
+ * as the ACCEL chart would if the IMU ever failed to probe. */
+static void humiture_deck_init(void)
+{
+    static sensor_handle_t humiture_handle;
+    bsp_sensor_config_t cfg = {
+        .type = HUMITURE_ID,
+        .mode = MODE_POLLING,
+        .period = HUMITURE_ACQUIRE_PERIOD_MS,
+    };
+
+    esp_err_t err = bsp_sensor_init(&cfg, &humiture_handle);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "AHT30 not detected (err=%s)", esp_err_to_name(err));
+        log_sensor_event("HUMITURE INIT FAILED");
+        blackbox_save_fault("HUMITURE INIT FAILED");
+        return;
+    }
+
+    err = iot_sensor_start(humiture_handle);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "AHT30 start failed (err=%s)", esp_err_to_name(err));
+        log_sensor_event("HUMITURE INIT FAILED");
+        blackbox_save_fault("HUMITURE INIT FAILED");
+        return;
+    }
+
+    iot_sensor_handler_register(humiture_handle, humiture_event_handler, NULL);
+    humiture_present = true;
+    log_sensor_event("HUMITURE INIT");
+}
+
 /* ---- Layout ----------------------------------------------------------- */
 
 void status_deck_ui(lv_obj_t *scr)
@@ -1370,55 +1520,90 @@ void status_deck_ui(lv_obj_t *scr)
              reset_reason_str(blackbox.prev_reset_reason), blackbox.last_significant_cmd,
              blackbox.last_fault[0] ? blackbox.last_fault : "(none)");
 
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, "HOMEBOUND STATUS DECK");
+    /* Mission 14: three pages (320 x 180, TOP_LEFT at 0,0 - same origin
+     * `scr` itself used before) stacked in the same area above the nav bar,
+     * only one visible at a time via set_active_page(). Borderless/
+     * transparent so their contents look exactly as they did floating
+     * directly on `scr` before this split. 180 matches the nav bar's own
+     * geometry below (56 tall, BOTTOM_MID -4 => top edge at 240-4-56 =
+     * 180), so pages and nav bar meet with no gap or overlap. */
+    lv_obj_t *pages_init[APP_PAGE_COUNT];
+    for (int i = 0; i < APP_PAGE_COUNT; i++) {
+        lv_obj_t *page = lv_obj_create(scr);
+        lv_obj_set_size(page, 320, 180);
+        lv_obj_align(page, LV_ALIGN_TOP_LEFT, 0, 0);
+        lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(page, 0, 0);
+        lv_obj_set_style_radius(page, 0, 0);
+        lv_obj_set_style_pad_all(page, 0, 0);
+        lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
+        pages_init[i] = page;
+    }
+    page_home = pages_init[APP_PAGE_HOME];
+    page_sens = pages_init[APP_PAGE_SENS];
+    page_log = pages_init[APP_PAGE_LOG];
+
+    /* ---- HOME: title + UP/WIFI + VoiceListeningWidget -------------------- */
+
+    /* Mission 15: renamed from "HOMEBOUND STATUS DECK", set in blue - both
+     * the front label and its faux-bold offset copy get the color so the
+     * bold effect (see comment below) still reads as one solid-looking
+     * title, not two mismatched layers. */
+    lv_obj_t *title = lv_label_create(page_home);
+    lv_label_set_text(title, "OPERATION HOMEBOUND");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(title, lv_palette_main(LV_PALETTE_BLUE), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 2);
 
     /* Faux-bold: LVGL's bundled Montserrat has no bold weight, so draw a
      * second copy offset by 1px to thicken the strokes. */
-    lv_obj_t *title_bold = lv_label_create(scr);
-    lv_label_set_text(title_bold, "HOMEBOUND STATUS DECK");
+    lv_obj_t *title_bold = lv_label_create(page_home);
+    lv_label_set_text(title_bold, "OPERATION HOMEBOUND");
     lv_obj_set_style_text_font(title_bold, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(title_bold, lv_palette_main(LV_PALETTE_BLUE), 0);
     lv_obj_align(title_bold, LV_ALIGN_TOP_MID, 1, 2);
 
-    /* Status grid: 2 rows x 2 columns (UP/ACC, then WIFI/HS), replacing the
-     * five stacked single-line rows Mission 09 originally had. Same
-     * TOP_LEFT/TOP_RIGHT pairing the old mode_label/link_label row used
-     * back in Mission 05-08. All four panel functions were shortened to
-     * fit a half-width column - see their comments. */
-    telemetry_label = lv_label_create(scr);
+    /* UP/WIFI (Mission 15): now one row (was UP alone, with WIFI on its own
+     * row below) - HS dropped entirely (see the file header comment), which
+     * freed the row WIFI used to occupy. */
+    telemetry_label = lv_label_create(page_home);
     lv_obj_align(telemetry_label, LV_ALIGN_TOP_LEFT, 8, 26);
 
-    sensor_label = lv_label_create(scr);
-    lv_obj_align(sensor_label, LV_ALIGN_TOP_RIGHT, -8, 26);
-
-    conn_label = lv_label_create(scr);
-    lv_obj_align(conn_label, LV_ALIGN_TOP_LEFT, 8, 44);
+    conn_label = lv_label_create(page_home);
+    lv_obj_align(conn_label, LV_ALIGN_TOP_RIGHT, -8, 26);
     lv_label_set_text(conn_label, "WIFI: OFF");
 
-    hs_label = lv_label_create(scr);
-    lv_obj_align(hs_label, LV_ALIGN_TOP_RIGHT, -8, 44);
-    lv_label_set_text(hs_label, "HS: READY");
+    /* Mission 17: AUD's status row and the widget's own caption/label are
+     * both dropped (see the file header comment) so the VoiceListeningWidget
+     * can take over nearly all of the remaining page. Mission 18 nudges it
+     * up from y=44 to y=28 for more clearance above the nav bar below the
+     * page - safe to sit this close under the UP/WIFI row above despite the
+     * y-ranges overlapping on paper, since UP/WIFI sit at the left/right
+     * edges (x=8 / x=-8) while the widget is horizontally centered; their
+     * actual pixels never touch. Mission 19 keeps this same y=28 top (it
+     * was already right) and grows the widget itself (130px -> 148px, see
+     * voice_listening_widget.c) so the bottom now reaches y=176, just
+     * above the page's own bottom edge at 180 (and the nav bar right
+     * below it), instead of leaving a visible gap. */
+    lv_obj_t *voice_widget = voice_listening_widget_create(page_home);
+    lv_obj_align(voice_widget, LV_ALIGN_TOP_MID, 0, 28);
 
-    /* Audio Capture Deck (Mission 10): a third, full-width status row below
-     * WIFI/HS - a truthful capture readout needs more than a half-width
-     * column (state word plus elapsed/target or artifact name). The 16px
-     * this needed came out of the chart below (64px -> 48px), not the log
-     * panel or button row - see the chart comment just below. */
-    audio_label = lv_label_create(scr);
-    lv_obj_align(audio_label, LV_ALIGN_TOP_MID, 0, 60);
-    lv_label_set_text(audio_label, "AUD: READY (REC to capture)");
+    /* ---- SENS: three stacked trend charts, each a third of the page ----- */
 
-    /* Voice Deck (Mission 11): a fourth full-width status row below AUD -
-     * same reasoning as AUD's own comment above, the WakeNet/MultiNet state
-     * word plus a recognized command needs more than a half-width column.
-     * The 16px this needed came out of the chart below (48px -> 32px), same
-     * "borrow from the chart, not the log or button row" precedent Mission
-     * 10 set. */
-    voice_label = lv_label_create(scr);
-    lv_obj_align(voice_label, LV_ALIGN_TOP_MID, 0, 76);
-    lv_label_set_text(voice_label, "VOICE: LISTENING (say \"computer\")");
+    /* Band layout: 180 / 3 = 60px each (caption + value/chart row), same
+     * for all three - ACCEL (y 0-60), TEMP (y 60-120), HUMIDITY (y
+     * 120-180). Caption stays centered above the row (quantity, unit, fixed
+     * axis range - see the chart globals' comment for why a caption
+     * substitutes for real tick labels); below it, a live numeric reading
+     * (48px, left) sits beside the chart (250px, right) instead of the
+     * chart alone spanning the full 304px width. */
+    lv_obj_t *accel_caption = lv_label_create(page_sens);
+    lv_label_set_text(accel_caption, "ACCEL (G)  0.50 - 1.50");
+    lv_obj_align(accel_caption, LV_ALIGN_TOP_MID, 0, 2);
+
+    accel_value_label = lv_label_create(page_sens);
+    lv_label_set_text(accel_value_label, "--");
+    lv_obj_align(accel_value_label, LV_ALIGN_TOP_LEFT, 8, 30);
 
     /* Acceleration-magnitude trend line, zoomed to 0.50-1.50g (was a fixed
      * 0.00-4.00g). At rest the board reads ~1.00g regardless of
@@ -1428,69 +1613,160 @@ void status_deck_ui(lv_obj_t *scr)
      * range is still fixed/static, not autoscaling, so a genuinely hard
      * shake can still peg or clip at an edge - a known, accepted limit of
      * a static range, same tradeoff as before, just recentered on the
-     * value that actually matters. Height cut ~20% (80px -> 64px) in
-     * Mission 09, another 16px (64px -> 48px) in Mission 10 for the AUD row,
-     * and another 16px (48px -> 32px) in Mission 11 for the new VOICE row -
-     * the chart is still full width and still shows the same ~10s of
-     * history, just visually shorter each time. Bottom edge (y+height)
-     * stays 124px in all three missions, so the log panel below never had
-     * to move. */
-    chart = lv_chart_create(scr);
-    lv_obj_set_size(chart, 304, 32);
-    lv_obj_align(chart, LV_ALIGN_TOP_MID, 0, 92);
+     * value that actually matters. */
+    chart = lv_chart_create(page_sens);
+    lv_obj_set_size(chart, 250, 40);
+    lv_obj_align(chart, LV_ALIGN_TOP_LEFT, 62, 18);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(chart, SENSOR_HISTORY_LEN);
     lv_chart_set_update_mode(chart, LV_CHART_UPDATE_MODE_SHIFT);
     lv_chart_set_axis_range(chart, LV_CHART_AXIS_PRIMARY_Y, 50, 150);
     accel_series = lv_chart_add_series(chart, lv_palette_main(LV_PALETTE_BLUE), LV_CHART_AXIS_PRIMARY_Y);
 
+    /* Mission 19: Fahrenheit, not Celsius - range narrowed to 60-90F (a
+     * realistic indoor band) from the old 0-50C, same "zoom to where the
+     * real signal lives" reasoning as ACCEL's 0.50-1.50g range above.
+     * humiture_timer_cb converts the AHT30's plain-Celsius reading (see the
+     * Environment Deck comment on sensor_data_t's "dCelsius" field being
+     * mislabeled) to F before pushing it here or into temp_value_label. */
+    lv_obj_t *temp_caption = lv_label_create(page_sens);
+    lv_label_set_text(temp_caption, "TEMP (F)  60 - 90");
+    lv_obj_align(temp_caption, LV_ALIGN_TOP_MID, 0, 62);
+
+    temp_value_label = lv_label_create(page_sens);
+    lv_label_set_text(temp_value_label, "--");
+    lv_obj_align(temp_value_label, LV_ALIGN_TOP_LEFT, 8, 90);
+
+    temp_chart = lv_chart_create(page_sens);
+    lv_obj_set_size(temp_chart, 250, 40);
+    lv_obj_align(temp_chart, LV_ALIGN_TOP_LEFT, 62, 78);
+    lv_chart_set_type(temp_chart, LV_CHART_TYPE_LINE);
+    lv_chart_set_point_count(temp_chart, HUMITURE_HISTORY_LEN);
+    lv_chart_set_update_mode(temp_chart, LV_CHART_UPDATE_MODE_SHIFT);
+    lv_chart_set_axis_range(temp_chart, LV_CHART_AXIS_PRIMARY_Y, 60, 90);
+    temp_series = lv_chart_add_series(temp_chart, lv_palette_main(LV_PALETTE_ORANGE), LV_CHART_AXIS_PRIMARY_Y);
+
+    lv_obj_t *humi_caption = lv_label_create(page_sens);
+    lv_label_set_text(humi_caption, "HUMIDITY (%)  0 - 100");
+    lv_obj_align(humi_caption, LV_ALIGN_TOP_MID, 0, 122);
+
+    humi_value_label = lv_label_create(page_sens);
+    lv_label_set_text(humi_value_label, "--");
+    lv_obj_align(humi_value_label, LV_ALIGN_TOP_LEFT, 8, 150);
+
+    humi_chart = lv_chart_create(page_sens);
+    lv_obj_set_size(humi_chart, 250, 40);
+    lv_obj_align(humi_chart, LV_ALIGN_TOP_LEFT, 62, 138);
+    lv_chart_set_type(humi_chart, LV_CHART_TYPE_LINE);
+    lv_chart_set_point_count(humi_chart, HUMITURE_HISTORY_LEN);
+    lv_chart_set_update_mode(humi_chart, LV_CHART_UPDATE_MODE_SHIFT);
+    lv_chart_set_axis_range(humi_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 100);
+    humi_series = lv_chart_add_series(humi_chart, lv_palette_main(LV_PALETTE_CYAN), LV_CHART_AXIS_PRIMARY_Y);
+
+    /* ---- LOG: Black Box panel (as tall as the page allows) + NET/SND/CLR */
+
     /* No "EVENT LOG" title label inside the panel (Mission 05 had one) -
-     * the panel's content is self-evident without it. Shows only
-     * EVENT_DISPLAY_LINES of the EVENT_HISTORY_LEN records the black box
-     * actually retains. Grown from 32px/2 lines to 48px/3 lines with the
-     * height the chart gave up in Mission 09 - actually uses the space for
-     * more visible history, not just a bigger empty box. Y shifted up 2px
-     * (130 -> 128) in Mission 10 to track the chart's new bottom edge. */
-    lv_obj_t *log_panel = lv_obj_create(scr);
-    lv_obj_set_size(log_panel, 304, 48);
-    lv_obj_align(log_panel, LV_ALIGN_TOP_MID, 0, 128);
+     * the panel's content is self-evident without it. Shows all
+     * EVENT_DISPLAY_LINES == EVENT_HISTORY_LEN records the black box
+     * retains (Mission 15 grew this panel to fill nearly the whole page,
+     * leaving just enough room below for the button row - see
+     * EVENT_DISPLAY_LINES's comment). */
+    lv_obj_t *log_panel = lv_obj_create(page_log);
+    lv_obj_set_size(log_panel, 304, 112);
+    lv_obj_align(log_panel, LV_ALIGN_TOP_MID, 0, 6);
     lv_obj_set_style_pad_all(log_panel, 4, 0);
     lv_obj_clear_flag(log_panel, LV_OBJ_FLAG_SCROLLABLE);
 
     log_label = lv_label_create(log_panel);
     lv_obj_align(log_label, LV_ALIGN_TOP_LEFT, 0, 0);
 
-    lv_obj_t *btn_row = lv_obj_create(scr);
-    lv_obj_set_size(btn_row, 304, 56);
-    lv_obj_align(btn_row, LV_ALIGN_BOTTOM_MID, 0, -4);
-    lv_obj_set_style_pad_all(btn_row, 2, 0);
-    lv_obj_set_style_pad_column(btn_row, 4, 0);
-    lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(btn_row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(btn_row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    /* NET/SND/CLR (Mission 15): NET and SND moved here from HOME, next to
+     * CLR - same button callbacks the old shared bottom row used. Mission
+     * 19 widens this row to the full 304px content width and left-packs
+     * the buttons (FLEX_ALIGN_START, was SPACE_EVENLY, and each button
+     * narrowed 68px -> 54px) to leave room on the right for the FPS/CPU
+     * label reparented in below. */
+    lv_obj_t *log_btn_row = lv_obj_create(page_log);
+    lv_obj_set_size(log_btn_row, 304, 48);
+    lv_obj_align(log_btn_row, LV_ALIGN_TOP_MID, 0, 126);
+    lv_obj_set_style_pad_all(log_btn_row, 2, 0);
+    lv_obj_set_style_pad_column(log_btn_row, 5, 0);
+    lv_obj_clear_flag(log_btn_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(log_btn_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(log_btn_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     static const struct {
         const char *label;
         lv_event_cb_t cb;
-    } buttons[] = {
+    } log_buttons[] = {
         { "NET", net_button_cb },
         { "SND", send_handshake_button_cb },
-        { "REC", rec_button_cb },
         { "CLR", clear_log_button_cb },
     };
-
-    /* 4 buttons as of Mission 10 (NET/SND/REC/CLR) - width dropped from 90px
-     * to 68px so all four still fit the same 304px row (4*68 = 272px, the
-     * remaining 32px becomes gaps via LV_FLEX_ALIGN_SPACE_EVENLY, same as
-     * the 3-button layout before it). */
-    for (size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++) {
-        lv_obj_t *btn = lv_btn_create(btn_row);
-        lv_obj_set_size(btn, 68, 48);
-        lv_obj_add_event_cb(btn, buttons[i].cb, LV_EVENT_CLICKED, NULL);
+    for (size_t i = 0; i < sizeof(log_buttons) / sizeof(log_buttons[0]); i++) {
+        lv_obj_t *btn = lv_btn_create(log_btn_row);
+        lv_obj_set_size(btn, 54, 44);
+        lv_obj_add_event_cb(btn, log_buttons[i].cb, LV_EVENT_CLICKED, NULL);
 
         lv_obj_t *btn_label = lv_label_create(btn);
-        lv_label_set_text(btn_label, buttons[i].label);
+        lv_label_set_text(btn_label, log_buttons[i].label);
         lv_obj_center(btn_label);
+    }
+
+    /* Mission 19: reparent the built-in FPS/CPU label into this same row,
+     * as its 4th flex child, instead of leaving it in LVGL's own fixed
+     * bottom-right corner of the whole display (CONFIG_LV_PERF_MONITOR_
+     * ALIGN_BOTTOM_RIGHT) - which for LOG specifically landed in the nav
+     * bar's band below this page, not next to these buttons. Safe to do
+     * exactly once here: bsp_display_start() (called from main.c before
+     * status_deck_ui() runs) already triggered lv_display_create(), which
+     * unconditionally shows the performance monitor once at boot, so
+     * disp->perf_label already exists by this point - see the
+     * lv_display_private.h include above for why reaching into it is
+     * necessary and accepted. Reparenting a plain lv_obj_t label doesn't
+     * disturb the FPS/CPU auto-update observer bound to it in lv_sysmon.c
+     * (it tracks the label object itself, not its parent), so it keeps
+     * updating right where it now sits, and set_active_page()'s existing
+     * show/hide-on-page-switch calls keep working unchanged too. */
+    lv_display_t *disp = lv_display_get_default();
+    if (disp != NULL && disp->perf_label != NULL) {
+        lv_obj_set_parent(disp->perf_label, log_btn_row);
+    }
+
+    /* ---- Nav bar: HOME/SENS/LOG/TALK, always on screen, own row on `scr`
+     * (not inside any page) - same size/position the old NET/SND/REC/CLR
+     * row used, so the overlays below (already sized to cover it) still
+     * cover exactly the same area. */
+    lv_obj_t *nav_row = lv_obj_create(scr);
+    lv_obj_set_size(nav_row, 304, 56);
+    lv_obj_align(nav_row, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_set_style_pad_all(nav_row, 2, 0);
+    lv_obj_set_style_pad_column(nav_row, 4, 0);
+    lv_obj_clear_flag(nav_row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(nav_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(nav_row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    static const struct {
+        const char *label;
+        lv_event_cb_t cb;
+    } nav_button_defs[] = {
+        { "HOME", home_nav_button_cb },
+        { "SENS", sens_nav_button_cb },
+        { "LOG",  log_nav_button_cb },
+        { "TALK", talk_button_cb },
+    };
+    for (size_t i = 0; i < sizeof(nav_button_defs) / sizeof(nav_button_defs[0]); i++) {
+        lv_obj_t *btn = lv_btn_create(nav_row);
+        lv_obj_set_size(btn, 68, 48);
+        lv_obj_add_event_cb(btn, nav_button_defs[i].cb, LV_EVENT_CLICKED, NULL);
+
+        lv_obj_t *btn_label = lv_label_create(btn);
+        lv_label_set_text(btn_label, nav_button_defs[i].label);
+        lv_obj_center(btn_label);
+
+        if (i < (size_t)APP_PAGE_COUNT) {
+            nav_buttons[i] = btn;
+        }
     }
 
     /* Command Window overlay (Mission 12): full-screen, built last so it
@@ -1556,50 +1832,51 @@ void status_deck_ui(lv_obj_t *scr)
     lv_label_set_text(cmd_status_label, "");
     lv_obj_align(cmd_status_label, LV_ALIGN_BOTTOM_MID, 0, -8);
 
-    /* NOTE recording overlay (Mission 13) - same full-screen style as
-     * cmd_overlay above, own content: ID, a recording dot + elapsed timer
-     * (or ARMING/UPLOADING/result text - see render_note_overlay()), and a
-     * real touchable STOP button. */
-    note_overlay = lv_obj_create(scr);
-    lv_obj_set_size(note_overlay, 320, 240);
-    lv_obj_align(note_overlay, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(note_overlay, lv_palette_darken(LV_PALETTE_BLUE_GREY, 4), 0);
-    lv_obj_set_style_bg_opa(note_overlay, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(note_overlay, 0, 0);
-    lv_obj_set_style_border_width(note_overlay, 0, 0);
-    lv_obj_clear_flag(note_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(note_overlay, LV_OBJ_FLAG_HIDDEN);
+    /* Shared SEND/NOTE recording overlay (Mission 13) - same full-screen
+     * style as cmd_overlay above, own content: a title naming which command
+     * is active, ID, a recording dot + elapsed timer (or ARMING/UPLOADING/
+     * result text - see render_recording_overlay()), and a real touchable
+     * STOP button. */
+    recording_overlay = lv_obj_create(scr);
+    lv_obj_set_size(recording_overlay, 320, 240);
+    lv_obj_align(recording_overlay, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(recording_overlay, lv_palette_darken(LV_PALETTE_BLUE_GREY, 4), 0);
+    lv_obj_set_style_bg_opa(recording_overlay, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(recording_overlay, 0, 0);
+    lv_obj_set_style_border_width(recording_overlay, 0, 0);
+    lv_obj_clear_flag(recording_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(recording_overlay, LV_OBJ_FLAG_HIDDEN);
 
-    lv_obj_t *note_title = lv_label_create(note_overlay);
-    lv_label_set_text(note_title, "RECORDING NOTE");
-    lv_obj_set_style_text_font(note_title, &lv_font_montserrat_20, 0);
-    lv_obj_align(note_title, LV_ALIGN_TOP_MID, 0, 8);
+    recording_title = lv_label_create(recording_overlay);
+    lv_label_set_text(recording_title, "RECORDING");
+    lv_obj_set_style_text_font(recording_title, &lv_font_montserrat_20, 0);
+    lv_obj_align(recording_title, LV_ALIGN_TOP_MID, 0, 8);
 
-    note_id_label = lv_label_create(note_overlay);
-    lv_label_set_text(note_id_label, "ID:");
-    lv_obj_align(note_id_label, LV_ALIGN_TOP_MID, 0, 40);
+    recording_id_label = lv_label_create(recording_overlay);
+    lv_label_set_text(recording_id_label, "ID:");
+    lv_obj_align(recording_id_label, LV_ALIGN_TOP_MID, 0, 40);
 
     /* Small filled circle, shown only while actually RECORDING - see
-     * render_note_overlay(). A real shape rather than a Unicode glyph so it
-     * renders regardless of which characters the bundled font covers. */
-    note_dot = lv_obj_create(note_overlay);
-    lv_obj_set_size(note_dot, 14, 14);
-    lv_obj_set_style_radius(note_dot, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(note_dot, lv_palette_main(LV_PALETTE_RED), 0);
-    lv_obj_set_style_border_width(note_dot, 0, 0);
-    lv_obj_clear_flag(note_dot, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_align(note_dot, LV_ALIGN_CENTER, -40, -10);
+     * render_recording_overlay(). A real shape rather than a Unicode glyph
+     * so it renders regardless of which characters the bundled font covers. */
+    recording_dot = lv_obj_create(recording_overlay);
+    lv_obj_set_size(recording_dot, 14, 14);
+    lv_obj_set_style_radius(recording_dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(recording_dot, lv_palette_main(LV_PALETTE_RED), 0);
+    lv_obj_set_style_border_width(recording_dot, 0, 0);
+    lv_obj_clear_flag(recording_dot, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(recording_dot, LV_ALIGN_CENTER, -40, -10);
 
-    note_status_label = lv_label_create(note_overlay);
-    lv_label_set_text(note_status_label, "");
-    lv_obj_set_style_text_font(note_status_label, &lv_font_montserrat_20, 0);
-    lv_obj_align(note_status_label, LV_ALIGN_CENTER, 10, -10);
+    recording_status_label = lv_label_create(recording_overlay);
+    lv_label_set_text(recording_status_label, "");
+    lv_obj_set_style_text_font(recording_status_label, &lv_font_montserrat_20, 0);
+    lv_obj_align(recording_status_label, LV_ALIGN_CENTER, 10, -10);
 
-    lv_obj_t *stop_btn = lv_btn_create(note_overlay);
+    lv_obj_t *stop_btn = lv_btn_create(recording_overlay);
     lv_obj_set_size(stop_btn, 220, 56);
     lv_obj_align(stop_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
     lv_obj_set_style_bg_color(stop_btn, lv_palette_main(LV_PALETTE_RED), 0);
-    lv_obj_add_event_cb(stop_btn, note_stop_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(stop_btn, recording_stop_button_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *stop_label = lv_label_create(stop_btn);
     lv_label_set_text(stop_label, "STOP");
     lv_obj_set_style_text_font(stop_label, &lv_font_montserrat_20, 0);
@@ -1634,12 +1911,11 @@ void status_deck_ui(lv_obj_t *scr)
     render_event_log();
 
     live_data_deck_init();
-    render_sensor_panel();
+    humiture_deck_init();
 
     render_wifi_panel();
     wifi_mgr_init(wifi_status_changed_cb, NULL);
 
-    render_handshake_panel();
     handshake_client_init(handshake_status_changed_cb, NULL);
 
     /* Mission 11: exactly one esp_codec_dev_handle_t for the ES7210 mic,
@@ -1656,17 +1932,16 @@ void status_deck_ui(lv_obj_t *scr)
         ESP_LOGE(TAG, "bsp_audio_codec_microphone_init failed - mic unavailable this boot");
     }
 
-    render_audio_panel();
     audio_capture_init(mic_dev, audio_status_changed_cb, NULL);
 
-    render_voice_panel();
     render_command_overlay();
-    render_note_overlay();
+    render_recording_overlay();
     render_graph_overlay();
     voice_control_init(mic_dev, voice_status_changed_cb, NULL);
 
     lv_timer_create(telemetry_timer_cb, 1000, NULL);
     lv_timer_create(sensor_timer_cb, SENSOR_ACQUIRE_PERIOD_MS, NULL);
+    lv_timer_create(humiture_timer_cb, HUMITURE_ACQUIRE_PERIOD_MS, NULL);
     /* 500ms: connection state changes on human/network timescales (seconds),
      * not the IMU's 100ms cadence - fast enough for a readable RETRY_WAIT
      * countdown without a dedicated fast timer. */
@@ -1678,4 +1953,8 @@ void status_deck_ui(lv_obj_t *scr)
     /* Same 200ms cadence as Audio Capture Deck - see voice_ui_timer_cb's
      * comment. */
     lv_timer_create(voice_ui_timer_cb, 200, NULL);
+
+    /* Boots on HOME - hides SENS/LOG and sets the nav bar's initial
+     * highlight, same as set_active_page does on every later press. */
+    set_active_page(APP_PAGE_HOME);
 }

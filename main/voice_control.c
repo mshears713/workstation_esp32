@@ -7,16 +7,20 @@
 /**
  * @file
  * @brief Mission 13 - First Real Commands: wake word + four-command
- *        MultiNet window (SEND/NOTE/GO/YES); NOTE and GO now do real work.
+ *        MultiNet window (SEND/NOTE/GO/YES); SEND, NOTE, and GO now do real
+ *        work.
  * @details feed_task/detect_task split is unchanged since Mission 11 (see
  *          feed_task/detect_task below). Mission 12 tested six words; RUN
  *          and TEST didn't read reliably and are dropped, leaving these
- *          four. SEND/YES stay recognition-only. NOTE (run_note_command)
- *          and GO (run_go_command) both block detect_task while they run -
- *          NOTE because it needs the mic (see the mic-ownership note on
- *          run_note_command), GO just because its own 5s result hold makes
- *          a blocking call the simplest correct option, not because it
- *          needs to be.
+ *          four. YES stays recognition-only. SEND (run_send_command), NOTE
+ *          (run_note_command), and GO (run_go_command) all block
+ *          detect_task while they run - SEND/NOTE because they need the mic
+ *          (see the mic-ownership note on run_send_command), GO just
+ *          because its own 5s result hold makes a blocking call the
+ *          simplest correct option, not because it needs to be. SEND and
+ *          NOTE share the exact same recording mechanics (both built on
+ *          audio_capture_start_note()) but upload to two different backend
+ *          destinations - see note_client.h vs. voice_inbox_client.h.
  */
 
 #include <string.h>
@@ -35,6 +39,7 @@
 #include "freertos/task.h"
 #include "audio_capture.h"
 #include "note_client.h"
+#include "voice_inbox_client.h"
 #include "graph_client.h"
 #include "voice_control.h"
 
@@ -71,18 +76,18 @@ static const voice_command_def_t COMMAND_DEFS[] = {
  * screen, and speak one of four words rather than one fixed phrase. */
 #define COMMAND_WINDOW_MS 10000
 
-/* SEND/YES highlight hold ("approximately one to two seconds" per the
- * directive). NOTE/GO don't use this - their screen time is the recording/
- * request itself plus RESULT_DISPLAY_MS below. */
+/* YES highlight hold ("approximately one to two seconds" per the
+ * directive). SEND/NOTE/GO don't use this - their screen time is the
+ * recording/request itself plus RESULT_DISPLAY_MS below. */
 #define COMMAND_HIGHLIGHT_MS 1500
 
 /* TIMEOUT/UNRECOGNIZED hold before returning to LISTENING. */
 #define COMMAND_BRIEF_MS 1000
 
-/* NOTE and GO's final-result hold ("briefly (5 seconds)" per the directive). */
+/* SEND, NOTE, and GO's final-result hold ("briefly (5 seconds)" per the directive). */
 #define RESULT_DISPLAY_MS 5000
 
-/* Bounded wait for a NOTE recording+upload to return to IDLE before giving
+/* Bounded wait for a SEND/NOTE recording+upload to return to IDLE before giving
  * up on the mic handoff - must clear AUDIO_NOTE_MAX_DURATION_MS (60s) plus
  * upload timeout plus hold, or this would reopen the mic for listening
  * while the worker task is still mid-recording. Not expected to be hit in
@@ -106,6 +111,14 @@ static void *s_cb_ctx = NULL;
 
 static esp_codec_dev_handle_t s_mic_dev = NULL;
 static volatile mic_owner_t s_mic_owner = MIC_OWNER_LISTENING;
+
+/* Mission 14: set by voice_control_manual_wake() (LVGL task, TALK button),
+ * consumed by detect_task (below) the same way s_mic_owner is read across
+ * tasks elsewhere in this file - a single-word flag, no critical section
+ * needed. Only ever cleared by detect_task itself, at the point it actually
+ * acts on the request, so a press that arrives while a command window is
+ * already open is not lost - it just waits for the next opportunity. */
+static volatile bool s_manual_wake_requested = false;
 
 static const esp_afe_sr_iface_t *s_afe_handle = NULL;
 static esp_afe_sr_data_t *s_afe_data = NULL;
@@ -206,11 +219,95 @@ static void voice_mic_close(void)
     esp_codec_dev_close(s_mic_dev);
 }
 
-/* NOTE: same mic-ownership handoff Mission 11's "capture" command used
+/* SEND: same mic-ownership handoff Mission 11's "capture" command used
  * (flip s_mic_owner, close the listening session, let audio_capture.c own
  * the mic, wait for it to finish, reopen listening), now around
  * audio_capture_start_note() instead of plain audio_capture_start(). STOP
  * (status_deck_ui.c) calls audio_capture_stop() directly, not through here. */
+static void run_send_command(void)
+{
+    char request_id[REQUEST_ID_LEN];
+    generate_request_id("SEND", request_id, sizeof(request_id));
+
+    portENTER_CRITICAL(&s_mux);
+    s_status.state = VOICE_STATE_SEND_ACTIVE;
+    s_status.command_count++;
+    s_status.last_command_id = VOICE_CMD_SEND;
+    strncpy(s_status.last_command, "SEND", sizeof(s_status.last_command) - 1);
+    s_status.last_command[sizeof(s_status.last_command) - 1] = '\0';
+    strncpy(s_status.active_request_id, request_id, sizeof(s_status.active_request_id) - 1);
+    s_status.active_request_id[sizeof(s_status.active_request_id) - 1] = '\0';
+    portEXIT_CRITICAL(&s_mux);
+
+    char msg[40];
+    snprintf(msg, sizeof(msg), "SEND START %s", request_id);
+    ESP_LOGI(TAG, "%s", msg);
+    notify(VOICE_STATE_SEND_ACTIVE, msg);
+
+    s_mic_owner = MIC_OWNER_CAPTURE;
+    voice_mic_close();
+
+    if (!audio_capture_start_note(request_id, note_client_submit)) {
+        /* Only realistic cause: audio_capture's own busy-guard (a capture
+         * already in flight, e.g. a manual REC press racing the wake word)
+         * or its init failed independently of us. Either way, nothing to
+         * poll for - hand the mic straight back. */
+        notify(VOICE_STATE_SEND_ACTIVE, "SEND START FAILED");
+        s_mic_owner = MIC_OWNER_LISTENING;
+        if (!voice_mic_open()) {
+            set_degraded("MIC REOPEN FAILED");
+            return;
+        }
+        set_state(VOICE_STATE_LISTENING);
+        notify(VOICE_STATE_LISTENING, "LISTENING RESTORED");
+        return;
+    }
+
+    audio_cap_status_t st;
+    int waited_ms = 0;
+    do {
+        vTaskDelay(pdMS_TO_TICKS(CAPTURE_HANDOFF_POLL_MS));
+        waited_ms += CAPTURE_HANDOFF_POLL_MS;
+        audio_capture_get_status(&st);
+    } while (st.state != AUDIO_CAP_IDLE && waited_ms < CAPTURE_HANDOFF_MAX_WAIT_MS);
+
+    s_mic_owner = MIC_OWNER_LISTENING;
+    if (!voice_mic_open()) {
+        set_degraded("MIC REOPEN FAILED");
+        return;
+    }
+
+    /* fail_reason is cleared on every successful finish (see
+     * audio_capture.c's set_ready()), so a non-empty reason here reliably
+     * means THIS attempt failed, not a stale one from an earlier note. */
+    char result_msg[56];
+    if (st.state != AUDIO_CAP_IDLE) {
+        snprintf(result_msg, sizeof(result_msg), "SEND DID NOT FINISH %s", request_id);
+    } else if (strcmp(st.fail_reason, "ENDPOINT NOT SET") == 0) {
+        snprintf(result_msg, sizeof(result_msg), "SEND READY - ENDPOINT NOT SET");
+    } else if (st.fail_reason[0] != '\0') {
+        snprintf(result_msg, sizeof(result_msg), "SEND UPLOAD FAILED: %s", st.fail_reason);
+    } else {
+        /* "SENT," not "SAVED" - the backend queues transcription/graph
+         * processing after accepting the upload; this firmware doesn't
+         * poll for that result, so it can only truthfully claim the
+         * upload itself was accepted. */
+        snprintf(result_msg, sizeof(result_msg), "SEND SENT %s", request_id);
+    }
+    ESP_LOGI(TAG, "send complete: id=%s bytes=%lu elapsed=%lums -> %s",
+             request_id, (unsigned long)st.bytes_captured, (unsigned long)st.elapsed_ms, result_msg);
+    notify(VOICE_STATE_SEND_ACTIVE, result_msg);
+    vTaskDelay(pdMS_TO_TICKS(RESULT_DISPLAY_MS));
+
+    set_state(VOICE_STATE_LISTENING);
+    notify(VOICE_STATE_LISTENING, "LISTENING RESTORED");
+}
+
+/* NOTE: identical mic-ownership handoff and recording mechanics to
+ * run_send_command() above - same audio_capture_start_note() call, same
+ * CAPTURE_HANDOFF_* polling - but uploads via voice_inbox_client_submit()
+ * instead of note_client_submit(), landing in the backend's Notion "Voice
+ * Inbox" pipeline instead of its local LangGraph pipeline. */
 static void run_note_command(void)
 {
     char request_id[REQUEST_ID_LEN];
@@ -234,7 +331,7 @@ static void run_note_command(void)
     s_mic_owner = MIC_OWNER_CAPTURE;
     voice_mic_close();
 
-    if (!audio_capture_start_note(request_id, note_client_submit)) {
+    if (!audio_capture_start_note(request_id, voice_inbox_client_submit)) {
         /* Only realistic cause: audio_capture's own busy-guard (a capture
          * already in flight, e.g. a manual REC press racing the wake word)
          * or its init failed independently of us. Either way, nothing to
@@ -275,10 +372,10 @@ static void run_note_command(void)
     } else if (st.fail_reason[0] != '\0') {
         snprintf(result_msg, sizeof(result_msg), "NOTE UPLOAD FAILED: %s", st.fail_reason);
     } else {
-        /* "SENT," not "SAVED" - the backend queues transcription/graph
-         * processing after accepting the upload; this firmware doesn't
-         * poll for that result, so it can only truthfully claim the
-         * upload itself was accepted. */
+        /* "SENT," not "SAVED" - the backend queues transcription/Notion-page
+         * creation after accepting the upload; this firmware doesn't poll
+         * for that result, so it can only truthfully claim the upload
+         * itself was accepted. */
         snprintf(result_msg, sizeof(result_msg), "NOTE SENT %s", request_id);
     }
     ESP_LOGI(TAG, "note complete: id=%s bytes=%lu elapsed=%lums -> %s",
@@ -292,7 +389,7 @@ static void run_note_command(void)
 
 /* GO: no mic involvement, so this just blocks on one HTTP call
  * (trigger_graph_run, same shape as note_client_submit) and holds the
- * result on screen - simpler than NOTE, not a lesser version of it. */
+ * result on screen - simpler than SEND/NOTE, not a lesser version of it. */
 static void run_go_command(void)
 {
     char request_id[REQUEST_ID_LEN];
@@ -491,13 +588,15 @@ static void detect_task(void *arg)
             continue;
         }
 
-        if (!in_command_window && res->wakeup_state == WAKENET_DETECTED) {
+        if (!in_command_window && (res->wakeup_state == WAKENET_DETECTED || s_manual_wake_requested)) {
+            bool manual = s_manual_wake_requested;
+            s_manual_wake_requested = false;
             in_command_window = true;
             multinet->clean(model_data);
             portENTER_CRITICAL(&s_mux);
             s_status.wake_count++;
             portEXIT_CRITICAL(&s_mux);
-            notify(VOICE_STATE_WAKE_DETECTED, "WAKE DETECTED");
+            notify(VOICE_STATE_WAKE_DETECTED, manual ? "WAKE (MANUAL)" : "WAKE DETECTED");
             enter_command_window();
             notify(VOICE_STATE_COMMAND_WINDOW, "COMMAND WINDOW OPEN");
             continue;
@@ -538,6 +637,10 @@ static void detect_task(void *arg)
                 snprintf(msg, sizeof(msg), "CMD %s id=%d p=%.2f", def->label, primary_id, (double)primary_prob);
                 notify(VOICE_STATE_COMMAND_RECOGNIZED, msg);
 
+                if (def->id == VOICE_CMD_SEND) {
+                    run_send_command(); /* owns its own result display + return to LISTENING */
+                    continue;
+                }
                 if (def->id == VOICE_CMD_NOTE) {
                     run_note_command(); /* owns its own result display + return to LISTENING */
                     continue;
@@ -547,7 +650,7 @@ static void detect_task(void *arg)
                     continue;
                 }
 
-                /* SEND / YES: recognition-only, unchanged from Mission 12. */
+                /* YES: recognition-only. */
                 set_command_recognized(def);
                 vTaskDelay(pdMS_TO_TICKS(COMMAND_HIGHLIGHT_MS));
             } else {
@@ -637,4 +740,9 @@ void voice_control_get_status(voice_status_t *out)
     portENTER_CRITICAL(&s_mux);
     *out = s_status;
     portEXIT_CRITICAL(&s_mux);
+}
+
+void voice_control_manual_wake(void)
+{
+    s_manual_wake_requested = true;
 }
