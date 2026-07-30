@@ -16,16 +16,19 @@
  *          a low-confidence backend notification is pending (see
  *          notification_client.h), in which case it fetches, plays over the
  *          speaker, and acks it instead - see run_notification_command() in
- *          voice_control.c. SEND and NOTE both trigger a bounded voice-note
- *          recording (see
- *          run_send_command()/run_note_command() in voice_control.c, built
- *          on audio_capture.c's proven mic path) but upload to two different
- *          backend destinations - SEND to the local LangGraph pipeline,
- *          NOTE to a Notion "Voice Inbox" page (see note_client.h vs.
- *          voice_inbox_client.h). GO fires a one-shot backend graph-trigger
- *          request (see graph_client.h). None of the three blocks WakeNet
- *          for longer than the mic-ownership handoff/request actually
- *          requires.
+ *          voice_control.c. SEND, NOTE, and GO all trigger a bounded
+ *          voice-note recording (see run_send_command()/run_note_command()/
+ *          run_go_command() in voice_control.c, built on audio_capture.c's
+ *          proven mic path) but upload to three different backend
+ *          destinations - SEND to the local LangGraph design-review-notes
+ *          pipeline, NOTE to a Notion "Voice Inbox" page, GO to the
+ *          entry-architect/Notion (Sources + Van Build Log) pipeline (see
+ *          note_client.h vs. voice_inbox_client.h vs. entry_client.h).
+ *          GO's original one-shot design-review graph trigger
+ *          (graph_client.h, no recording at all) is kept dormant, not
+ *          deleted, but is no longer what GO does. None of the three
+ *          recording commands blocks WakeNet for longer than the
+ *          mic-ownership handoff/upload actually requires.
  */
 #pragma once
 

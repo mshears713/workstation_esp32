@@ -44,13 +44,24 @@
  *          LangGraph pipeline. Same 202/200 semantics, same
  *          no-polling-for-the-result behavior.
  *
- *          GRAPH_TRIGGER_PATH: where GO's design-review graph trigger
- *          POSTs - see graph_client.c. POST {request_id} -> 202 (new run
- *          queued) / 200 (duplicate request_id) / 409 (another run already
- *          active), body {run_id, request_id, status, created_at,
- *          duplicate}. graph_client.c still checks for an empty path and
- *          reports ENDPOINT NOT SET rather than attempting a request, in
- *          case either of these ever needs to go back to unset.
+ *          GRAPH_TRIGGER_PATH: where GO's old one-shot design-review graph
+ *          trigger POSTs - see graph_client.c. POST {request_id} -> 202
+ *          (new run queued) / 200 (duplicate request_id) / 409 (another run
+ *          already active), body {run_id, request_id, status, created_at,
+ *          duplicate}. Kept dormant, not deleted: voice_control.c's GO
+ *          branch no longer calls trigger_graph_run() (see
+ *          ENTRY_UPLOAD_PATH below), but graph_client.c and the backend's
+ *          /runs + design-review graph still work if called directly.
+ *
+ *          ENTRY_UPLOAD_PATH: where a voice-triggered GO recording gets
+ *          POSTed once it finishes - see entry_client.c. Same multipart/
+ *          form-data shape as NOTE_UPLOAD_PATH/VOICE_INBOX_UPLOAD_PATH
+ *          above (request_id, source, duration_seconds, sample_rate_hz,
+ *          audio). The backend transcribes it, checks audio reliability,
+ *          then runs it through the entry-architect/Notion/semantic-
+ *          verifier pipeline (Sources + Van Build Log) - this firmware
+ *          does not poll for that result, same no-polling contract as the
+ *          other two upload paths.
  *
  *          NOTIFICATIONS_BASE_PATH: root of the low-confidence spoken-
  *          notification resource - see notification_client.c.
@@ -72,5 +83,7 @@
 #define VOICE_INBOX_UPLOAD_PATH "/api/v1/voice-inbox"
 
 #define GRAPH_TRIGGER_PATH "/runs"
+
+#define ENTRY_UPLOAD_PATH "/api/v1/entries"
 
 #define NOTIFICATIONS_BASE_PATH "/api/v1/notifications"

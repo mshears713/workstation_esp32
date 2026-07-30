@@ -621,12 +621,6 @@ static void handshake_status_changed_cb(handshake_state_t new_state, const char 
     portEXIT_CRITICAL(&handshake_pending_mux);
 }
 
-/* No pending-queue bridge for GO (unlike Handshake/Audio/Voice above) -
- * trigger_graph_run() is a single blocking call made from voice_control.c,
- * which already owns pushing GO's messages into the Black Box via its own
- * voice_pending queue. render_graph_overlay() below reads voice_status_t
- * directly, the same current-truth source render_command_overlay() uses. */
-
 /* ---- Audio Capture Deck: microphone state, bridged from a foreign task -
  * audio_capture.c's callback runs on its own worker task - never the LVGL
  * task. Same bridge shape as Connection Deck/Handshake above, and the same
@@ -662,10 +656,10 @@ static void audio_status_changed_cb(audio_cap_state_t new_state, const char *mes
 
 /* ---- Voice Deck (Mission 11): WakeNet/MultiNet state, bridged from the
  * voice_control.c detect task - never the LVGL task. Same bridge shape as
- * the Audio Capture Deck above; render_command_overlay/render_recording_overlay/
- * render_graph_overlay below read voice_control_get_status() directly for
- * current truth (state word, last command), this queue only carries
- * discrete transitions into the Black Box. */
+ * the Audio Capture Deck above; render_command_overlay/render_recording_overlay
+ * below read voice_control_get_status() directly for current truth (state
+ * word, last command), this queue only carries discrete transitions into
+ * the Black Box. */
 #define VOICE_PENDING_LEN 4
 
 typedef struct {
@@ -745,16 +739,10 @@ static lv_obj_t *recording_id_label;
 static lv_obj_t *recording_dot;
 static lv_obj_t *recording_status_label;
 
-/* GO graph-trigger overlay (Mission 13) - see render_graph_overlay() below. */
-static lv_obj_t *go_overlay;
-static lv_obj_t *go_id_label;
-static lv_obj_t *go_status_label;
-
-/* Notification-playback overlay: same shape as go_overlay (reads
- * voice_status_t.last_result directly - run_notification_command() blocks
- * for the whole fetch+play+ack cycle) plus a STOP button like the recording
- * overlay's, since playback runs long enough (5-20s) to be worth
- * interrupting, unlike GO's single HTTP round trip - see
+/* Notification-playback overlay: same shape as the recording overlay
+ * (reads voice_status_t.last_result directly - run_notification_command()
+ * blocks for the whole fetch+play+ack cycle) plus a STOP button, since
+ * playback runs long enough (5-20s) to be worth interrupting - see
  * render_notification_overlay() below. */
 static lv_obj_t *notification_overlay;
 static lv_obj_t *notification_id_label;
@@ -983,7 +971,7 @@ static const struct {
  * current-truth-only split every other render_*_panel function here uses -
  * "how did we get here" is the Black Box's job, not this overlay's. Driven
  * off the same 200ms voice_ui_timer_cb as render_recording_overlay/
- * render_graph_overlay below, so all three stay in lockstep. */
+ * render_notification_overlay below, so all stay in lockstep. */
 static void render_command_overlay(void)
 {
     voice_status_t st;
@@ -1037,23 +1025,27 @@ static void render_command_overlay(void)
 
 /* Voice-triggered recording overlay (Mission 13, generalized when NOTE
  * gained its own recording flow): visible for the whole SEND or NOTE cycle
- * (voice_control's VOICE_STATE_SEND_ACTIVE / VOICE_STATE_NOTE_ACTIVE cover
- * recording through the upload attempt and its brief result hold - mic
- * ownership is exclusive, so the two states never overlap, and one shared
- * overlay covers both without losing any information). The recording/
- * upload detail line is deliberately read from audio_capture_get_status()
- * directly, not from anything voice_control.c stores - same current-truth-
- * only split every other render_*_panel here uses, and (as of Mission 17)
- * it is the only on-screen place that shows live capture progress at all,
- * full-screen with a STOP button. Which command triggered it
- * (vst.last_command, "SEND" or "NOTE") drives the title and result text so
- * neither cycle is mislabeled as the other. */
+ * (voice_control's VOICE_STATE_SEND_ACTIVE / VOICE_STATE_NOTE_ACTIVE /
+ * VOICE_STATE_GRAPH_ACTIVE cover recording through the upload attempt and
+ * its brief result hold - mic ownership is exclusive, so the three states
+ * never overlap, and one shared overlay covers all three without losing
+ * any information. GRAPH_ACTIVE joined SEND/NOTE here once GO became a
+ * recording command like them - see run_go_command()'s comment in
+ * voice_control.c). The recording/upload detail line is deliberately read
+ * from audio_capture_get_status() directly, not from anything
+ * voice_control.c stores - same current-truth-only split every other
+ * render_*_panel here uses, and (as of Mission 17) it is the only
+ * on-screen place that shows live capture progress at all, full-screen
+ * with a STOP button. Which command triggered it (vst.last_command,
+ * "SEND"/"NOTE"/"GO") drives the title and result text so none of the
+ * three is mislabeled as another. */
 static void render_recording_overlay(void)
 {
     voice_status_t vst;
     voice_control_get_status(&vst);
 
-    bool show = (vst.state == VOICE_STATE_SEND_ACTIVE || vst.state == VOICE_STATE_NOTE_ACTIVE);
+    bool show = (vst.state == VOICE_STATE_SEND_ACTIVE || vst.state == VOICE_STATE_NOTE_ACTIVE ||
+                 vst.state == VOICE_STATE_GRAPH_ACTIVE);
     if (show) {
         lv_obj_clear_flag(recording_overlay, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(recording_overlay);
@@ -1129,39 +1121,8 @@ static void render_recording_overlay(void)
     }
 }
 
-/* GO graph-trigger overlay (Mission 13): same shape as the recording
- * overlay above - visible for the whole GRAPH_ACTIVE cycle, content read
- * straight from voice_status_t (run_go_command() blocks for the whole
- * request+hold, same as run_send_command()/run_note_command() do for
- * SEND/NOTE, so this is current truth the whole time it's shown). */
-static void render_graph_overlay(void)
-{
-    voice_status_t vst;
-    voice_control_get_status(&vst);
-
-    if (vst.state != VOICE_STATE_GRAPH_ACTIVE) {
-        lv_obj_add_flag(go_overlay, LV_OBJ_FLAG_HIDDEN);
-        return;
-    }
-    lv_obj_clear_flag(go_overlay, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(go_overlay);
-
-    char id_buf[40];
-    snprintf(id_buf, sizeof(id_buf), "ID: %s", vst.active_request_id);
-    lv_label_set_text(go_id_label, id_buf);
-
-    lv_color_t color = lv_palette_main(LV_PALETTE_BLUE);
-    if (strcmp(vst.last_result, "GRAPH ACCEPTED") == 0) {
-        color = lv_palette_main(LV_PALETTE_GREEN);
-    } else if (strcmp(vst.last_result, "STARTING GRAPH") != 0) {
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-    }
-    lv_label_set_text(go_status_label, vst.last_result);
-    lv_obj_set_style_text_color(go_status_label, color, 0);
-}
-
 /* Notification-playback overlay - see the static globals' comment above.
- * Same current-truth-from-voice_status_t reasoning as render_graph_overlay:
+ * Same current-truth-from-voice_status_t reasoning as render_recording_overlay:
  * run_notification_command() blocks for the whole fetch+play+ack cycle. */
 static void render_notification_overlay(void)
 {
@@ -1217,7 +1178,6 @@ static void voice_ui_timer_cb(lv_timer_t *t)
     }
     render_command_overlay();
     render_recording_overlay();
-    render_graph_overlay();
     render_notification_overlay();
 
     /* Cheap thread-safe struct read, not a network call - the background
@@ -1951,32 +1911,6 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_set_style_text_font(stop_label, &lv_font_montserrat_20, 0);
     lv_obj_center(stop_label);
 
-    /* GO graph-trigger overlay (Mission 13) - same full-screen style,
-     * simpler content (no timer/dot/button - see render_graph_overlay()). */
-    go_overlay = lv_obj_create(scr);
-    lv_obj_set_size(go_overlay, 320, 240);
-    lv_obj_align(go_overlay, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(go_overlay, lv_palette_darken(LV_PALETTE_BLUE_GREY, 4), 0);
-    lv_obj_set_style_bg_opa(go_overlay, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(go_overlay, 0, 0);
-    lv_obj_set_style_border_width(go_overlay, 0, 0);
-    lv_obj_clear_flag(go_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(go_overlay, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_t *go_title = lv_label_create(go_overlay);
-    lv_label_set_text(go_title, "GRAPH");
-    lv_obj_set_style_text_font(go_title, &lv_font_montserrat_20, 0);
-    lv_obj_align(go_title, LV_ALIGN_TOP_MID, 0, 8);
-
-    go_id_label = lv_label_create(go_overlay);
-    lv_label_set_text(go_id_label, "ID:");
-    lv_obj_align(go_id_label, LV_ALIGN_TOP_MID, 0, 40);
-
-    go_status_label = lv_label_create(go_overlay);
-    lv_label_set_text(go_status_label, "");
-    lv_obj_set_style_text_font(go_status_label, &lv_font_montserrat_20, 0);
-    lv_obj_align(go_status_label, LV_ALIGN_CENTER, 0, 0);
-
     /* Notification-playback overlay - same full-screen style as the others,
      * a STOP button like the recording overlay's since playback runs long
      * enough (5-20s) to be worth interrupting - see
@@ -2056,7 +1990,6 @@ void status_deck_ui(lv_obj_t *scr)
 
     render_command_overlay();
     render_recording_overlay();
-    render_graph_overlay();
     render_notification_overlay();
     voice_control_init(mic_dev, voice_status_changed_cb, NULL);
 

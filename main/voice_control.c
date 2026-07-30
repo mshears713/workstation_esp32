@@ -12,15 +12,18 @@
  * @details feed_task/detect_task split is unchanged since Mission 11 (see
  *          feed_task/detect_task below). Mission 12 tested six words; RUN
  *          and TEST didn't read reliably and are dropped, leaving these
- *          four. YES stays recognition-only. SEND (run_send_command), NOTE
+ *          four. YES is recognition-only unless a notification is pending
+ *          (see run_notification_command()). SEND (run_send_command), NOTE
  *          (run_note_command), and GO (run_go_command) all block
- *          detect_task while they run - SEND/NOTE because they need the mic
- *          (see the mic-ownership note on run_send_command), GO just
- *          because its own 5s result hold makes a blocking call the
- *          simplest correct option, not because it needs to be. SEND and
- *          NOTE share the exact same recording mechanics (both built on
- *          audio_capture_start_note()) but upload to two different backend
- *          destinations - see note_client.h vs. voice_inbox_client.h.
+ *          detect_task while they run, all for the same reason - they need
+ *          the mic (see the mic-ownership note on run_send_command). All
+ *          three share the exact same recording mechanics (built on
+ *          audio_capture_start_note()) but upload to three different
+ *          backend destinations - see note_client.h vs.
+ *          voice_inbox_client.h vs. entry_client.h. GO originally fired a
+ *          one-shot design-review graph trigger with no recording at all
+ *          (graph_client.h) - that path is kept dormant, not deleted, but
+ *          is no longer what GO does; see run_go_command()'s own comment.
  */
 
 #include <string.h>
@@ -40,7 +43,7 @@
 #include "audio_capture.h"
 #include "note_client.h"
 #include "voice_inbox_client.h"
-#include "graph_client.h"
+#include "entry_client.h"
 #include "notification_client.h"
 #include "audio_playback.h"
 #include "voice_control.h"
@@ -389,9 +392,17 @@ static void run_note_command(void)
     notify(VOICE_STATE_LISTENING, "LISTENING RESTORED");
 }
 
-/* GO: no mic involvement, so this just blocks on one HTTP call
- * (trigger_graph_run, same shape as note_client_submit) and holds the
- * result on screen - simpler than SEND/NOTE, not a lesser version of it. */
+/* GO: repurposed from its original one-shot design-review graph trigger
+ * (trigger_graph_run(), still present in graph_client.c/backend /runs but
+ * kept dormant - no longer called here, see the file header comment) to a
+ * full recording+upload command, identical in mechanics to SEND/NOTE - same
+ * mic-ownership handoff, same audio_capture_start_note() call - just
+ * uploading to a third backend destination (entry_client.c ->
+ * ENTRY_UPLOAD_PATH) that runs the recording through the backend's
+ * entry-architect/Notion pipeline (Sources + Van Build Log) instead of the
+ * local LangGraph design-review pipeline or the Notion Voice Inbox. The
+ * VOICE_STATE_GRAPH_ACTIVE state name predates this change and is kept
+ * as-is rather than renamed. */
 static void run_go_command(void)
 {
     char request_id[REQUEST_ID_LEN];
@@ -405,26 +416,66 @@ static void run_go_command(void)
     s_status.last_command[sizeof(s_status.last_command) - 1] = '\0';
     strncpy(s_status.active_request_id, request_id, sizeof(s_status.active_request_id) - 1);
     s_status.active_request_id[sizeof(s_status.active_request_id) - 1] = '\0';
-    /* Cleared here, not just set on completion below - otherwise the UI
-     * would briefly show a previous GO's stale result while this one is
-     * still in flight. */
-    strncpy(s_status.last_result, "STARTING GRAPH", sizeof(s_status.last_result) - 1);
-    s_status.last_result[sizeof(s_status.last_result) - 1] = '\0';
     portEXIT_CRITICAL(&s_mux);
 
-    ESP_LOGI(TAG, "GRAPH START %s", request_id);
-    notify(VOICE_STATE_GRAPH_ACTIVE, "GRAPH START");
+    char msg[40];
+    snprintf(msg, sizeof(msg), "GO START %s", request_id);
+    ESP_LOGI(TAG, "%s", msg);
+    notify(VOICE_STATE_GRAPH_ACTIVE, msg);
 
-    char result[48];
-    bool ok = trigger_graph_run(request_id, result, sizeof(result));
-    ESP_LOGI(TAG, "graph trigger %s: id=%s -> %s", ok ? "accepted" : "failed", request_id, result);
+    s_mic_owner = MIC_OWNER_CAPTURE;
+    voice_mic_close();
 
-    portENTER_CRITICAL(&s_mux);
-    strncpy(s_status.last_result, result, sizeof(s_status.last_result) - 1);
-    s_status.last_result[sizeof(s_status.last_result) - 1] = '\0';
-    portEXIT_CRITICAL(&s_mux);
-    notify(VOICE_STATE_GRAPH_ACTIVE, result);
+    if (!audio_capture_start_note(request_id, entry_client_submit)) {
+        /* Only realistic cause: audio_capture's own busy-guard (a capture
+         * already in flight, e.g. a manual REC press racing the wake word)
+         * or its init failed independently of us. Either way, nothing to
+         * poll for - hand the mic straight back. */
+        notify(VOICE_STATE_GRAPH_ACTIVE, "GO START FAILED");
+        s_mic_owner = MIC_OWNER_LISTENING;
+        if (!voice_mic_open()) {
+            set_degraded("MIC REOPEN FAILED");
+            return;
+        }
+        set_state(VOICE_STATE_LISTENING);
+        notify(VOICE_STATE_LISTENING, "LISTENING RESTORED");
+        return;
+    }
 
+    audio_cap_status_t st;
+    int waited_ms = 0;
+    do {
+        vTaskDelay(pdMS_TO_TICKS(CAPTURE_HANDOFF_POLL_MS));
+        waited_ms += CAPTURE_HANDOFF_POLL_MS;
+        audio_capture_get_status(&st);
+    } while (st.state != AUDIO_CAP_IDLE && waited_ms < CAPTURE_HANDOFF_MAX_WAIT_MS);
+
+    s_mic_owner = MIC_OWNER_LISTENING;
+    if (!voice_mic_open()) {
+        set_degraded("MIC REOPEN FAILED");
+        return;
+    }
+
+    /* fail_reason is cleared on every successful finish (see
+     * audio_capture.c's set_ready()), so a non-empty reason here reliably
+     * means THIS attempt failed, not a stale one from an earlier entry. */
+    char result_msg[56];
+    if (st.state != AUDIO_CAP_IDLE) {
+        snprintf(result_msg, sizeof(result_msg), "GO DID NOT FINISH %s", request_id);
+    } else if (strcmp(st.fail_reason, "ENDPOINT NOT SET") == 0) {
+        snprintf(result_msg, sizeof(result_msg), "GO READY - ENDPOINT NOT SET");
+    } else if (st.fail_reason[0] != '\0') {
+        snprintf(result_msg, sizeof(result_msg), "GO UPLOAD FAILED: %s", st.fail_reason);
+    } else {
+        /* "SENT," not "SAVED" - the backend queues transcription/entry-
+         * architect/Notion processing after accepting the upload; this
+         * firmware doesn't poll for that result, so it can only truthfully
+         * claim the upload itself was accepted. */
+        snprintf(result_msg, sizeof(result_msg), "GO SENT %s", request_id);
+    }
+    ESP_LOGI(TAG, "go complete: id=%s bytes=%lu elapsed=%lums -> %s",
+             request_id, (unsigned long)st.bytes_captured, (unsigned long)st.elapsed_ms, result_msg);
+    notify(VOICE_STATE_GRAPH_ACTIVE, result_msg);
     vTaskDelay(pdMS_TO_TICKS(RESULT_DISPLAY_MS));
 
     set_state(VOICE_STATE_LISTENING);
