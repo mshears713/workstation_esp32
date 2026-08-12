@@ -57,11 +57,16 @@
  *          POSTed once it finishes - see entry_client.c. Same multipart/
  *          form-data shape as NOTE_UPLOAD_PATH/VOICE_INBOX_UPLOAD_PATH
  *          above (request_id, source, duration_seconds, sample_rate_hz,
- *          audio). The backend transcribes it, checks audio reliability,
- *          then runs it through the entry-architect/Notion/semantic-
- *          verifier pipeline (Sources + Van Build Log) - this firmware
- *          does not poll for that result, same no-polling contract as the
- *          other two upload paths.
+ *          audio), plus one field the other two don't send: project_hint
+ *          ("van1"/"van2"/"general"/"none" - see project_selector.h), Mike's
+ *          VAN1/VAN2/GEN/NONE button selection at record time. The backend
+ *          transcribes it, checks audio reliability, then runs it through
+ *          the entry-architect/Notion/semantic-verifier pipeline (Sources +
+ *          Van Build Log) - project_hint tells the architect which
+ *          van_or_scope to use outright instead of inferring it, and "none"
+ *          tells it this recording isn't part of the van-build project at
+ *          all. This firmware does not poll for the result, same
+ *          no-polling contract as the other two upload paths.
  *
  *          NOTIFICATIONS_BASE_PATH: root of the low-confidence spoken-
  *          notification resource - see notification_client.c.
@@ -73,10 +78,19 @@
  *          POST {base}/{id}/ack -> marks it delivered. Notifications are
  *          created by the backend's own low-confidence-transcript pipeline,
  *          never by this device - there is no upload/create endpoint here.
+ *
+ *          REMOTE_BASE_PATH: root of the wireless Roku IR remote command
+ *          queue - see remote_client.c. GET {base}/pending -> {pending,
+ *          count, command_id, key, created_at}, polled aggressively (every
+ *          ~150ms, not lightly like notifications) since this drives live
+ *          TV navigation. POST {base}/{id}/ack -> drains the command after
+ *          it's been sent (or found unrecognized). Commands are created by
+ *          the PC-side control script's POST {base}/keys/{key} - see
+ *          roku-ir-remote/remote_wifi.ps1 - never by this device.
  */
 #pragma once
 
-#define BACKEND_BASE_URL "http://10.0.0.187:8000"
+#define BACKEND_BASE_URL "http://192.168.1.65:8000"
 
 #define NOTE_UPLOAD_PATH "/api/v1/notes"
 
@@ -87,3 +101,5 @@
 #define ENTRY_UPLOAD_PATH "/api/v1/entries"
 
 #define NOTIFICATIONS_BASE_PATH "/api/v1/notifications"
+
+#define REMOTE_BASE_PATH "/api/v1/remote"

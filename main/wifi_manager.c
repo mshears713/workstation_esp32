@@ -244,7 +244,14 @@ void wifi_mgr_init(wifi_mgr_event_cb_t cb, void *user_ctx)
      * example default. A WPA3-only network is a known gap; nothing here
      * detects or reports that case specially. */
     wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-    wifi_config.sta.pmf_cfg.capable = true;
+    /* capable=false, not just required=false: PMF is mandatory for
+     * WPA3-SAE, so a station that doesn't even claim PMF support gets
+     * steered toward plain WPA2-PSK by a WPA2/WPA3-mixed AP instead of
+     * being offered SAE - which this station was failing to complete
+     * (AP kept sending SAE anti-clogging "comeback time" responses).
+     * ShearsHome is presumed mixed-mode; if it's actually WPA3-only this
+     * won't help and the AP itself needs a WPA2-PSK option added. */
+    wifi_config.sta.pmf_cfg.capable = false;
     wifi_config.sta.pmf_cfg.required = false;
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));

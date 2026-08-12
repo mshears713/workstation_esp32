@@ -166,7 +166,9 @@
 #include "voice_control.h"
 #include "voice_listening_widget.h"
 #include "notification_client.h"
+#include "remote_client.h"
 #include "audio_playback.h"
+#include "project_selector.h"
 /* Mission 19: lv_sysmon's public API (lv_sysmon_show/hide_performance) has
  * no accessor for the FPS/CPU label object itself, only show/hide - moving
  * it into the LOG page's button row (see status_deck_ui()) needs the actual
@@ -753,6 +755,18 @@ static lv_obj_t *notification_status_label;
  * voice_listening_widget_set_notification() every tick. */
 static lv_obj_t *voice_widget;
 
+/* Notification-playback volume control (small up/down buttons flanking a
+ * numeric readout, to the right of the listening ring) - see
+ * volume_up_button_cb/volume_down_button_cb below. */
+static lv_obj_t *volume_label;
+
+/* Project selector (VAN1/VAN2/GEN/NONE), to the left of the listening ring -
+ * a scroller matching the volume control's own up/label/down shape (current
+ * selection in the center, arrows above/below step through the four
+ * options) rather than four separate buttons - see
+ * project_up_button_cb/project_down_button_cb below. */
+static lv_obj_t *project_label;
+
 /* SENS page (Mission 15): three stacked trend charts - acceleration
  * (unchanged from Mission 06), temperature and humidity (new, see the
  * Environment Deck comment above). All three are LVGL-owned ring buffers:
@@ -1239,6 +1253,80 @@ static void net_button_cb(lv_event_t *e)
     wifi_mgr_request_reconnect();
 }
 
+/* Notification-playback volume (Mission 20 side control). 10-point steps -
+ * coarse enough that a single tap is felt, fine enough that the full 0-100
+ * range takes a reasonable number of taps; a fixed choice, not a
+ * measured/tested one, same as PLAYBACK_VOLUME_DEFAULT itself
+ * (audio_playback.c). Refreshes volume_label immediately so the readout
+ * never lags behind what audio_playback_get_volume() would report. */
+#define VOLUME_STEP 10
+
+static void refresh_volume_label(void)
+{
+    lv_label_set_text_fmt(volume_label, "%d", audio_playback_get_volume());
+}
+
+static void volume_up_button_cb(lv_event_t *e)
+{
+    audio_playback_set_volume(audio_playback_get_volume() + VOLUME_STEP);
+    refresh_volume_label();
+}
+
+static void volume_down_button_cb(lv_event_t *e)
+{
+    audio_playback_set_volume(audio_playback_get_volume() - VOLUME_STEP);
+    refresh_volume_label();
+}
+
+/* Project selector (Mission 20 side control) - see project_selector.h.
+ * PROJECT_OPTIONS fixes both the cycle order and each option's on-screen
+ * text in one place, so project_up_button_cb/project_down_button_cb and
+ * refresh_project_label() never have to be kept in sync by hand. */
+typedef struct {
+    project_selection_t value;
+    const char *text;
+} project_option_t;
+
+static const project_option_t PROJECT_OPTIONS[] = {
+    { PROJECT_SELECTION_VAN1, "VAN1" },
+    { PROJECT_SELECTION_VAN2, "VAN2" },
+    { PROJECT_SELECTION_GENERAL, "GEN" },
+    { PROJECT_SELECTION_NONE, "NONE" },
+};
+#define PROJECT_OPTION_COUNT (sizeof(PROJECT_OPTIONS) / sizeof(PROJECT_OPTIONS[0]))
+
+static int project_option_index(project_selection_t sel)
+{
+    for (size_t i = 0; i < PROJECT_OPTION_COUNT; i++) {
+        if (PROJECT_OPTIONS[i].value == sel) {
+            return (int)i;
+        }
+    }
+    return 0;
+}
+
+static void refresh_project_label(void)
+{
+    int idx = project_option_index(project_selector_get());
+    lv_label_set_text(project_label, PROJECT_OPTIONS[idx].text);
+}
+
+static void project_up_button_cb(lv_event_t *e)
+{
+    int idx = project_option_index(project_selector_get());
+    idx = (idx + 1) % (int)PROJECT_OPTION_COUNT;
+    project_selector_set(PROJECT_OPTIONS[idx].value);
+    refresh_project_label();
+}
+
+static void project_down_button_cb(lv_event_t *e)
+{
+    int idx = project_option_index(project_selector_get());
+    idx = (idx - 1 + (int)PROJECT_OPTION_COUNT) % (int)PROJECT_OPTION_COUNT;
+    project_selector_set(PROJECT_OPTIONS[idx].value);
+    refresh_project_label();
+}
+
 /* SEND control. Ships the last ACCEL_SAMPLE_COUNT accelerometer readings
  * (whatever is actually in the ring buffer - 0 if the IMU isn't present or
  * no sample has landed yet, never fabricated) rather than a bare ping.
@@ -1617,6 +1705,84 @@ void status_deck_ui(lv_obj_t *scr)
     voice_widget = voice_listening_widget_create(page_home);
     lv_obj_align(voice_widget, LV_ALIGN_TOP_MID, 0, 28);
 
+    /* Volume control: small up/label/down column in the gap to the right of
+     * the 148px-diameter ring (ring's own right edge sits at x=234 on this
+     * 320px-wide page, see voice_listening_widget.c's RING_DIAM) - x=105
+     * offset from page center (pulled in from an earlier 117 to sit closer
+     * to the ring, alongside the project selector below getting the same
+     * inward nudge on the opposite side) puts this column at roughly
+     * x=240-280, clear of the ring with a small margin to spare. Container
+     * height (130) roughly matches the ring's own vertical span so the
+     * up/down buttons land near its top/bottom rather than floating off to
+     * one side. */
+    lv_obj_t *volume_ctrl = lv_obj_create(page_home);
+    lv_obj_set_size(volume_ctrl, 50, 130);
+    lv_obj_align(volume_ctrl, LV_ALIGN_TOP_MID, 105, 38);
+    lv_obj_set_style_bg_opa(volume_ctrl, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(volume_ctrl, 0, 0);
+    lv_obj_set_style_pad_all(volume_ctrl, 0, 0);
+    lv_obj_clear_flag(volume_ctrl, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *volume_up_btn = lv_btn_create(volume_ctrl);
+    lv_obj_set_size(volume_up_btn, 40, 36);
+    lv_obj_align(volume_up_btn, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_add_event_cb(volume_up_btn, volume_up_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *volume_up_label = lv_label_create(volume_up_btn);
+    lv_label_set_text(volume_up_label, "+");
+    lv_obj_set_style_text_font(volume_up_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(volume_up_label);
+
+    volume_label = lv_label_create(volume_ctrl);
+    lv_obj_align(volume_label, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_t *volume_down_btn = lv_btn_create(volume_ctrl);
+    lv_obj_set_size(volume_down_btn, 40, 36);
+    lv_obj_align(volume_down_btn, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_add_event_cb(volume_down_btn, volume_down_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *volume_down_label = lv_label_create(volume_down_btn);
+    lv_label_set_text(volume_down_label, "-");
+    lv_obj_set_style_text_font(volume_down_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(volume_down_label);
+
+    refresh_volume_label();
+
+    /* Project selector: same up/label/down scroller shape as the volume
+     * control, mirrored to the ring's left (ring's own left edge sits at
+     * x=86, mirroring the volume control's x=105 offset above). Current
+     * selection shows in the center; the arrows cycle through
+     * PROJECT_OPTIONS instead of stepping a number. */
+    lv_obj_t *project_ctrl = lv_obj_create(page_home);
+    lv_obj_set_size(project_ctrl, 50, 130);
+    lv_obj_align(project_ctrl, LV_ALIGN_TOP_MID, -105, 38);
+    lv_obj_set_style_bg_opa(project_ctrl, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(project_ctrl, 0, 0);
+    lv_obj_set_style_pad_all(project_ctrl, 0, 0);
+    lv_obj_clear_flag(project_ctrl, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *project_up_btn = lv_btn_create(project_ctrl);
+    lv_obj_set_size(project_up_btn, 40, 36);
+    lv_obj_align(project_up_btn, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_add_event_cb(project_up_btn, project_up_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *project_up_label = lv_label_create(project_up_btn);
+    lv_label_set_text(project_up_label, "+");
+    lv_obj_set_style_text_font(project_up_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(project_up_label);
+
+    project_label = lv_label_create(project_ctrl);
+    lv_obj_set_style_text_font(project_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(project_label, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_t *project_down_btn = lv_btn_create(project_ctrl);
+    lv_obj_set_size(project_down_btn, 40, 36);
+    lv_obj_align(project_down_btn, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_add_event_cb(project_down_btn, project_down_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *project_down_label = lv_label_create(project_down_btn);
+    lv_label_set_text(project_down_label, "-");
+    lv_obj_set_style_text_font(project_down_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(project_down_label);
+
+    refresh_project_label();
+
     /* ---- SENS: three stacked trend charts, each a third of the page ----- */
 
     /* Band layout: 180 / 3 = 60px each (caption + value/chart row), same
@@ -1987,6 +2153,7 @@ void status_deck_ui(lv_obj_t *scr)
     }
     audio_playback_init(spk_dev);
     notification_client_init();
+    remote_client_init();
 
     render_command_overlay();
     render_recording_overlay();
