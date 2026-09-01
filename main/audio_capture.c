@@ -109,7 +109,8 @@ static const char *TAG = "audio_capture";
  * exactly why chunked streaming uploads (AUDIO_STREAM_CHUNK_MS below)
  * replaced the old "record everything into one buffer, upload once at the
  * end" approach for these three commands. */
-#define AUDIO_NOTE_MAX_DURATION_MS 1200000
+/* AUDIO_NOTE_MAX_DURATION_MS and AUDIO_SEND_DURATION_MS now live in
+ * audio_capture.h - callers choose per command. */
 
 /* How much audio a NOTE/GO/SEND recording accumulates before flushing a
  * chunk to the backend (see the streaming branch of perform_capture() and
@@ -1047,11 +1048,11 @@ bool audio_capture_start(void)
     return enqueue_capture(&req);
 }
 
-bool audio_capture_start_note(const char *request_id, audio_note_chunk_fn_t chunk_fn,
+bool audio_capture_start_note(const char *request_id, uint32_t duration_ms, audio_note_chunk_fn_t chunk_fn,
                                audio_note_finish_fn_t finish_fn, audio_note_cancel_fn_t cancel_fn)
 {
     audio_capture_request_t req = {
-        .duration_ms = AUDIO_NOTE_MAX_DURATION_MS,
+        .duration_ms = duration_ms,
         .auto_upload = false,
         .chunk_fn = chunk_fn,
         .finish_fn = finish_fn,

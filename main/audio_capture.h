@@ -55,6 +55,20 @@ typedef enum {
     AUDIO_CAP_FAILED,
 } audio_cap_state_t;
 
+/* Recording durations for the voice commands, named here so voice_control.c
+ * can pick one per command rather than every command sharing a single cap.
+ *
+ * SEND is a quick capture that ends by itself - no STOP press, no
+ * selector. 15s comes from real use (AI-OS, 2026-08-28: "the send should
+ * just be a quick one, let's call it 15 seconds").
+ *
+ * NOTE/GO use the long safety cap: STOP is the everyday way they end, and
+ * this is only the fallback if it is never pressed. It is a wall-clock cap
+ * enforced by the recording loop, NOT a buffer-size limit - chunked
+ * streaming means 20 minutes of audio never has to fit in RAM. */
+#define AUDIO_SEND_DURATION_MS 15000
+#define AUDIO_NOTE_MAX_DURATION_MS 1200000
+
 #define AUDIO_CAP_ARTIFACT_NAME_LEN 24
 #define AUDIO_CAP_REASON_LEN 24
 
@@ -191,7 +205,7 @@ bool audio_capture_start(void);
  * that isn't going anywhere isn't a case this module supports, since the
  * chunks would otherwise need to be buffered somewhere for no purpose.
  */
-bool audio_capture_start_note(const char *request_id, audio_note_chunk_fn_t chunk_fn,
+bool audio_capture_start_note(const char *request_id, uint32_t duration_ms, audio_note_chunk_fn_t chunk_fn,
                                audio_note_finish_fn_t finish_fn, audio_note_cancel_fn_t cancel_fn);
 
 /**

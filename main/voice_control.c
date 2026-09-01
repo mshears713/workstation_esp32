@@ -18,12 +18,22 @@
  *          detect_task while they run, all for the same reason - they need
  *          the mic (see the mic-ownership note on run_send_command). All
  *          three share the exact same recording mechanics (built on
- *          audio_capture_start_note()) but upload to three different
- *          backend destinations - see note_client.h vs.
- *          voice_inbox_client.h vs. entry_client.h. GO originally fired a
- *          one-shot design-review graph trigger with no recording at all
- *          (graph_client.h) - that path is kept dormant, not deleted, but
- *          is no longer what GO does; see run_go_command()'s own comment.
+ *          audio_capture_start_note()), differing only in how long they
+ *          record and where they upload:
+ *
+ *            SEND - AUDIO_SEND_DURATION_MS (15s), auto-stop, Voice Inbox
+ *            NOTE - long cap, ends on STOP,        Voice Inbox
+ *            GO   - long cap, ends on STOP,        entries/van build log
+ *
+ *          SEND and NOTE are deliberately the same capture at different
+ *          lengths: one quick, one long-form, both landing in the AI-OS
+ *          Voice Inbox (see voice_inbox_client.h).
+ *
+ *          Two upload paths are kept in the tree but have no caller:
+ *          note_client.h's /api/v1/notes (the local-LangGraph notes route
+ *          SEND used before it moved to the Voice Inbox) and
+ *          graph_client.h's one-shot design-review trigger (what GO did
+ *          before it recorded anything). Both dormant, neither deleted.
  */
 
 #include <string.h>
@@ -41,7 +51,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "audio_capture.h"
-#include "note_client.h"
 #include "voice_inbox_client.h"
 #include "entry_client.h"
 #include "notification_client.h"
@@ -256,7 +265,17 @@ static void run_send_command(void)
     s_mic_owner = MIC_OWNER_CAPTURE;
     voice_mic_close();
 
-    if (!audio_capture_start_note(request_id, note_client_submit_chunk, note_client_submit_finish, note_client_submit_cancel)) {
+    /* Voice Inbox, not note_client's /api/v1/notes: SEND and NOTE are the
+     * same kind of capture with different lengths, and both belong in the
+     * AI-OS Voice Inbox. The legacy local-LangGraph notes route stays
+     * available in note_client.c but nothing calls it now.
+     *
+     * AUDIO_SEND_DURATION_MS rather than the long cap: SEND ends by
+     * itself. The recording overlay's SEND/CANCEL buttons still work as an
+     * early finish or abort, but pressing nothing is the normal path. */
+    if (!audio_capture_start_note(request_id, AUDIO_SEND_DURATION_MS,
+                                   voice_inbox_client_submit_chunk, voice_inbox_client_submit_finish,
+                                   voice_inbox_client_submit_cancel)) {
         /* Only realistic cause: audio_capture's own busy-guard (a capture
          * already in flight, e.g. a manual REC press racing the wake word)
          * or its init failed independently of us. Either way, nothing to
@@ -342,7 +361,9 @@ static void run_note_command(void)
     s_mic_owner = MIC_OWNER_CAPTURE;
     voice_mic_close();
 
-    if (!audio_capture_start_note(request_id, voice_inbox_client_submit_chunk, voice_inbox_client_submit_finish, voice_inbox_client_submit_cancel)) {
+    if (!audio_capture_start_note(request_id, AUDIO_NOTE_MAX_DURATION_MS,
+                                   voice_inbox_client_submit_chunk, voice_inbox_client_submit_finish,
+                                   voice_inbox_client_submit_cancel)) {
         /* Only realistic cause: audio_capture's own busy-guard (a capture
          * already in flight, e.g. a manual REC press racing the wake word)
          * or its init failed independently of us. Either way, nothing to
@@ -434,7 +455,9 @@ static void run_go_command(void)
     s_mic_owner = MIC_OWNER_CAPTURE;
     voice_mic_close();
 
-    if (!audio_capture_start_note(request_id, entry_client_submit_chunk, entry_client_submit_finish, entry_client_submit_cancel)) {
+    if (!audio_capture_start_note(request_id, AUDIO_NOTE_MAX_DURATION_MS,
+                                   entry_client_submit_chunk, entry_client_submit_finish,
+                                   entry_client_submit_cancel)) {
         /* Only realistic cause: audio_capture's own busy-guard (a capture
          * already in flight, e.g. a manual REC press racing the wake word)
          * or its init failed independently of us. Either way, nothing to
