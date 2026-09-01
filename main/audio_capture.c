@@ -140,6 +140,19 @@ static const char *TAG = "audio_capture";
 #define AUDIO_READ_CHUNK_BYTES (AUDIO_READ_CHUNK_SAMPLES * AUDIO_BYTES_PER_SAMPLE)
 #define AUDIO_READ_MAX_CONSEC_ERRORS 5
 
+/* Recording-integrity thresholds. A capture that ran N ms of wall clock
+ * should hold N ms of audio; the difference is what the mic path dropped.
+ * NOTABLE is the "say so on screen and in the log" line; FAIL_PCT is the
+ * "this recording is too damaged to pass off as usable" line. Deliberately
+ * two different lines: a small shortfall still produces a note worth
+ * keeping, and refusing to deliver it would be worse than delivering it
+ * labelled. Baseline for calibration, measured 2026-09-01 on real
+ * hardware: a 45,961ms NOTE delivered 43,984ms of audio (1,977ms / 4.3%
+ * short), entirely at the two 15s chunk flushes. */
+#define AUDIO_BYTES_PER_MS ((AUDIO_SAMPLE_RATE_HZ * AUDIO_BYTES_PER_SAMPLE * AUDIO_CHANNELS) / 1000)
+#define AUDIO_SHORTFALL_NOTABLE_MS 250
+#define AUDIO_SHORTFALL_FAIL_PCT 15
+
 /* Clipping threshold: within ~0.25% of full-scale int16. */
 #define AUDIO_CLIP_THRESHOLD 32760
 
@@ -383,7 +396,15 @@ static void perform_capture(const audio_capture_request_t *req)
     if (!streaming && duration_ms > AUDIO_CAPTURE_BUFFER_MS) {
         duration_ms = AUDIO_CAPTURE_BUFFER_MS;
     }
-    uint32_t target_samples = (AUDIO_SAMPLE_RATE_HZ * duration_ms) / 1000;
+    /* 64-bit intermediate deliberately: AUDIO_SAMPLE_RATE_HZ is an int and
+     * duration_ms a uint32_t, so plain `16000 * duration_ms` is evaluated in
+     * 32-bit unsigned and wraps for any cap past ~268s. At the intended
+     * 1,200,000ms that produced 19,200,000,000 -> 2,020,130,816, capping
+     * NOTE at 126s instead of 20 minutes - and because the loop then exits
+     * normally, the truncated recording was reported as a clean success.
+     * Suspected cause of the "note craps out around a minute and a half"
+     * report captured 2026-08-28. */
+    uint32_t target_samples = (uint32_t)(((uint64_t)AUDIO_SAMPLE_RATE_HZ * (uint64_t)duration_ms) / 1000u);
     uint32_t target_bytes = target_samples * AUDIO_BYTES_PER_SAMPLE * AUDIO_CHANNELS;
 
     portENTER_CRITICAL(&s_mux);
@@ -422,6 +443,10 @@ static void perform_capture(const audio_capture_request_t *req)
     uint32_t clipped = 0;
     double sum_sq = 0.0;
     int consec_errors = 0;
+    uint32_t dropped_reads = 0;    /* errored reads that were retried - each one is ~32ms of audio gone */
+    uint32_t flush_count = 0;      /* chunk uploads performed, each one a window where the mic isn't read */
+    uint32_t flush_total_ms = 0;
+    uint32_t flush_max_ms = 0;
     int last_logged_second = -1;
     bool stopped_early = false;
     bool cancelled = false;
@@ -458,6 +483,7 @@ static void perform_capture(const audio_capture_request_t *req)
         err = esp_codec_dev_read(s_mic_dev, dst, (int)read_bytes);
         if (err != ESP_CODEC_DEV_OK) {
             consec_errors++;
+            dropped_reads++;
             if (consec_errors >= AUDIO_READ_MAX_CONSEC_ERRORS) {
                 esp_codec_dev_close(s_mic_dev);
                 fail_and_recover("READ ERROR");
@@ -501,7 +527,20 @@ static void perform_capture(const audio_capture_request_t *req)
              * doc comment in audio_capture.h for the known trade-off). A
              * failed chunk aborts the whole recording instead of silently
              * dropping it, so a gapped transcript never reaches Whisper. */
-            if (!req->chunk_fn(req->name, s_capture_buf, chunk_bytes, chunk_fail_reason, sizeof(chunk_fail_reason))) {
+            int64_t flush_start_us = esp_timer_get_time();
+            bool chunk_ok = req->chunk_fn(req->name, s_capture_buf, chunk_bytes, chunk_fail_reason, sizeof(chunk_fail_reason));
+            uint32_t flush_ms = (uint32_t)((esp_timer_get_time() - flush_start_us) / 1000);
+            flush_count++;
+            flush_total_ms += flush_ms;
+            if (flush_ms > flush_max_ms) {
+                flush_max_ms = flush_ms;
+            }
+            /* The mic is deaf for exactly this long. Audio survives only to
+             * the extent the codec's DMA ring outlasts it, so this number
+             * is the one to drive down. */
+            ESP_LOGI(TAG, "chunk %lu flushed: %lu bytes in %lums", (unsigned long)flush_count,
+                     (unsigned long)chunk_bytes, (unsigned long)flush_ms);
+            if (!chunk_ok) {
                 chunk_upload_failed = true;
                 break;
             }
@@ -509,6 +548,12 @@ static void perform_capture(const audio_capture_request_t *req)
         }
     }
 
+    /* Stop the recording clock here, not after the trailing flush below.
+     * The codec is closed on the next line, so every millisecond after
+     * this point is upload time, not recording time - measuring later
+     * charged the trailing chunk's upload (~500ms) against the recording
+     * and reported it as audio loss that never happened. */
+    int64_t capture_end_us = esp_timer_get_time();
     esp_codec_dev_close(s_mic_dev);
 
     if (cancelled) {
@@ -545,7 +590,48 @@ static void perform_capture(const audio_capture_request_t *req)
 
     uint32_t samples_captured = bytes_captured / AUDIO_BYTES_PER_SAMPLE;
     double rms_raw = samples_captured ? sqrt(sum_sq / (double)samples_captured) : 0.0;
-    uint32_t final_elapsed_ms = (uint32_t)((esp_timer_get_time() - start_us) / 1000);
+    uint32_t final_elapsed_ms = (uint32_t)((capture_end_us - start_us) / 1000);
+
+    /* The loop only exits three ways: cancel and chunk-failure already
+     * returned above, and stopped_early means the operator pressed STOP -
+     * so anything left here ran to target_bytes, i.e. hit the cap. Worth
+     * distinguishing because the two are indistinguishable to the operator
+     * otherwise: both just end the recording and report success. */
+    bool ended_at_cap = !stopped_early;
+
+    /* How much audio actually arrived, versus how long we were recording. */
+    uint32_t audio_ms = bytes_captured / AUDIO_BYTES_PER_MS;
+    uint32_t shortfall_ms = final_elapsed_ms > audio_ms ? final_elapsed_ms - audio_ms : 0;
+    uint32_t shortfall_pct = final_elapsed_ms ? (shortfall_ms * 100u) / final_elapsed_ms : 0;
+
+    if (flush_count > 0) {
+        ESP_LOGI(TAG, "chunk flushes: %lu, blocking the mic for %lums total (max %lums, mean %lums)",
+                 (unsigned long)flush_count, (unsigned long)flush_total_ms, (unsigned long)flush_max_ms,
+                 (unsigned long)(flush_total_ms / flush_count));
+    }
+    if (shortfall_ms >= AUDIO_SHORTFALL_NOTABLE_MS) {
+        ESP_LOGW(TAG, "AUDIO LOSS: recorded %lums but only %lums of audio arrived - %lums (%lu%%) missing, %lu dropped read(s)",
+                 (unsigned long)final_elapsed_ms, (unsigned long)audio_ms,
+                 (unsigned long)shortfall_ms, (unsigned long)shortfall_pct, (unsigned long)dropped_reads);
+    }
+    if (ended_at_cap) {
+        ESP_LOGW(TAG, "recording ended by hitting the %lums cap, not by STOP", (unsigned long)duration_ms);
+    }
+
+    /* Too damaged to hand off as a usable note. Fails before finish_fn, so
+     * the backend never assembles it and nothing reaches transcription -
+     * the same "never send a gapped transcript" rule the chunk-failure path
+     * already follows. */
+    if (shortfall_pct >= AUDIO_SHORTFALL_FAIL_PCT) {
+        char reason[AUDIO_CAP_REASON_LEN];
+        snprintf(reason, sizeof(reason), "AUDIO LOSS %lu%%", (unsigned long)shortfall_pct);
+        ESP_LOGE(TAG, "capture rejected: %lu%% of the recording is missing", (unsigned long)shortfall_pct);
+        if (streaming && req->cancel_fn) {
+            req->cancel_fn(req->name);
+        }
+        fail_and_recover(reason);
+        return;
+    }
 
     uint32_t seq;
     char artifact_name[AUDIO_CAP_ARTIFACT_NAME_LEN];
@@ -557,6 +643,10 @@ static void perform_capture(const audio_capture_request_t *req)
     s_status.peak_amplitude = (float)peak_raw / 32768.0f;
     s_status.rms_amplitude = (float)(rms_raw / 32768.0);
     s_status.clipped_samples = clipped;
+    s_status.audio_ms = audio_ms;
+    s_status.shortfall_ms = shortfall_ms;
+    s_status.dropped_reads = dropped_reads;
+    s_status.ended_at_cap = ended_at_cap;
     s_status.capture_seq++;
     if (req->name[0] != '\0') {
         /* Voice-triggered NOTE/GO/SEND: use the request ID verbatim, so
@@ -581,18 +671,29 @@ static void perform_capture(const audio_capture_request_t *req)
         s_last_complete_bytes = bytes_captured;
     }
 
-    ESP_LOGI(TAG, "capture complete #%lu (%s): %lums, %lu bytes%s, peak=%.3f rms=%.3f clipped=%lu",
-             (unsigned long)seq, artifact_name, (unsigned long)final_elapsed_ms, (unsigned long)bytes_captured,
-             streaming ? " (streamed)" : "",
+    ESP_LOGI(TAG, "capture complete #%lu (%s): %lums wall / %lums audio (%lums short), %lu bytes%s, ended=%s, peak=%.3f rms=%.3f clipped=%lu",
+             (unsigned long)seq, artifact_name, (unsigned long)final_elapsed_ms, (unsigned long)audio_ms,
+             (unsigned long)shortfall_ms, (unsigned long)bytes_captured,
+             streaming ? " (streamed)" : "", ended_at_cap ? "CAP" : "STOP",
              (double)(peak_raw / 32768.0f), (double)(rms_raw / 32768.0), (unsigned long)clipped);
 
-    /* 48, not 32: "UPLOAD OK " (10) + up to artifact_name's declared 23
-     * chars + nul = 34 worst case - GCC's -Wformat-truncation reasons from
-     * artifact_name's declared array size, not its actual short runtime
-     * content ("capture_003" etc.), so it wants a buffer sized for that
-     * theoretical worst case. */
-    char msg[48];
-    snprintf(msg, sizeof(msg), "AUDIO DONE %luB", (unsigned long)bytes_captured);
+    /* 64, not 34: GCC's -Wformat-truncation reasons from artifact_name's
+     * declared 23-char array size rather than its short runtime content
+     * ("capture_003" etc.), so the buffer has to cover the theoretical
+     * worst case. Longest user here is now "NOTE SENT " (10) + 23 +
+     * " (HIT CAP)" (10) + nul = 44. */
+    char msg[64];
+    if (shortfall_ms >= AUDIO_SHORTFALL_NOTABLE_MS) {
+        /* Deliberately on the same row the operator already watches for
+         * "AUDIO DONE" - a lossy capture must not read like a clean one.
+         * Kept inside status_deck_ui.c's EVENT_MSG_LEN (28): worst case
+         * "AUD 38400000B LOST 123456ms" is 27 + nul. The earlier wording
+         * ran to 32 and got silently clipped on the Black Box row. */
+        snprintf(msg, sizeof(msg), "AUD %luB LOST %lums", (unsigned long)bytes_captured,
+                 (unsigned long)shortfall_ms);
+    } else {
+        snprintf(msg, sizeof(msg), "AUDIO DONE %luB", (unsigned long)bytes_captured);
+    }
     notify(AUDIO_CAP_COMPLETE, msg);
 
     if (req->auto_upload) {
@@ -625,7 +726,11 @@ static void perform_capture(const audio_capture_request_t *req)
             return;
         }
 
-        snprintf(msg, sizeof(msg), "NOTE SENT %s", artifact_name);
+        if (ended_at_cap) {
+            snprintf(msg, sizeof(msg), "NOTE SENT %s (HIT CAP)", artifact_name);
+        } else {
+            snprintf(msg, sizeof(msg), "NOTE SENT %s", artifact_name);
+        }
         set_ready(msg);
     }
 

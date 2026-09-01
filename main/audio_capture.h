@@ -71,6 +71,17 @@ typedef struct {
     float rms_amplitude;          /* 0.0-1.0, normalized, meaningful once COMPLETE */
     uint32_t clipped_samples;     /* samples within a hair of full-scale */
     uint32_t capture_seq;         /* increments once per completed capture, this boot only */
+    /* Recording-integrity accounting, all meaningful from COMPLETE onward.
+     * A capture that ran for elapsed_ms wall-clock should contain the same
+     * duration of audio; anything missing was dropped by the mic path (see
+     * audio_note_chunk_fn_t's note on the blocking chunk upload). Measured
+     * on real hardware, not theoretical: a 45.96s NOTE delivered 43.98s of
+     * audio. Surfaced rather than swallowed so a lossy capture can never
+     * look identical to a clean one. */
+    uint32_t audio_ms;            /* duration actually captured, derived from bytes_captured */
+    uint32_t shortfall_ms;        /* elapsed_ms - audio_ms, 0 when clean */
+    uint32_t dropped_reads;       /* mic reads that errored and were retried (each ~32ms of audio) */
+    bool ended_at_cap;            /* true: hit duration_target_ms. false: STOP, or still running */
     char artifact_name[AUDIO_CAP_ARTIFACT_NAME_LEN]; /* "" until COMPLETE, e.g. "capture_003" */
     char fail_reason[AUDIO_CAP_REASON_LEN];          /* "" unless state == AUDIO_CAP_FAILED */
 } audio_cap_status_t;
@@ -87,10 +98,14 @@ typedef void (*audio_cap_event_cb_t)(audio_cap_state_t new_state, const char *bl
  * SEND recording (never the LVGL task - same contract as
  * audio_cap_event_cb_t). Must POST/return, not queue-and-return -
  * audio_capture.c calls this synchronously from inside the recording loop,
- * roughly once per AUDIO_STREAM_CHUNK_MS of audio, so a slow chunk upload
- * simply delays the next mic read rather than losing samples (the codec's
- * own internal buffering absorbs that gap - see audio_capture.c's
- * streaming comment for the known trade-off here). A false return aborts
+ * roughly once per AUDIO_STREAM_CHUNK_MS of audio. IMPORTANT: a slow chunk
+ * upload does NOT merely delay the next mic read - it loses audio. This
+ * comment previously claimed the codec's internal buffering absorbs the
+ * gap; hardware measurement disproved that. A 480,000-byte chunk POST
+ * blocks long enough for the I2S RX DMA to overrun, costing 0.5-0.7s of
+ * audio per flush. audio_cap_status_t's shortfall_ms measures exactly how
+ * much went missing; keeping this callback fast directly reduces it.
+ * A false return aborts
  * the whole recording (audio_cap_status_t moves to AUDIO_CAP_FAILED with
  * fail_reason_out as the reason) rather than silently dropping the chunk,
  * so a partial/gapped transcript is never sent for transcription.
