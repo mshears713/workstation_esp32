@@ -5,3 +5,4 @@ main/wifi_credentials.h
 **/wifi_credentials.h
 captures/*.wav
 __pycache__/
+.cockpit32/

@@ -962,15 +962,24 @@ static void audio_ui_timer_cb(lv_timer_t *t)
  * rows: SEND/NOTE, GO/YES). cmd_buttons[i] is built from cmd_defs[i] in
  * this same order, so render_command_overlay() below can find "the button
  * for id X" by scanning this array rather than assuming id-1 == index
- * (keeps the two decoupled in case a future pass reorders the grid). */
+ * (keeps the two decoupled in case a future pass reorders the grid).
+ *
+ * `hint` (added after Mike said he kept forgetting which word does what):
+ * three words, one line at montserrat_12, summarizing where each command's
+ * recording actually goes - SEND (note_client.c -> app/voice/graph.py's
+ * interpret/extract-actions pipeline), NOTE (voice_inbox_client.c -> Notion
+ * "Voice Inbox", unprocessed), GO (entry_client.c -> entry-architect ->
+ * Notion Sources + Van Build Log), YES (confirms/answers a pending spoken
+ * notification, not a new recording at all). */
 static const struct {
     voice_command_id_t id;
     const char *label;
+    const char *hint;
 } cmd_defs[VOICE_COMMAND_COUNT] = {
-    { VOICE_CMD_SEND, "SEND" },
-    { VOICE_CMD_NOTE, "NOTE" },
-    { VOICE_CMD_GO,   "GO"   },
-    { VOICE_CMD_YES,  "YES"  },
+    { VOICE_CMD_SEND, "SEND", "Quick task note" },
+    { VOICE_CMD_NOTE, "NOTE", "Raw Notion inbox" },
+    { VOICE_CMD_GO,   "GO",   "Van build log" },
+    { VOICE_CMD_YES,  "YES",  "Reply to alert" },
 };
 
 #define CMD_BTN_INACTIVE_BG lv_palette_darken(LV_PALETTE_GREY, 2)
@@ -1107,6 +1116,10 @@ static void render_recording_overlay(void)
     case AUDIO_CAP_READY:
         snprintf(status_buf, sizeof(status_buf), "%s SENT", vst.last_command);
         color = lv_palette_main(LV_PALETTE_GREEN);
+        break;
+    case AUDIO_CAP_CANCELLED:
+        snprintf(status_buf, sizeof(status_buf), "%s CANCELLED", vst.last_command);
+        color = lv_palette_main(LV_PALETTE_RED);
         break;
     case AUDIO_CAP_FAILED:
         if (strcmp(ast.fail_reason, "ENDPOINT NOT SET") == 0) {
@@ -1416,14 +1429,23 @@ static void talk_button_cb(lv_event_t *e)
     voice_control_manual_wake();
 }
 
-/* STOP control on the shared SEND/NOTE recording overlay (Mission 13).
- * Calls straight into audio_capture.c - no reason to route through
+/* SEND control on the shared SEND/NOTE/GO recording overlay (Mission 13,
+ * relabeled from STOP - see the button's own on-screen text). Calls
+ * straight into audio_capture.c - no reason to route through
  * voice_control.c, which is already just polling audio_capture_get_status()
  * waiting for this to take effect. Harmless if pressed outside RECORDING
  * (see audio_capture_stop()'s doc comment). */
 static void recording_stop_button_cb(lv_event_t *e)
 {
     audio_capture_stop();
+}
+
+/* CANCEL control on the shared SEND/NOTE/GO recording overlay - discards
+ * the recording instead of sending it, see audio_capture_cancel()'s doc
+ * comment. Same "call straight into audio_capture.c" shape as SEND above. */
+static void recording_cancel_button_cb(lv_event_t *e)
+{
+    audio_capture_cancel();
 }
 
 /* STOP control on the notification-playback overlay - same "call straight
@@ -1988,13 +2010,16 @@ void status_deck_ui(lv_obj_t *scr)
 
     /* 2 columns x 2 rows (SEND/NOTE, GO/YES) via flex wrap - two 136px
      * buttons plus an 8px gap is 280px, comfortably inside the 304px usable
-     * width. No per-button description text (directive: keep this screen
-     * simple) and not clickable (directive: touch activation isn't
-     * required this pass and none existed here before - clearing
+     * width. Not clickable (directive: touch activation isn't required
+     * this pass and none existed here before - clearing
      * LV_OBJ_FLAG_CLICKABLE means a stray tap can't be confused with a
-     * real MultiNet recognition highlight). */
+     * real MultiNet recognition highlight). Each button now stacks a
+     * 3-word hint under the command word (see cmd_defs's own comment) -
+     * grid/button height grew from the original single-line 44px to fit
+     * that second line; 288x120 (was 288x96) still leaves comfortable room
+     * above cmd_status_label at the bottom of the 240px-tall overlay. */
     lv_obj_t *cmd_grid = lv_obj_create(cmd_overlay);
-    lv_obj_set_size(cmd_grid, 288, 96);
+    lv_obj_set_size(cmd_grid, 288, 120);
     lv_obj_align(cmd_grid, LV_ALIGN_TOP_MID, 0, 32);
     lv_obj_set_style_pad_all(cmd_grid, 0, 0);
     lv_obj_set_style_pad_row(cmd_grid, 8, 0);
@@ -2007,15 +2032,23 @@ void status_deck_ui(lv_obj_t *scr)
 
     for (int i = 0; i < VOICE_COMMAND_COUNT; i++) {
         lv_obj_t *btn = lv_btn_create(cmd_grid);
-        lv_obj_set_size(btn, 136, 44);
+        lv_obj_set_size(btn, 136, 56);
         lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_style_bg_color(btn, CMD_BTN_INACTIVE_BG, 0);
         lv_obj_set_style_border_width(btn, 2, 0);
         lv_obj_set_style_border_color(btn, lv_palette_main(LV_PALETTE_GREY), 0);
+        lv_obj_set_style_pad_all(btn, 4, 0);
+        lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
         lv_obj_t *btn_label = lv_label_create(btn);
         lv_label_set_text(btn_label, cmd_defs[i].label);
-        lv_obj_center(btn_label);
+
+        lv_obj_t *btn_hint = lv_label_create(btn);
+        lv_label_set_text(btn_hint, cmd_defs[i].hint);
+        lv_obj_set_style_text_font(btn_hint, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(btn_hint, lv_palette_lighten(LV_PALETTE_GREY, 2), 0);
 
         cmd_buttons[i] = btn;
     }
@@ -2051,31 +2084,52 @@ void status_deck_ui(lv_obj_t *scr)
     lv_label_set_text(recording_id_label, "ID:");
     lv_obj_align(recording_id_label, LV_ALIGN_TOP_MID, 0, 40);
 
+    /* CANCEL, above the counter - discards the recording instead of
+     * sending it (recording_cancel_button_cb -> audio_capture_cancel()).
+     * Red for "this throws it away," in deliberate contrast with SEND's
+     * green below - the two buttons should never look like variants of
+     * the same action. */
+    lv_obj_t *cancel_btn = lv_btn_create(recording_overlay);
+    lv_obj_set_size(cancel_btn, 140, 34);
+    lv_obj_align(cancel_btn, LV_ALIGN_TOP_MID, 0, 68);
+    lv_obj_set_style_bg_color(cancel_btn, lv_palette_main(LV_PALETTE_RED), 0);
+    lv_obj_add_event_cb(cancel_btn, recording_cancel_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *cancel_label = lv_label_create(cancel_btn);
+    lv_label_set_text(cancel_label, "CANCEL");
+    lv_obj_center(cancel_label);
+
     /* Small filled circle, shown only while actually RECORDING - see
      * render_recording_overlay(). A real shape rather than a Unicode glyph
-     * so it renders regardless of which characters the bundled font covers. */
+     * so it renders regardless of which characters the bundled font covers.
+     * Y offset moved from the original -10 to +15 to leave room for the
+     * CANCEL button above without crowding it. */
     recording_dot = lv_obj_create(recording_overlay);
     lv_obj_set_size(recording_dot, 14, 14);
     lv_obj_set_style_radius(recording_dot, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(recording_dot, lv_palette_main(LV_PALETTE_RED), 0);
     lv_obj_set_style_border_width(recording_dot, 0, 0);
     lv_obj_clear_flag(recording_dot, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_align(recording_dot, LV_ALIGN_CENTER, -40, -10);
+    lv_obj_align(recording_dot, LV_ALIGN_CENTER, -40, 15);
 
     recording_status_label = lv_label_create(recording_overlay);
     lv_label_set_text(recording_status_label, "");
     lv_obj_set_style_text_font(recording_status_label, &lv_font_montserrat_20, 0);
-    lv_obj_align(recording_status_label, LV_ALIGN_CENTER, 10, -10);
+    lv_obj_align(recording_status_label, LV_ALIGN_CENTER, 10, 15);
 
-    lv_obj_t *stop_btn = lv_btn_create(recording_overlay);
-    lv_obj_set_size(stop_btn, 220, 56);
-    lv_obj_align(stop_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
-    lv_obj_set_style_bg_color(stop_btn, lv_palette_main(LV_PALETTE_RED), 0);
-    lv_obj_add_event_cb(stop_btn, recording_stop_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *stop_label = lv_label_create(stop_btn);
-    lv_label_set_text(stop_label, "STOP");
-    lv_obj_set_style_text_font(stop_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(stop_label);
+    /* SEND, relabeled/recolored from the original STOP - still the same
+     * audio_capture_stop() underneath (ending the recording here is also
+     * what sends it, see recording_stop_button_cb's comment), green/
+     * "ready to press" now instead of red/stop-styled, since CANCEL above
+     * took over the "this is the destructive one" red styling. */
+    lv_obj_t *send_btn = lv_btn_create(recording_overlay);
+    lv_obj_set_size(send_btn, 220, 56);
+    lv_obj_align(send_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_set_style_bg_color(send_btn, lv_palette_main(LV_PALETTE_GREEN), 0);
+    lv_obj_add_event_cb(send_btn, recording_stop_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *send_label = lv_label_create(send_btn);
+    lv_label_set_text(send_label, "SEND");
+    lv_obj_set_style_text_font(send_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(send_label);
 
     /* Notification-playback overlay - same full-screen style as the others,
      * a STOP button like the recording overlay's since playback runs long

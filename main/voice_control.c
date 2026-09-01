@@ -92,12 +92,16 @@ static const voice_command_def_t COMMAND_DEFS[] = {
 /* SEND, NOTE, and GO's final-result hold ("briefly (5 seconds)" per the directive). */
 #define RESULT_DISPLAY_MS 5000
 
-/* Bounded wait for a SEND/NOTE recording+upload to return to IDLE before giving
- * up on the mic handoff - must clear AUDIO_NOTE_MAX_DURATION_MS (60s) plus
- * upload timeout plus hold, or this would reopen the mic for listening
- * while the worker task is still mid-recording. Not expected to be hit in
- * practice (STOP or the 60s cap should always resolve first). */
-#define CAPTURE_HANDOFF_MAX_WAIT_MS 80000
+/* Bounded wait for a SEND/NOTE/GO recording+upload to return to IDLE before
+ * giving up on the mic handoff - must clear AUDIO_NOTE_MAX_DURATION_MS (20
+ * minutes, audio_capture.c) plus room for the ~80 chunk uploads a
+ * full-length streaming recording makes along the way (each one typically
+ * well under a second, but generously margined here for a slow LAN) plus
+ * the finish call plus the result hold, or this would reopen the mic for
+ * listening while the worker task is still mid-recording. Not expected to
+ * be hit in practice (STOP or the 20-minute cap should always resolve
+ * first). */
+#define CAPTURE_HANDOFF_MAX_WAIT_MS 1380000
 #define CAPTURE_HANDOFF_POLL_MS 100
 
 typedef enum {
@@ -252,7 +256,7 @@ static void run_send_command(void)
     s_mic_owner = MIC_OWNER_CAPTURE;
     voice_mic_close();
 
-    if (!audio_capture_start_note(request_id, note_client_submit)) {
+    if (!audio_capture_start_note(request_id, note_client_submit_chunk, note_client_submit_finish, note_client_submit_cancel)) {
         /* Only realistic cause: audio_capture's own busy-guard (a capture
          * already in flight, e.g. a manual REC press racing the wake word)
          * or its init failed independently of us. Either way, nothing to
@@ -288,6 +292,8 @@ static void run_send_command(void)
     char result_msg[56];
     if (st.state != AUDIO_CAP_IDLE) {
         snprintf(result_msg, sizeof(result_msg), "SEND DID NOT FINISH %s", request_id);
+    } else if (strcmp(st.fail_reason, "CANCELLED") == 0) {
+        snprintf(result_msg, sizeof(result_msg), "SEND CANCELLED %s", request_id);
     } else if (strcmp(st.fail_reason, "ENDPOINT NOT SET") == 0) {
         snprintf(result_msg, sizeof(result_msg), "SEND READY - ENDPOINT NOT SET");
     } else if (st.fail_reason[0] != '\0') {
@@ -310,9 +316,9 @@ static void run_send_command(void)
 
 /* NOTE: identical mic-ownership handoff and recording mechanics to
  * run_send_command() above - same audio_capture_start_note() call, same
- * CAPTURE_HANDOFF_* polling - but uploads via voice_inbox_client_submit()
- * instead of note_client_submit(), landing in the backend's Notion "Voice
- * Inbox" pipeline instead of its local LangGraph pipeline. */
+ * CAPTURE_HANDOFF_* polling - but streams via voice_inbox_client.c's
+ * chunk/finish pair instead of note_client.c's, landing in the backend's
+ * Notion "Voice Inbox" pipeline instead of its local LangGraph pipeline. */
 static void run_note_command(void)
 {
     char request_id[REQUEST_ID_LEN];
@@ -336,7 +342,7 @@ static void run_note_command(void)
     s_mic_owner = MIC_OWNER_CAPTURE;
     voice_mic_close();
 
-    if (!audio_capture_start_note(request_id, voice_inbox_client_submit)) {
+    if (!audio_capture_start_note(request_id, voice_inbox_client_submit_chunk, voice_inbox_client_submit_finish, voice_inbox_client_submit_cancel)) {
         /* Only realistic cause: audio_capture's own busy-guard (a capture
          * already in flight, e.g. a manual REC press racing the wake word)
          * or its init failed independently of us. Either way, nothing to
@@ -372,6 +378,8 @@ static void run_note_command(void)
     char result_msg[56];
     if (st.state != AUDIO_CAP_IDLE) {
         snprintf(result_msg, sizeof(result_msg), "NOTE DID NOT FINISH %s", request_id);
+    } else if (strcmp(st.fail_reason, "CANCELLED") == 0) {
+        snprintf(result_msg, sizeof(result_msg), "NOTE CANCELLED %s", request_id);
     } else if (strcmp(st.fail_reason, "ENDPOINT NOT SET") == 0) {
         snprintf(result_msg, sizeof(result_msg), "NOTE READY - ENDPOINT NOT SET");
     } else if (st.fail_reason[0] != '\0') {
@@ -426,7 +434,7 @@ static void run_go_command(void)
     s_mic_owner = MIC_OWNER_CAPTURE;
     voice_mic_close();
 
-    if (!audio_capture_start_note(request_id, entry_client_submit)) {
+    if (!audio_capture_start_note(request_id, entry_client_submit_chunk, entry_client_submit_finish, entry_client_submit_cancel)) {
         /* Only realistic cause: audio_capture's own busy-guard (a capture
          * already in flight, e.g. a manual REC press racing the wake word)
          * or its init failed independently of us. Either way, nothing to
@@ -462,6 +470,8 @@ static void run_go_command(void)
     char result_msg[56];
     if (st.state != AUDIO_CAP_IDLE) {
         snprintf(result_msg, sizeof(result_msg), "GO DID NOT FINISH %s", request_id);
+    } else if (strcmp(st.fail_reason, "CANCELLED") == 0) {
+        snprintf(result_msg, sizeof(result_msg), "GO CANCELLED %s", request_id);
     } else if (strcmp(st.fail_reason, "ENDPOINT NOT SET") == 0) {
         snprintf(result_msg, sizeof(result_msg), "GO READY - ENDPOINT NOT SET");
     } else if (st.fail_reason[0] != '\0') {

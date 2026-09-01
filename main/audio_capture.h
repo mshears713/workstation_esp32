@@ -20,18 +20,18 @@
  *          Mission 13: manual REC (audio_capture_start()) is completely
  *          unchanged - still exactly 4s, still auto-uploads to
  *          /api/v1/audio via this file's own upload_capture(). A second
- *          entry point, audio_capture_start_note(), reuses the identical
- *          record-into-a-bounded-buffer loop for voice-triggered NOTE
- *          recordings: a longer safety-cap duration, a caller-chosen name
- *          (the NOTE request ID, so it becomes the artifact name/filename),
- *          early termination via audio_capture_stop() (the STOP button), and
- *          a caller-supplied upload function instead of the built-in one -
- *          see note_client.c, which posts to a different, separately
- *          configurable endpoint (backend_config.h's NOTE_UPLOAD_PATH).
- *          Both entry points still go through the exact same mic
- *          open/read/close loop and the exact same mic-ownership contract
- *          with voice_control.c - nothing about that changed, only which
- *          duration/name/upload-destination a given capture uses.
+ *          entry point, audio_capture_start_note(), shares the same mic
+ *          open/read/close loop and mic-ownership contract but diverges for
+ *          voice-triggered NOTE/GO/SEND recordings: a caller-chosen name
+ *          (the request ID, so it becomes the artifact name/filename),
+ *          early termination via audio_capture_stop() (the STOP button),
+ *          and - since these can now run up to AUDIO_NOTE_MAX_DURATION_MS
+ *          (20 minutes; too long to hold in one PSRAM buffer, see that
+ *          constant's own comment) - streaming chunk uploads via a
+ *          caller-supplied chunk_fn/finish_fn pair instead of one big
+ *          upload at the end. note_client.c/voice_inbox_client.c/
+ *          entry_client.c each implement that pair against their own
+ *          endpoint.
  */
 #pragma once
 
@@ -51,6 +51,7 @@ typedef enum {
     AUDIO_CAP_COMPLETE,
     AUDIO_CAP_UPLOADING, /* POSTing the buffer to the backend over Wi-Fi - see upload_capture() in audio_capture.c */
     AUDIO_CAP_READY,     /* upload accepted, artifact name valid - transient, worker returns to IDLE right after */
+    AUDIO_CAP_CANCELLED, /* audio_capture_cancel() was called - discarded, never uploaded/finished - transient like READY */
     AUDIO_CAP_FAILED,
 } audio_cap_state_t;
 
@@ -82,20 +83,43 @@ typedef struct {
 typedef void (*audio_cap_event_cb_t)(audio_cap_state_t new_state, const char *blackbox_message, void *user_ctx);
 
 /**
- * Called on the audio worker task once a note-triggered capture finishes
- * recording (never the LVGL task - same contract as audio_cap_event_cb_t).
- * Must POST/return, not queue-and-return: audio_capture.c calls this
- * synchronously, the same way it already calls its own internal
- * upload_capture() for manual REC, and treats a false return as a failed
- * upload (audio_cap_status_t moves to AUDIO_CAP_FAILED with
- * fail_reason_out as the reason, same recovery path as any other upload
- * failure). `request_id` is the same string passed to
- * audio_capture_start_note() - implementations should send it along so the
- * backend's record can be tied back to the on-screen ID.
+ * Called on the audio worker task once per filled chunk during a NOTE/GO/
+ * SEND recording (never the LVGL task - same contract as
+ * audio_cap_event_cb_t). Must POST/return, not queue-and-return -
+ * audio_capture.c calls this synchronously from inside the recording loop,
+ * roughly once per AUDIO_STREAM_CHUNK_MS of audio, so a slow chunk upload
+ * simply delays the next mic read rather than losing samples (the codec's
+ * own internal buffering absorbs that gap - see audio_capture.c's
+ * streaming comment for the known trade-off here). A false return aborts
+ * the whole recording (audio_cap_status_t moves to AUDIO_CAP_FAILED with
+ * fail_reason_out as the reason) rather than silently dropping the chunk,
+ * so a partial/gapped transcript is never sent for transcription.
+ * `request_id` is the same string passed to audio_capture_start_note().
  */
-typedef bool (*audio_note_upload_fn_t)(const char *request_id, const uint8_t *pcm, size_t len,
+typedef bool (*audio_note_chunk_fn_t)(const char *request_id, const uint8_t *pcm, size_t len,
+                                       char *fail_reason_out, size_t fail_reason_out_len);
+
+/**
+ * Called once, after the last chunk (whether the recording ended via STOP
+ * or the AUDIO_NOTE_MAX_DURATION_MS safety cap) - tells the backend no
+ * more chunks are coming so it can assemble them into one WAV and start
+ * transcription. Same synchronous-call contract as audio_note_chunk_fn_t;
+ * a false return is handled the same way (AUDIO_CAP_FAILED).
+ */
+typedef bool (*audio_note_finish_fn_t)(const char *request_id,
                                         uint32_t sample_rate_hz, uint8_t bits_per_sample, uint8_t channels,
                                         char *fail_reason_out, size_t fail_reason_out_len);
+
+/**
+ * Called at most once, only when audio_capture_cancel() ends the recording
+ * instead of it finishing normally - tells the backend to discard whatever
+ * chunks already arrived rather than assembling/processing them. Never
+ * called alongside finish_fn for the same capture (they're mutually
+ * exclusive outcomes). No return value: this runs on a recording that's
+ * already being thrown away, so a failure here has nothing to recover -
+ * see stream_upload_cancel()'s own doc comment for why it's fire-and-forget.
+ */
+typedef void (*audio_note_cancel_fn_t)(const char *request_id);
 
 /**
  * Allocates the bounded capture buffer and starts the persistent worker
@@ -128,28 +152,51 @@ void audio_capture_get_status(audio_cap_status_t *out);
 bool audio_capture_start(void);
 
 /**
- * Starts one bounded capture for a voice-triggered NOTE: same in-flight
- * guard as audio_capture_start(), but named `request_id` (used verbatim as
- * the artifact name/filename instead of the auto "capture_NNN" sequence)
- * and capped at AUDIO_NOTE_MAX_DURATION_MS (see audio_capture.c) rather
- * than the manual-REC duration - meant to be ended early via
+ * Starts one streaming capture for a voice-triggered NOTE/GO/SEND: same
+ * in-flight guard as audio_capture_start(), but named `request_id` (used
+ * verbatim as the artifact name/filename instead of the auto "capture_NNN"
+ * sequence) and capped at AUDIO_NOTE_MAX_DURATION_MS (see audio_capture.c,
+ * currently 20 minutes - a wall-clock safety cap now, not a buffer-size
+ * limit) rather than the manual-REC duration - meant to be ended early via
  * audio_capture_stop(), the cap is only the safety fallback if it isn't.
- * `upload_fn` is called once recording finishes, in place of this module's
- * own built-in upload_capture(); pass NULL to skip uploading entirely (the
- * capture still completes and audio_capture_get_buffer() still works, it
- * simply never leaves the device).
+ * Unlike manual REC, this never holds the whole recording in RAM: `chunk_fn`
+ * is called synchronously roughly every AUDIO_STREAM_CHUNK_MS with just
+ * that chunk's bytes, and `finish_fn` once at the end - see their own doc
+ * comments above for the streaming contract. Both are required (unlike the
+ * old single upload_fn, neither can be NULL) - a NOTE/GO/SEND recording
+ * that isn't going anywhere isn't a case this module supports, since the
+ * chunks would otherwise need to be buffered somewhere for no purpose.
  */
-bool audio_capture_start_note(const char *request_id, audio_note_upload_fn_t upload_fn);
+bool audio_capture_start_note(const char *request_id, audio_note_chunk_fn_t chunk_fn,
+                               audio_note_finish_fn_t finish_fn, audio_note_cancel_fn_t cancel_fn);
 
 /**
  * Requests that the capture currently in progress end now, as if it had
  * just reached its target duration - the buffer keeps whatever was
  * captured up to this point (never discarded), and the normal finalize/
  * upload sequence runs immediately after. Has no effect if no capture is
- * running. Safe to call from any task, including the LVGL task (the STOP
- * button's event callback).
+ * running. Safe to call from any task, including the LVGL task (the
+ * recording overlay's SEND button's event callback - status_deck_ui.c
+ * still names the function/callback "stop" since that's what it does to
+ * the recording; only the on-screen label changed to SEND, since ending
+ * the recording here is also what sends it).
  */
 void audio_capture_stop(void);
+
+/**
+ * Requests that the capture currently in progress be discarded entirely -
+ * the CANCEL button's counterpart to audio_capture_stop(). Whatever chunks
+ * already reached the backend are told to be dropped (see
+ * audio_note_cancel_fn_t), the trailing partial chunk still sitting in the
+ * on-device buffer is never flushed, and finish_fn is never called - the
+ * capture ends in AUDIO_CAP_CANCELLED, not AUDIO_CAP_READY. Has no effect
+ * if no capture is running (or if the capture is manual REC, which has no
+ * cancel_fn to call - cancelling that just ends it without uploading, same
+ * as never having a REC button do anything more than audio_capture_stop()
+ * already made possible). Safe to call from any task, including the LVGL
+ * task (the recording overlay's CANCEL button's event callback).
+ */
+void audio_capture_cancel(void);
 
 /**
  * Read-only access to the most recently completed capture buffer, valid

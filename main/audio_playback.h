@@ -54,6 +54,18 @@ bool audio_playback_play(const uint8_t *pcm, size_t len, uint32_t sample_rate_hz
  */
 void audio_playback_stop(void);
 
+/**
+ * Sets speaker output volume, 0-100 (esp_codec_dev_set_out_vol's own range -
+ * out-of-range input is clamped into it). Takes effect on the next
+ * audio_playback_play() call, which re-applies the stored volume before
+ * opening the codec, same as the fixed level it replaces. Session-only -
+ * resets to the default on reboot, not persisted to NVS.
+ */
+void audio_playback_set_volume(int volume);
+
+/** Current speaker volume, 0-100 - for the volume control's own display. */
+int audio_playback_get_volume(void);
+
 #ifdef __cplusplus
 }
 #endif

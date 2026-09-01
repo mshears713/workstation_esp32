@@ -38,13 +38,14 @@ static const char *TAG = "audio_playback";
  * responsive without turning every chunk into per-call overhead. */
 #define PLAYBACK_WRITE_CHUNK_BYTES 4096
 
-/* 0-100 int scale per esp_codec_dev_set_out_vol's documented range - a
- * fixed starting volume for this mission, not exposed as a runtime
- * control, same "fixed, not a measured/tested limit" choice audio_capture.c
- * makes for its own mic gain. */
-#define PLAYBACK_VOLUME 70
+/* 0-100 int scale per esp_codec_dev_set_out_vol's documented range - starting
+ * point for the volume control UI (status_deck_ui.c's up/down buttons next
+ * to the listening ring), same "reasonable default, not a measured/tested
+ * limit" choice audio_capture.c makes for its own mic gain. */
+#define PLAYBACK_VOLUME_DEFAULT 70
 
 static esp_codec_dev_handle_t s_spk_dev = NULL;
+static int s_volume = PLAYBACK_VOLUME_DEFAULT;
 
 /* Set by audio_playback_stop() (any task, e.g. the STOP button's LVGL
  * callback), read once per write-chunk by audio_playback_play() - same
@@ -66,6 +67,21 @@ void audio_playback_stop(void)
     s_stop_requested = true;
 }
 
+void audio_playback_set_volume(int volume)
+{
+    if (volume < 0) {
+        volume = 0;
+    } else if (volume > 100) {
+        volume = 100;
+    }
+    s_volume = volume;
+}
+
+int audio_playback_get_volume(void)
+{
+    return s_volume;
+}
+
 bool audio_playback_play(const uint8_t *pcm, size_t len, uint32_t sample_rate_hz)
 {
     if (!s_spk_dev || !pcm || len == 0) {
@@ -74,7 +90,7 @@ bool audio_playback_play(const uint8_t *pcm, size_t len, uint32_t sample_rate_hz
 
     s_stop_requested = false;
 
-    esp_codec_dev_set_out_vol(s_spk_dev, PLAYBACK_VOLUME);
+    esp_codec_dev_set_out_vol(s_spk_dev, s_volume);
 
     esp_codec_dev_sample_info_t fs = {
         .bits_per_sample = PLAYBACK_BITS_PER_SAMPLE,

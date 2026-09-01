@@ -97,22 +97,42 @@ static const char *TAG = "audio_capture";
  * 13 did not touch it. */
 #define AUDIO_CAPTURE_DURATION_MS 4000
 
-/* Mission 13: NOTE's safety-cap duration - STOP (audio_capture_stop()) is
- * the everyday way a note ends, this is only the fallback if it isn't
- * pressed. A real voice note needs more room than a 4s test clip; 60s was
- * chosen as generous-but-bounded, not a measured/tested limit. */
-#define AUDIO_NOTE_MAX_DURATION_MS 60000
+/* NOTE/GO/SEND's safety-cap duration - STOP (audio_capture_stop()) is the
+ * everyday way one of these ends, this is only the fallback if it isn't
+ * pressed. Raised from the original 60s to 20 minutes so a long voice
+ * message never gets cut off mid-sentence - safe to raise freely now
+ * because, since the streaming rewrite below, this is a wall-clock cap
+ * enforced by the recording loop, NOT a buffer-size limit: at 16kHz/16-bit/
+ * mono, 20 minutes of raw audio is ~36.6MB, nowhere close to fitting in
+ * one PSRAM allocation (this board's entire PSRAM pool is 16MB), which is
+ * exactly why chunked streaming uploads (AUDIO_STREAM_CHUNK_MS below)
+ * replaced the old "record everything into one buffer, upload once at the
+ * end" approach for these three commands. */
+#define AUDIO_NOTE_MAX_DURATION_MS 1200000
 
-/* The capture buffer is sized once, at init, for the longer of the two
- * capture kinds (NOTE's 60s, ~1.9MB from PSRAM - comfortably inside the
- * board's 8MB) - never grown, never allocated per-capture. Each individual
- * capture still only fills as many bytes as ITS OWN requested duration
- * needs (see perform_capture's target_bytes) - manual REC's 4s capture
- * only ever touches the first ~128,000 bytes of this buffer, exactly as
- * before. */
-#define AUDIO_CAPTURE_BUFFER_MS AUDIO_NOTE_MAX_DURATION_MS
+/* How much audio a NOTE/GO/SEND recording accumulates before flushing a
+ * chunk to the backend (see the streaming branch of perform_capture() and
+ * stream_upload.c) - small enough to keep the on-device buffer tiny
+ * regardless of total recording length, large enough to keep the chunk
+ * count (and per-chunk HTTP overhead) reasonable: a full 20-minute
+ * recording is ~80 chunks at this size. Not a measured/tuned value, same
+ * "generous but bounded" spirit as the old 60s NOTE cap it replaces. */
+#define AUDIO_STREAM_CHUNK_MS 15000
+
+/* The capture buffer is sized once, at init, for the longer of manual
+ * REC's 4s and one streaming chunk's 15s (~469KB from PSRAM) - never
+ * grown, never allocated per-capture. A NOTE/GO/SEND recording reuses this
+ * same buffer many times across its whole duration, flushing and
+ * resetting it once per AUDIO_STREAM_CHUNK_MS rather than filling it once
+ * for the entire capture (that's what makes AUDIO_NOTE_MAX_DURATION_MS
+ * above safe to set so much higher than this buffer could ever hold
+ * outright). Manual REC's 4s capture still only ever touches the first
+ * ~128,000 bytes of this buffer, exactly as before. */
+#define AUDIO_CAPTURE_BUFFER_MS \
+    (AUDIO_CAPTURE_DURATION_MS > AUDIO_STREAM_CHUNK_MS ? AUDIO_CAPTURE_DURATION_MS : AUDIO_STREAM_CHUNK_MS)
 #define AUDIO_CAPTURE_BUFFER_SAMPLES ((AUDIO_SAMPLE_RATE_HZ * AUDIO_CAPTURE_BUFFER_MS) / 1000)
 #define AUDIO_CAPTURE_BUFFER_BYTES (AUDIO_CAPTURE_BUFFER_SAMPLES * AUDIO_BYTES_PER_SAMPLE * AUDIO_CHANNELS)
+#define AUDIO_STREAM_CHUNK_BYTES AUDIO_CAPTURE_BUFFER_BYTES
 
 /* 512 samples = 32ms per chunk at 16kHz - fine enough for a readable
  * progress readout without turning every chunk into a log line. */
@@ -150,13 +170,14 @@ static uint32_t s_last_complete_bytes = 0; /* 0 until the first capture complete
 static esp_codec_dev_handle_t s_mic_dev = NULL;
 static bool s_mic_available = false;       /* false if buffer alloc or codec bring-up failed at init */
 
-/* Set by audio_capture_stop() (any task, e.g. the STOP button's LVGL
- * callback), read once per read-chunk (~32ms) by perform_capture() on the
- * worker task - same bare-volatile, no-mutex-needed pattern
- * voice_control.c's s_mic_owner already uses for a single-flag
+/* Set by audio_capture_stop()/audio_capture_cancel() (any task, e.g. the
+ * SEND/CANCEL buttons' LVGL callbacks), read once per read-chunk (~32ms) by
+ * perform_capture() on the worker task - same bare-volatile, no-mutex-needed
+ * pattern voice_control.c's s_mic_owner already uses for a single-flag
  * cross-task signal. Reset at the start of every perform_capture() call so
  * a stale request from a previous capture can never affect the next one. */
 static volatile bool s_stop_requested = false;
+static volatile bool s_cancel_requested = false;
 
 /* Mission 13: what the worker task actually receives on s_start_queue -
  * queue depth is still 1 (audio_capture_start()'s in-flight guard already
@@ -164,9 +185,12 @@ static volatile bool s_stop_requested = false;
  * before, now just carrying a few more fields instead of a dummy byte). */
 typedef struct {
     char name[AUDIO_CAP_ARTIFACT_NAME_LEN]; /* "" -> auto "capture_NNN" (manual REC); else used verbatim */
-    uint32_t duration_ms;                   /* this capture's own target - never exceeds AUDIO_CAPTURE_BUFFER_MS */
+    uint32_t duration_ms;                   /* manual REC: capped to AUDIO_CAPTURE_BUFFER_MS. Streaming: the
+                                              * overall wall-clock safety cap, independent of buffer size. */
     bool auto_upload;                       /* true: this file's own upload_capture() to AUDIO_UPLOAD_PATH */
-    audio_note_upload_fn_t upload_fn;       /* used when auto_upload is false; NULL means "don't upload at all" */
+    audio_note_chunk_fn_t chunk_fn;         /* streaming only; NULL when auto_upload is true */
+    audio_note_finish_fn_t finish_fn;       /* streaming only; NULL when auto_upload is true */
+    audio_note_cancel_fn_t cancel_fn;       /* streaming only; NULL when auto_upload is true */
 } audio_capture_request_t;
 
 static void notify(audio_cap_state_t new_state, const char *message)
@@ -213,6 +237,23 @@ static void set_ready(const char *message)
     notify(AUDIO_CAP_READY, message);
 }
 
+/* fail_reason is set (not cleared, unlike set_ready()) to the literal
+ * string "CANCELLED" - not a failure, but reusing fail_reason as the
+ * signal lets voice_control.c's existing "check fail_reason after IDLE"
+ * result-message logic (see run_send_command() etc.) special-case it with
+ * one more strcmp, the same way it already special-cases
+ * "ENDPOINT NOT SET", rather than needing a second out-parameter plumbed
+ * through the whole capture-status contract for one more outcome. */
+static void set_cancelled(void)
+{
+    portENTER_CRITICAL(&s_mux);
+    s_status.state = AUDIO_CAP_CANCELLED;
+    strncpy(s_status.fail_reason, "CANCELLED", sizeof(s_status.fail_reason) - 1);
+    s_status.fail_reason[sizeof(s_status.fail_reason) - 1] = '\0';
+    portEXIT_CRITICAL(&s_mux);
+    notify(AUDIO_CAP_CANCELLED, "CANCELLED");
+}
+
 static void set_failed(const char *reason)
 {
     portENTER_CRITICAL(&s_mux);
@@ -240,9 +281,18 @@ static void set_failed(const char *reason)
  * same as the READY hold below, then return to IDLE so the next REC press
  * can retry. Without this, audio_capture_start()'s "state != IDLE" busy
  * guard would permanently lock out every future capture after the first
- * error. Note an upload failure does NOT lose the recording - the buffer
- * is untouched and audio_capture_get_buffer() still returns it - only the
- * network step needs retrying, not the whole capture. */
+ * error.
+ *
+ * Manual REC's upload failure does NOT lose the recording - the buffer is
+ * untouched and audio_capture_get_buffer() still returns it, only the
+ * network step needs retrying. Streaming NOTE/GO/SEND is different: a
+ * finish_fn failure means every chunk already made it to the backend (it's
+ * only the final "assemble and process" call that failed, safe to retry
+ * from the backend's side of the wire), while a chunk_fn failure mid-
+ * recording means everything up to the failed chunk is on the backend but
+ * the tail end of the recording that was still in progress is gone - the
+ * capture as a whole still needs a full retry, same user-facing outcome
+ * ("recording failed, try again") the old design's chunk-free path gave. */
 static void fail_and_recover(const char *reason)
 {
     set_failed(reason);
@@ -319,13 +369,18 @@ static bool upload_capture(const char *name, const uint8_t *buf, uint32_t len,
 static void perform_capture(const audio_capture_request_t *req)
 {
     s_stop_requested = false;
+    s_cancel_requested = false;
+    bool streaming = (req->chunk_fn != NULL);
 
     /* req->duration_ms is caller-chosen (AUDIO_CAPTURE_DURATION_MS for
-     * manual REC, AUDIO_NOTE_MAX_DURATION_MS for NOTE) but never trusted
-     * past the buffer's actual capacity - defensive only, both current
-     * callers already stay well inside AUDIO_CAPTURE_BUFFER_MS. */
+     * manual REC, AUDIO_NOTE_MAX_DURATION_MS for streaming NOTE/GO/SEND).
+     * Only manual REC is clamped to the buffer's capacity - a streaming
+     * capture's target is a wall-clock safety cap, not a buffer-size
+     * limit, since it reuses AUDIO_CAPTURE_BUFFER_BYTES as a rolling
+     * per-chunk window rather than filling it once (see the recording
+     * loop below). */
     uint32_t duration_ms = req->duration_ms;
-    if (duration_ms > AUDIO_CAPTURE_BUFFER_MS) {
+    if (!streaming && duration_ms > AUDIO_CAPTURE_BUFFER_MS) {
         duration_ms = AUDIO_CAPTURE_BUFFER_MS;
     }
     uint32_t target_samples = (AUDIO_SAMPLE_RATE_HZ * duration_ms) / 1000;
@@ -361,24 +416,46 @@ static void perform_capture(const audio_capture_request_t *req)
     notify(AUDIO_CAP_RECORDING, "AUDIO START");
 
     int64_t start_us = esp_timer_get_time();
-    uint32_t bytes_captured = 0;
+    uint32_t bytes_captured = 0;   /* cumulative across the whole capture - stats/progress/log all use this */
+    uint32_t chunk_bytes = 0;      /* streaming only - resets to 0 after each chunk flush below */
     uint32_t peak_raw = 0;
     uint32_t clipped = 0;
     double sum_sq = 0.0;
     int consec_errors = 0;
     int last_logged_second = -1;
     bool stopped_early = false;
+    bool cancelled = false;
+    bool chunk_upload_failed = false;
+    char chunk_fail_reason[AUDIO_CAP_REASON_LEN] = "";
 
     while (bytes_captured < target_bytes) {
+        if (s_cancel_requested) {
+            cancelled = true;
+            break;
+        }
         if (s_stop_requested) {
             stopped_early = true;
             break;
         }
 
         uint32_t remaining = target_bytes - bytes_captured;
-        uint32_t chunk_bytes = remaining < AUDIO_READ_CHUNK_BYTES ? remaining : AUDIO_READ_CHUNK_BYTES;
+        /* Non-streaming: dst offset grows for the whole capture, so room
+         * left in the buffer shrinks with bytes_captured. Streaming: dst
+         * offset resets to 0 after every flush, so room left shrinks with
+         * chunk_bytes instead - AUDIO_CAPTURE_BUFFER_BYTES equals one
+         * chunk's size exactly (AUDIO_STREAM_CHUNK_BYTES), so this never
+         * reaches 0 in practice: a full chunk is always flushed (and
+         * chunk_bytes reset) before that could happen. */
+        uint32_t buf_room = streaming ? (AUDIO_CAPTURE_BUFFER_BYTES - chunk_bytes)
+                                       : (AUDIO_CAPTURE_BUFFER_BYTES - bytes_captured);
+        uint32_t want = remaining < AUDIO_READ_CHUNK_BYTES ? remaining : AUDIO_READ_CHUNK_BYTES;
+        uint32_t read_bytes = want < buf_room ? want : buf_room;
+        if (read_bytes == 0) {
+            break; /* defensive only - see the comment above */
+        }
 
-        err = esp_codec_dev_read(s_mic_dev, s_capture_buf + bytes_captured, (int)chunk_bytes);
+        uint8_t *dst = s_capture_buf + (streaming ? chunk_bytes : bytes_captured);
+        err = esp_codec_dev_read(s_mic_dev, dst, (int)read_bytes);
         if (err != ESP_CODEC_DEV_OK) {
             consec_errors++;
             if (consec_errors >= AUDIO_READ_MAX_CONSEC_ERRORS) {
@@ -390,8 +467,8 @@ static void perform_capture(const audio_capture_request_t *req)
         }
         consec_errors = 0;
 
-        const int16_t *samples = (const int16_t *)(s_capture_buf + bytes_captured);
-        int sample_count = (int)(chunk_bytes / AUDIO_BYTES_PER_SAMPLE);
+        const int16_t *samples = (const int16_t *)dst;
+        int sample_count = (int)(read_bytes / AUDIO_BYTES_PER_SAMPLE);
         for (int i = 0; i < sample_count; i++) {
             int32_t s = samples[i];
             uint32_t mag = (uint32_t)(s < 0 ? -s : s);
@@ -404,7 +481,8 @@ static void perform_capture(const audio_capture_request_t *req)
             sum_sq += (double)s * (double)s;
         }
 
-        bytes_captured += chunk_bytes;
+        bytes_captured += read_bytes;
+        chunk_bytes += read_bytes;
         uint32_t elapsed_ms = (uint32_t)((esp_timer_get_time() - start_us) / 1000);
         update_progress(elapsed_ms, bytes_captured, peak_raw, clipped);
 
@@ -415,9 +493,52 @@ static void perform_capture(const audio_capture_request_t *req)
                      (unsigned long)elapsed_ms, (unsigned long)duration_ms,
                      (unsigned long)bytes_captured, (unsigned long)peak_raw);
         }
+
+        if (streaming && chunk_bytes >= AUDIO_STREAM_CHUNK_BYTES) {
+            /* Blocking, same "just call it from this task" shape the old
+             * single-shot upload used - a slow chunk pauses the next mic
+             * read rather than losing samples (see audio_note_chunk_fn_t's
+             * doc comment in audio_capture.h for the known trade-off). A
+             * failed chunk aborts the whole recording instead of silently
+             * dropping it, so a gapped transcript never reaches Whisper. */
+            if (!req->chunk_fn(req->name, s_capture_buf, chunk_bytes, chunk_fail_reason, sizeof(chunk_fail_reason))) {
+                chunk_upload_failed = true;
+                break;
+            }
+            chunk_bytes = 0;
+        }
     }
 
     esp_codec_dev_close(s_mic_dev);
+
+    if (cancelled) {
+        /* Unlike STOP, nothing further gets flushed or finished - the
+         * trailing partial chunk in s_capture_buf is simply dropped, and
+         * whatever already reached the backend is told to go away too. */
+        if (streaming && req->cancel_fn) {
+            req->cancel_fn(req->name);
+        }
+        ESP_LOGI(TAG, "recording cancelled by request at %lu bytes", (unsigned long)bytes_captured);
+        set_cancelled();
+        vTaskDelay(pdMS_TO_TICKS(800));
+        set_state(AUDIO_CAP_IDLE);
+        return;
+    }
+
+    if (chunk_upload_failed) {
+        fail_and_recover(chunk_fail_reason);
+        return;
+    }
+
+    if (streaming && chunk_bytes > 0) {
+        /* Flush whatever's left of the last, partial chunk. */
+        if (!req->chunk_fn(req->name, s_capture_buf, chunk_bytes, chunk_fail_reason, sizeof(chunk_fail_reason))) {
+            fail_and_recover(chunk_fail_reason);
+            return;
+        }
+        chunk_bytes = 0;
+    }
+
     if (stopped_early) {
         ESP_LOGI(TAG, "recording stopped early by request at %lu bytes", (unsigned long)bytes_captured);
     }
@@ -438,10 +559,10 @@ static void perform_capture(const audio_capture_request_t *req)
     s_status.clipped_samples = clipped;
     s_status.capture_seq++;
     if (req->name[0] != '\0') {
-        /* Voice-triggered NOTE: use the request ID verbatim, so the same ID
-         * on screen is the same ID in this log, the artifact name, and
-         * (via note_client.c) the upload - never re-derived or renamed
-         * along the way. */
+        /* Voice-triggered NOTE/GO/SEND: use the request ID verbatim, so
+         * the same ID on screen is the same ID in this log, the artifact
+         * name, and (via note_client.c/voice_inbox_client.c/entry_client.c)
+         * the upload - never re-derived or renamed along the way. */
         strncpy(s_status.artifact_name, req->name, sizeof(s_status.artifact_name) - 1);
         s_status.artifact_name[sizeof(s_status.artifact_name) - 1] = '\0';
     } else {
@@ -451,10 +572,18 @@ static void perform_capture(const audio_capture_request_t *req)
     strncpy(artifact_name, s_status.artifact_name, sizeof(artifact_name) - 1);
     artifact_name[sizeof(artifact_name) - 1] = '\0';
     portEXIT_CRITICAL(&s_mux);
-    s_last_complete_bytes = bytes_captured;
+    if (!streaming) {
+        /* Streaming captures never leave the buffer holding the whole
+         * recording (only the last chunk), so they don't update this -
+         * audio_capture_get_buffer() keeps reflecting the most recent
+         * manual REC capture instead of falsely claiming to hold
+         * `bytes_captured` bytes it doesn't actually have. */
+        s_last_complete_bytes = bytes_captured;
+    }
 
-    ESP_LOGI(TAG, "capture complete #%lu (%s): %lums, %lu bytes, peak=%.3f rms=%.3f clipped=%lu",
+    ESP_LOGI(TAG, "capture complete #%lu (%s): %lums, %lu bytes%s, peak=%.3f rms=%.3f clipped=%lu",
              (unsigned long)seq, artifact_name, (unsigned long)final_elapsed_ms, (unsigned long)bytes_captured,
+             streaming ? " (streamed)" : "",
              (double)(peak_raw / 32768.0f), (double)(rms_raw / 32768.0), (unsigned long)clipped);
 
     /* 48, not 32: "UPLOAD OK " (10) + up to artifact_name's declared 23
@@ -479,27 +608,24 @@ static void perform_capture(const audio_capture_request_t *req)
 
         snprintf(msg, sizeof(msg), "UPLOAD OK %s", artifact_name);
         set_ready(msg);
-    } else if (req->upload_fn) {
-        /* NOTE: same blocking-call-from-this-task shape as upload_capture()
-         * above, just handed off to the caller's own function (note_client.c)
-         * instead of this file's built-in one - see audio_note_upload_fn_t's
-         * doc comment in audio_capture.h for why synchronous, not queued. */
+    } else {
+        /* NOTE/GO/SEND - chunk_fn/finish_fn are always both set here,
+         * audio_capture_start_note() is the only caller of this path and
+         * never passes NULL for either (see its doc comment). Every chunk
+         * is already on the backend by now (or this function already
+         * returned via fail_and_recover above) - finish_fn is just the "no
+         * more chunks coming, go ahead and process it" signal. */
         set_state(AUDIO_CAP_UPLOADING);
         notify(AUDIO_CAP_UPLOADING, "NOTE UPLOADING");
 
         char fail_reason[AUDIO_CAP_REASON_LEN];
-        if (!req->upload_fn(artifact_name, s_capture_buf, bytes_captured,
-                             AUDIO_SAMPLE_RATE_HZ, AUDIO_BITS_PER_SAMPLE, AUDIO_CHANNELS,
+        if (!req->finish_fn(artifact_name, AUDIO_SAMPLE_RATE_HZ, AUDIO_BITS_PER_SAMPLE, AUDIO_CHANNELS,
                              fail_reason, sizeof(fail_reason))) {
             fail_and_recover(fail_reason);
             return;
         }
 
         snprintf(msg, sizeof(msg), "NOTE SENT %s", artifact_name);
-        set_ready(msg);
-    } else {
-        /* No upload requested at all - recording finalized and left in the
-         * buffer for audio_capture_get_buffer(), nothing sent anywhere. */
         set_ready(msg);
     }
 
@@ -529,12 +655,16 @@ void audio_capture_init(esp_codec_dev_handle_t mic_dev, audio_cap_event_cb_t cb,
 
     /* PSRAM first; fall back to internal RAM if it's unavailable. Verified
      * against this project's actual sdkconfig: CONFIG_SPIRAM is enabled
-     * (Octal mode, matching this board's 8MB Octal-PSRAM module), so this
+     * (Octal mode, matching this board's 16MB Octal-PSRAM module), so this
      * buffer (sized for AUDIO_CAPTURE_BUFFER_MS - the longer of manual
-     * REC's 4s and NOTE's 60s safety cap, ~1.9MB) comes from PSRAM, not the
-     * same internal SRAM as LVGL's framebuffers, Wi-Fi, and every task
-     * stack. If audio_capture_init() ever logs "BUFFER ALLOC FAILED"
-     * again, check CONFIG_SPIRAM in sdkconfig first. */
+     * REC's 4s and one streaming chunk's 15s, ~469KB) comes from PSRAM, not
+     * the same internal SRAM as LVGL's framebuffers, Wi-Fi, and every task
+     * stack. Deliberately small even though NOTE/GO/SEND recordings can now
+     * run up to AUDIO_NOTE_MAX_DURATION_MS (20 minutes) - see that
+     * constant's comment for why streaming chunk uploads keep this buffer
+     * from ever needing to grow with recording length. If
+     * audio_capture_init() ever logs "BUFFER ALLOC FAILED" again, check
+     * CONFIG_SPIRAM in sdkconfig first. */
     s_capture_buf = heap_caps_malloc(AUDIO_CAPTURE_BUFFER_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_capture_buf) {
         s_capture_buf = heap_caps_malloc(AUDIO_CAPTURE_BUFFER_BYTES, MALLOC_CAP_8BIT);
@@ -588,17 +718,22 @@ bool audio_capture_start(void)
         .name = "",
         .duration_ms = AUDIO_CAPTURE_DURATION_MS,
         .auto_upload = true,
-        .upload_fn = NULL,
+        .chunk_fn = NULL,
+        .finish_fn = NULL,
+        .cancel_fn = NULL,
     };
     return enqueue_capture(&req);
 }
 
-bool audio_capture_start_note(const char *request_id, audio_note_upload_fn_t upload_fn)
+bool audio_capture_start_note(const char *request_id, audio_note_chunk_fn_t chunk_fn,
+                               audio_note_finish_fn_t finish_fn, audio_note_cancel_fn_t cancel_fn)
 {
     audio_capture_request_t req = {
         .duration_ms = AUDIO_NOTE_MAX_DURATION_MS,
         .auto_upload = false,
-        .upload_fn = upload_fn,
+        .chunk_fn = chunk_fn,
+        .finish_fn = finish_fn,
+        .cancel_fn = cancel_fn,
     };
     strncpy(req.name, request_id, sizeof(req.name) - 1);
     req.name[sizeof(req.name) - 1] = '\0';
@@ -608,6 +743,11 @@ bool audio_capture_start_note(const char *request_id, audio_note_upload_fn_t upl
 void audio_capture_stop(void)
 {
     s_stop_requested = true;
+}
+
+void audio_capture_cancel(void)
+{
+    s_cancel_requested = true;
 }
 
 const uint8_t *audio_capture_get_buffer(size_t *len_out)
