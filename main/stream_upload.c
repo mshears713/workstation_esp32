@@ -26,6 +26,8 @@
 #include "freertos/task.h"
 #include "stream_upload.h"
 
+#include "backend_health.h"
+
 static const char *TAG = "stream_upload";
 
 #define FINISH_BODY_BUF_LEN 256
@@ -149,9 +151,13 @@ bool stream_upload_chunk(const char *url, const uint8_t *pcm, size_t len, uint32
                 vTaskDelay(pdMS_TO_TICKS(UPLOAD_RETRY_DELAY_MS));
                 continue;
             }
+            backend_health_report(false);
             return report_transport_failure("chunk upload", err, elapsed_ms, timeout_ms, fail_reason_out, fail_reason_out_len);
         }
 
+        /* Something answered, so the backend is reachable even if it
+         * rejects this particular request. */
+        backend_health_report(true);
         int status = esp_http_client_get_status_code(client);
         esp_http_client_cleanup(client);
 
@@ -221,9 +227,13 @@ bool stream_upload_finish(const char *url,
                 vTaskDelay(pdMS_TO_TICKS(UPLOAD_RETRY_DELAY_MS));
                 continue;
             }
+            backend_health_report(false);
             return report_transport_failure("finish", err, elapsed_ms, timeout_ms, fail_reason_out, fail_reason_out_len);
         }
 
+        /* Something answered, so the backend is reachable even if it
+         * rejects this particular request. */
+        backend_health_report(true);
         int status = esp_http_client_get_status_code(client);
         esp_http_client_cleanup(client);
 

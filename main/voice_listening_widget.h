@@ -58,6 +58,33 @@ lv_obj_t *voice_listening_widget_create(lv_obj_t *parent);
  */
 void voice_listening_widget_set_notification(lv_obj_t *widget, bool pending);
 
+/**
+ * Whether the console can currently reach anything, expressed through the
+ * widget rather than through another status label - the screen is 320x240
+ * and this graphic is already the thing the operator looks at.
+ *
+ * Deliberately app-agnostic: status_deck_ui.c maps backend_health.h's
+ * state onto these, so the widget stays free of any backend knowledge.
+ */
+typedef enum {
+    VOICE_WIDGET_LINK_OK = 0,  /* ring rotates, white mic - nothing to say */
+    VOICE_WIDGET_LINK_DOWN,    /* ring stops, red mic - backend unreachable */
+    VOICE_WIDGET_LINK_NO_NET,  /* ring stops, grey mic - no Wi-Fi to try over */
+    VOICE_WIDGET_LINK_UNKNOWN, /* ring rotates, grey mic - not established yet */
+} voice_widget_link_t;
+
+/**
+ * Sets the link indication. Motion carries the alarm and colour carries the
+ * reason: a stopped ring is what catches the eye across a workshop, and the
+ * mic colour then says whether the backend or the network is the problem.
+ * Rotation state is idempotent - safe to call on every UI tick like
+ * voice_listening_widget_set_notification(), and it will not restart (and
+ * so visibly stutter) an already-running rotation.
+ * @param widget   the object returned by voice_listening_widget_create()
+ * @param link     what to indicate
+ */
+void voice_listening_widget_set_link(lv_obj_t *widget, voice_widget_link_t link);
+
 #ifdef __cplusplus
 }
 #endif

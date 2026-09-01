@@ -237,6 +237,60 @@ lv_obj_t *voice_listening_widget_create(lv_obj_t *parent)
     return cont;
 }
 
+/* Child indices on the container, in build order (see
+ * voice_listening_widget_create). set_notification() already relied on the
+ * outer ring being 0; these name the rest rather than leaving bare numbers
+ * scattered about. The mic icon's three pieces are children of the disc. */
+#define CHILD_OUTER_RING 0
+#define CHILD_DISC       3
+#define MIC_PART_COUNT   3
+
+void voice_listening_widget_set_link(lv_obj_t *widget, voice_widget_link_t link)
+{
+    if (!widget) {
+        return;
+    }
+
+    bool spin = (link == VOICE_WIDGET_LINK_OK || link == VOICE_WIDGET_LINK_UNKNOWN);
+    lv_color_t mic_color;
+    switch (link) {
+    case VOICE_WIDGET_LINK_DOWN:
+        mic_color = lv_palette_main(LV_PALETTE_RED);
+        break;
+    case VOICE_WIDGET_LINK_NO_NET:
+    case VOICE_WIDGET_LINK_UNKNOWN:
+        mic_color = lv_palette_main(LV_PALETTE_GREY);
+        break;
+    case VOICE_WIDGET_LINK_OK:
+    default:
+        mic_color = lv_color_white();
+        break;
+    }
+
+    lv_obj_t *ring = lv_obj_get_child(widget, CHILD_OUTER_RING);
+    if (ring) {
+        /* Only act on a change. Unconditionally restarting the animation
+         * would reset the rotation to 0 on every UI tick, which reads as a
+         * stuck ring rather than a spinning one. */
+        bool spinning = lv_anim_get(ring, (lv_anim_exec_xcb_t)lv_arc_set_rotation) != NULL;
+        if (spin && !spinning) {
+            start_rotation(ring);
+        } else if (!spin && spinning) {
+            lv_anim_delete(ring, (lv_anim_exec_xcb_t)lv_arc_set_rotation);
+        }
+    }
+
+    lv_obj_t *disc = lv_obj_get_child(widget, CHILD_DISC);
+    if (disc) {
+        for (int i = 0; i < MIC_PART_COUNT; i++) {
+            lv_obj_t *part = lv_obj_get_child(disc, i);
+            if (part) {
+                lv_obj_set_style_bg_color(part, mic_color, 0);
+            }
+        }
+    }
+}
+
 void voice_listening_widget_set_notification(lv_obj_t *widget, bool pending)
 {
     if (!widget) {

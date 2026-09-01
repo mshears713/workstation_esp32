@@ -99,6 +99,13 @@
  * which run after the mic is closed and so cost no audio. */
 #define CHUNK_UPLOAD_TIMEOUT_MS 5000
 
+/* Liveness probe for the backend itself, polled by backend_health.c. This
+ * is deliberately not the handshake endpoint: the handshake ships
+ * accelerometer samples and runs a real pipeline, whereas /health returns
+ * a constant and costs the backend nothing, so it is safe to call on a
+ * timer forever. */
+#define HEALTH_PATH "/health"
+
 #define NOTE_UPLOAD_PATH "/api/v1/notes"
 
 #define VOICE_INBOX_UPLOAD_PATH "/api/v1/voice-inbox"

@@ -165,6 +165,7 @@
 #include "audio_capture.h"
 #include "voice_control.h"
 #include "voice_listening_widget.h"
+#include "backend_health.h"
 #include "notification_client.h"
 #include "remote_client.h"
 #include "audio_playback.h"
@@ -1223,6 +1224,25 @@ static void voice_ui_timer_cb(lv_timer_t *t)
     notification_status_t nst;
     notification_client_get_status(&nst);
     voice_listening_widget_set_notification(voice_widget, nst.pending);
+
+    /* Backend reachability, shown through the widget rather than another
+     * status row - see voice_listening_widget_set_link(). Wi-Fi state is
+     * rendered separately by render_wifi_panel(); this is deliberately a
+     * different signal, because the two fail independently and "router is
+     * fine, uvicorn is not running" was previously indistinguishable from
+     * a healthy console. Another cheap struct read, not a network call:
+     * backend_health.c's own task does the probing. */
+    backend_health_status_t bh;
+    backend_health_get_status(&bh);
+    voice_widget_link_t link;
+    switch (bh.state) {
+    case BACKEND_HEALTH_OK:         link = VOICE_WIDGET_LINK_OK; break;
+    case BACKEND_HEALTH_DOWN:       link = VOICE_WIDGET_LINK_DOWN; break;
+    case BACKEND_HEALTH_NO_NETWORK: link = VOICE_WIDGET_LINK_NO_NET; break;
+    case BACKEND_HEALTH_UNKNOWN:
+    default:                        link = VOICE_WIDGET_LINK_UNKNOWN; break;
+    }
+    voice_listening_widget_set_link(voice_widget, link);
 }
 
 /* ---- Button handlers: touch -> app_state -> render + serial log ----- */
@@ -2217,6 +2237,9 @@ void status_deck_ui(lv_obj_t *scr)
     audio_playback_init(spk_dev);
     notification_client_init();
     remote_client_init();
+    /* After wifi_mgr_init above - the poll task reads wifi_mgr_get_status()
+     * to avoid calling a backend it has no route to. */
+    backend_health_init();
 
     render_command_overlay();
     render_recording_overlay();
