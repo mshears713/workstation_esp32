@@ -33,7 +33,7 @@ static const char *TAG = "note_client";
 #define NOTE_SOURCE "esp32-box3"
 #define RESPONSE_BUF_LEN 256
 
-bool note_client_submit_chunk(const char *request_id, const uint8_t *pcm, size_t len,
+bool note_client_submit_chunk(const char *request_id, const uint8_t *pcm, size_t len, uint32_t offset,
                                char *fail_reason_out, size_t fail_reason_out_len)
 {
     if (NOTE_UPLOAD_PATH[0] == '\0') {
@@ -45,7 +45,7 @@ bool note_client_submit_chunk(const char *request_id, const uint8_t *pcm, size_t
     char url[192];
     snprintf(url, sizeof(url), "%s%s/%s/chunk", BACKEND_BASE_URL, NOTE_UPLOAD_PATH, request_id);
 
-    return stream_upload_chunk(url, pcm, len, NOTE_UPLOAD_TIMEOUT_MS, fail_reason_out, fail_reason_out_len);
+    return stream_upload_chunk(url, pcm, len, offset, CHUNK_UPLOAD_TIMEOUT_MS, fail_reason_out, fail_reason_out_len);
 }
 
 bool note_client_submit_finish(const char *request_id,

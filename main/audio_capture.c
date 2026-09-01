@@ -69,6 +69,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "bsp/esp-bsp.h"
 #include "audio_capture.h"
 
@@ -178,8 +179,43 @@ static audio_cap_event_cb_t s_cb = NULL;
 static void *s_cb_ctx = NULL;
 static QueueHandle_t s_start_queue = NULL;
 
-static uint8_t *s_capture_buf = NULL;      /* AUDIO_CAPTURE_BUFFER_BYTES, allocated once at init */
+/* Two capture buffers, not one. The mic fills one while the other uploads,
+ * so the recording loop never stops reading - that gap is what was costing
+ * ~550ms of audio per 15s chunk (issue #1, measured on hardware).
+ * Manual REC is unaffected and still uses buffer 0 as a single buffer. */
+#define AUDIO_CAPTURE_BUFFERS 2
+
+typedef struct {
+    uint8_t *pcm;
+    uint32_t len;
+    uint32_t offset;   /* byte position in the finished recording */
+} chunk_job_t;
+
+static uint8_t *s_capture_buf[AUDIO_CAPTURE_BUFFERS] = { NULL, NULL };
 static uint32_t s_last_complete_bytes = 0; /* 0 until the first capture completes */
+
+/* Ownership of a buffer is tracked by this counting semaphore rather than
+ * by the queue, and the distinction matters: queue space frees up when the
+ * uploader *dequeues* a job, but the buffer is only safe to overwrite once
+ * the upload has actually *finished*. The uploader gives the token back
+ * after the POST returns, so a token means "a buffer is genuinely free".
+ * With AUDIO_CAPTURE_BUFFERS tokens, a capture that outruns the network
+ * simply blocks here - which is exactly the pre-existing behavior, so the
+ * worst case degrades to what it did before rather than to something new. */
+static QueueHandle_t s_chunk_queue = NULL;
+static SemaphoreHandle_t s_free_bufs = NULL;
+static TaskHandle_t s_uploader_task = NULL;
+
+/* Per-capture, read by the uploader task. Safe as plain statics because
+ * enqueue_capture()'s busy-guard allows only one capture at a time, and
+ * these are set before the first chunk is ever queued. */
+static audio_note_chunk_fn_t s_chunk_fn = NULL;
+static char s_chunk_name[AUDIO_CAP_ARTIFACT_NAME_LEN];
+static volatile bool s_chunk_failed = false;
+static char s_chunk_fail_reason[AUDIO_CAP_REASON_LEN];
+static uint32_t s_flush_count = 0;      /* all three guarded by s_mux */
+static uint32_t s_flush_total_ms = 0;
+static uint32_t s_flush_max_ms = 0;
 static esp_codec_dev_handle_t s_mic_dev = NULL;
 static bool s_mic_available = false;       /* false if buffer alloc or codec bring-up failed at init */
 
@@ -344,7 +380,8 @@ static bool upload_capture(const char *name, const uint8_t *buf, uint32_t len,
     }
     esp_http_client_set_header(client, "Content-Type", "application/octet-stream");
     /* Not copied by esp_http_client - buf must stay valid until perform()
-     * returns, which it does here (s_capture_buf, untouched during upload). */
+     * returns, which it does here (buffer 0, and manual REC never runs
+     * concurrently with a streaming capture). */
     esp_http_client_set_post_field(client, (const char *)buf, (int)len);
 
     int64_t start_us = esp_timer_get_time();
@@ -379,6 +416,61 @@ static bool upload_capture(const char *name, const uint8_t *buf, uint32_t len,
     return true;
 }
 
+/* Runs the chunk POST off the recording task. Whatever happens, the
+ * buffer token goes back - a failed upload must not strand a buffer and
+ * wedge the recording loop; the failure is reported through
+ * s_chunk_failed, which the loop checks each pass. */
+static void uploader_task(void *arg)
+{
+    (void)arg;
+    chunk_job_t job;
+    for (;;) {
+        if (xQueueReceive(s_chunk_queue, &job, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+        /* Skip the actual POST once this capture has already failed - the
+         * recording is being abandoned, so more uploads are pointless -
+         * but still drain the queue and return the token. */
+        if (!s_chunk_failed) {
+            char reason[AUDIO_CAP_REASON_LEN] = "";
+            int64_t t0 = esp_timer_get_time();
+            bool ok = s_chunk_fn(s_chunk_name, job.pcm, job.len, job.offset, reason, sizeof(reason));
+            uint32_t ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
+
+            portENTER_CRITICAL(&s_mux);
+            s_flush_count++;
+            s_flush_total_ms += ms;
+            if (ms > s_flush_max_ms) {
+                s_flush_max_ms = ms;
+            }
+            portEXIT_CRITICAL(&s_mux);
+
+            ESP_LOGI(TAG, "chunk uploaded: %lu bytes at offset %lu in %lums%s",
+                     (unsigned long)job.len, (unsigned long)job.offset, (unsigned long)ms,
+                     ok ? "" : " (FAILED)");
+            if (!ok) {
+                strncpy(s_chunk_fail_reason, reason, sizeof(s_chunk_fail_reason) - 1);
+                s_chunk_fail_reason[sizeof(s_chunk_fail_reason) - 1] = '\0';
+                s_chunk_failed = true;
+            }
+        }
+        xSemaphoreGive(s_free_bufs);
+    }
+}
+
+/* Blocks until every queued chunk has finished uploading, then restores the
+ * token count. The caller must already have released its own buffer token
+ * (by queueing it or giving it back), or this deadlocks. */
+static void drain_uploads(void)
+{
+    for (int i = 0; i < AUDIO_CAPTURE_BUFFERS; i++) {
+        xSemaphoreTake(s_free_bufs, portMAX_DELAY);
+    }
+    for (int i = 0; i < AUDIO_CAPTURE_BUFFERS; i++) {
+        xSemaphoreGive(s_free_bufs);
+    }
+}
+
 static void perform_capture(const audio_capture_request_t *req)
 {
     s_stop_requested = false;
@@ -411,6 +503,23 @@ static void perform_capture(const audio_capture_request_t *req)
     s_status.duration_target_ms = duration_ms;
     portEXIT_CRITICAL(&s_mux);
 
+    if (streaming) {
+        /* Set before anything is queued, and only ever one capture at a
+         * time (enqueue_capture's busy guard), so the uploader task can
+         * read these without further locking. */
+        s_chunk_fn = req->chunk_fn;
+        strncpy(s_chunk_name, req->name, sizeof(s_chunk_name) - 1);
+        s_chunk_name[sizeof(s_chunk_name) - 1] = '\0';
+        s_chunk_failed = false;
+        s_chunk_fail_reason[0] = '\0';
+        portENTER_CRITICAL(&s_mux);
+        s_status.uploader_behind = false;
+        s_flush_count = 0;
+        s_flush_total_ms = 0;
+        s_flush_max_ms = 0;
+        portEXIT_CRITICAL(&s_mux);
+    }
+
     set_state(AUDIO_CAP_ARMING);
     ESP_LOGI(TAG, "capture arming");
     notify(AUDIO_CAP_ARMING, "AUDIO ARM");
@@ -436,6 +545,13 @@ static void perform_capture(const audio_capture_request_t *req)
              (unsigned long)duration_ms, AUDIO_SAMPLE_RATE_HZ, AUDIO_BITS_PER_SAMPLE, AUDIO_CHANNELS);
     notify(AUDIO_CAP_RECORDING, "AUDIO START");
 
+    if (streaming) {
+        /* Claim the buffer the mic will fill first. The uploader returns
+         * tokens as uploads complete; drain_uploads() restores the count
+         * on every exit path below. */
+        xSemaphoreTake(s_free_bufs, portMAX_DELAY);
+    }
+
     int64_t start_us = esp_timer_get_time();
     uint32_t bytes_captured = 0;   /* cumulative across the whole capture - stats/progress/log all use this */
     uint32_t chunk_bytes = 0;      /* streaming only - resets to 0 after each chunk flush below */
@@ -444,9 +560,7 @@ static void perform_capture(const audio_capture_request_t *req)
     double sum_sq = 0.0;
     int consec_errors = 0;
     uint32_t dropped_reads = 0;    /* errored reads that were retried - each one is ~32ms of audio gone */
-    uint32_t flush_count = 0;      /* chunk uploads performed, each one a window where the mic isn't read */
-    uint32_t flush_total_ms = 0;
-    uint32_t flush_max_ms = 0;
+    int active_buf = 0;            /* streaming only - index of the buffer the mic is filling */
     int last_logged_second = -1;
     bool stopped_early = false;
     bool cancelled = false;
@@ -479,13 +593,24 @@ static void perform_capture(const audio_capture_request_t *req)
             break; /* defensive only - see the comment above */
         }
 
-        uint8_t *dst = s_capture_buf + (streaming ? chunk_bytes : bytes_captured);
+        uint8_t *dst = streaming ? (s_capture_buf[active_buf] + chunk_bytes)
+                                 : (s_capture_buf[0] + bytes_captured);
         err = esp_codec_dev_read(s_mic_dev, dst, (int)read_bytes);
         if (err != ESP_CODEC_DEV_OK) {
             consec_errors++;
             dropped_reads++;
             if (consec_errors >= AUDIO_READ_MAX_CONSEC_ERRORS) {
                 esp_codec_dev_close(s_mic_dev);
+                if (streaming) {
+                    /* Give back the buffer being filled, then wait for any
+                     * in-flight upload - returning with a token still held
+                     * would wedge the next capture. */
+                    xSemaphoreGive(s_free_bufs);
+                    drain_uploads();
+                    if (req->cancel_fn) {
+                        req->cancel_fn(req->name);
+                    }
+                }
                 fail_and_recover("READ ERROR");
                 return;
             }
@@ -521,30 +646,59 @@ static void perform_capture(const audio_capture_request_t *req)
         }
 
         if (streaming && chunk_bytes >= AUDIO_STREAM_CHUNK_BYTES) {
-            /* Blocking, same "just call it from this task" shape the old
-             * single-shot upload used - a slow chunk pauses the next mic
-             * read rather than losing samples (see audio_note_chunk_fn_t's
-             * doc comment in audio_capture.h for the known trade-off). A
-             * failed chunk aborts the whole recording instead of silently
-             * dropping it, so a gapped transcript never reaches Whisper. */
-            int64_t flush_start_us = esp_timer_get_time();
-            bool chunk_ok = req->chunk_fn(req->name, s_capture_buf, chunk_bytes, chunk_fail_reason, sizeof(chunk_fail_reason));
-            uint32_t flush_ms = (uint32_t)((esp_timer_get_time() - flush_start_us) / 1000);
-            flush_count++;
-            flush_total_ms += flush_ms;
-            if (flush_ms > flush_max_ms) {
-                flush_max_ms = flush_ms;
+            /* Hand the full buffer to the uploader task and immediately
+             * carry on reading into the other one. This is the whole point
+             * of the change: the mic is never left unread while a chunk is
+             * in flight, so the I2S DMA has nothing to overrun.
+             *
+             * These bytes start where the already-queued ones end;
+             * bytes_captured includes the chunk still in the buffer, so
+             * subtract it back off. */
+            chunk_job_t job = {
+                .pcm = s_capture_buf[active_buf],
+                .len = chunk_bytes,
+                .offset = bytes_captured - chunk_bytes,
+            };
+            xQueueSend(s_chunk_queue, &job, portMAX_DELAY);
+            chunk_bytes = 0;
+
+            /* Claim the next buffer. Blocks only if the uploader is still
+             * busy with the one before it, i.e. only when the network can't
+             * keep up - and then this degrades to exactly the old blocking
+             * behavior rather than to anything new. Buffers come back in
+             * FIFO order from a single uploader, so the freed one is always
+             * the next index. */
+            active_buf = (active_buf + 1) % AUDIO_CAPTURE_BUFFERS;
+            int64_t stall_start_us = esp_timer_get_time();
+            /* Published before blocking, not after: the UI timer keeps
+             * running on the LVGL task while this one is stuck here, so
+             * this is the only way the screen can tell the operator the
+             * frozen counter is a stalled upload rather than a crash. */
+            portENTER_CRITICAL(&s_mux);
+            s_status.uploader_behind = true;
+            portEXIT_CRITICAL(&s_mux);
+            xSemaphoreTake(s_free_bufs, portMAX_DELAY);
+            portENTER_CRITICAL(&s_mux);
+            s_status.uploader_behind = false;
+            portEXIT_CRITICAL(&s_mux);
+            uint32_t stall_ms = (uint32_t)((esp_timer_get_time() - stall_start_us) / 1000);
+            if (stall_ms > 0) {
+                /* Non-zero means the uploader fell behind and the mic did
+                 * stop. Logged loudly because it is the one path that can
+                 * still lose audio. */
+                ESP_LOGW(TAG, "capture waited %lums for a free buffer - uploader is behind",
+                         (unsigned long)stall_ms);
             }
-            /* The mic is deaf for exactly this long. Audio survives only to
-             * the extent the codec's DMA ring outlasts it, so this number
-             * is the one to drive down. */
-            ESP_LOGI(TAG, "chunk %lu flushed: %lu bytes in %lums", (unsigned long)flush_count,
-                     (unsigned long)chunk_bytes, (unsigned long)flush_ms);
-            if (!chunk_ok) {
+
+            /* A chunk that failed while we kept recording ends the whole
+             * recording, same as before - a gapped transcript must never
+             * reach transcription. */
+            if (s_chunk_failed) {
                 chunk_upload_failed = true;
+                strncpy(chunk_fail_reason, s_chunk_fail_reason, sizeof(chunk_fail_reason) - 1);
+                chunk_fail_reason[sizeof(chunk_fail_reason) - 1] = '\0';
                 break;
             }
-            chunk_bytes = 0;
         }
     }
 
@@ -558,10 +712,17 @@ static void perform_capture(const audio_capture_request_t *req)
 
     if (cancelled) {
         /* Unlike STOP, nothing further gets flushed or finished - the
-         * trailing partial chunk in s_capture_buf is simply dropped, and
-         * whatever already reached the backend is told to go away too. */
-        if (streaming && req->cancel_fn) {
-            req->cancel_fn(req->name);
+         * trailing partial chunk in the active buffer is simply dropped,
+         * and whatever already reached the backend is told to go away too.
+         * Uploads in flight are waited out first: a chunk landing after
+         * the cancel would resurrect the temp file the cancel just
+         * deleted, leaving an orphan on the backend. */
+        if (streaming) {
+            xSemaphoreGive(s_free_bufs);
+            drain_uploads();
+            if (req->cancel_fn) {
+                req->cancel_fn(req->name);
+            }
         }
         ESP_LOGI(TAG, "recording cancelled by request at %lu bytes", (unsigned long)bytes_captured);
         set_cancelled();
@@ -570,18 +731,41 @@ static void perform_capture(const audio_capture_request_t *req)
         return;
     }
 
-    if (chunk_upload_failed) {
-        fail_and_recover(chunk_fail_reason);
-        return;
-    }
-
-    if (streaming && chunk_bytes > 0) {
-        /* Flush whatever's left of the last, partial chunk. */
-        if (!req->chunk_fn(req->name, s_capture_buf, chunk_bytes, chunk_fail_reason, sizeof(chunk_fail_reason))) {
-            fail_and_recover(chunk_fail_reason);
-            return;
+    if (streaming) {
+        /* Queue whatever's left of the last, partial chunk, then wait for
+         * the uploader to finish everything. The mic is already closed, so
+         * this wait costs no audio - it is why the recording clock stopped
+         * at capture_end_us above. */
+        if (chunk_bytes > 0 && !chunk_upload_failed) {
+            chunk_job_t job = {
+                .pcm = s_capture_buf[active_buf],
+                .len = chunk_bytes,
+                .offset = bytes_captured - chunk_bytes,
+            };
+            xQueueSend(s_chunk_queue, &job, portMAX_DELAY);
+        } else {
+            xSemaphoreGive(s_free_bufs);
         }
         chunk_bytes = 0;
+        drain_uploads();
+
+        /* Re-check: the trailing chunk, or one still in flight when the
+         * loop ended, can fail after the loop has already exited. */
+        if (s_chunk_failed && !chunk_upload_failed) {
+            chunk_upload_failed = true;
+            strncpy(chunk_fail_reason, s_chunk_fail_reason, sizeof(chunk_fail_reason) - 1);
+            chunk_fail_reason[sizeof(chunk_fail_reason) - 1] = '\0';
+        }
+    }
+
+    if (chunk_upload_failed) {
+        if (streaming && req->cancel_fn) {
+            /* Don't leave a half-uploaded capture accumulating on the
+             * backend - it would never be finished or cleaned up. */
+            req->cancel_fn(req->name);
+        }
+        fail_and_recover(chunk_fail_reason);
+        return;
     }
 
     if (stopped_early) {
@@ -604,8 +788,18 @@ static void perform_capture(const audio_capture_request_t *req)
     uint32_t shortfall_ms = final_elapsed_ms > audio_ms ? final_elapsed_ms - audio_ms : 0;
     uint32_t shortfall_pct = final_elapsed_ms ? (shortfall_ms * 100u) / final_elapsed_ms : 0;
 
+    uint32_t flush_count, flush_total_ms, flush_max_ms;
+    portENTER_CRITICAL(&s_mux);
+    flush_count = s_flush_count;
+    flush_total_ms = s_flush_total_ms;
+    flush_max_ms = s_flush_max_ms;
+    portEXIT_CRITICAL(&s_mux);
     if (flush_count > 0) {
-        ESP_LOGI(TAG, "chunk flushes: %lu, blocking the mic for %lums total (max %lums, mean %lums)",
+        /* These uploads now overlap recording instead of interrupting it,
+         * so this is throughput information, not a lost-audio budget.
+         * shortfall_ms below is what says whether any audio was actually
+         * lost. */
+        ESP_LOGI(TAG, "chunk uploads: %lu, %lums total (max %lums, mean %lums), overlapped with recording",
                  (unsigned long)flush_count, (unsigned long)flush_total_ms, (unsigned long)flush_max_ms,
                  (unsigned long)(flush_total_ms / flush_count));
     }
@@ -702,7 +896,7 @@ static void perform_capture(const audio_capture_request_t *req)
         notify(AUDIO_CAP_UPLOADING, "AUDIO UPLOADING");
 
         char fail_reason[AUDIO_CAP_REASON_LEN];
-        if (!upload_capture(artifact_name, s_capture_buf, bytes_captured, fail_reason, sizeof(fail_reason))) {
+        if (!upload_capture(artifact_name, s_capture_buf[0], bytes_captured, fail_reason, sizeof(fail_reason))) {
             fail_and_recover(fail_reason);
             return;
         }
@@ -770,12 +964,34 @@ void audio_capture_init(esp_codec_dev_handle_t mic_dev, audio_cap_event_cb_t cb,
      * from ever needing to grow with recording length. If
      * audio_capture_init() ever logs "BUFFER ALLOC FAILED" again, check
      * CONFIG_SPIRAM in sdkconfig first. */
-    s_capture_buf = heap_caps_malloc(AUDIO_CAPTURE_BUFFER_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!s_capture_buf) {
-        s_capture_buf = heap_caps_malloc(AUDIO_CAPTURE_BUFFER_BYTES, MALLOC_CAP_8BIT);
+    bool bufs_ok = true;
+    for (int i = 0; i < AUDIO_CAPTURE_BUFFERS; i++) {
+        s_capture_buf[i] = heap_caps_malloc(AUDIO_CAPTURE_BUFFER_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_capture_buf[i]) {
+            s_capture_buf[i] = heap_caps_malloc(AUDIO_CAPTURE_BUFFER_BYTES, MALLOC_CAP_8BIT);
+        }
+        if (!s_capture_buf[i]) {
+            bufs_ok = false;
+        }
     }
-    if (!s_capture_buf) {
-        ESP_LOGE(TAG, "capture buffer alloc failed (%d bytes)", AUDIO_CAPTURE_BUFFER_BYTES);
+
+    s_chunk_queue = xQueueCreate(AUDIO_CAPTURE_BUFFERS, sizeof(chunk_job_t));
+    s_free_bufs = xSemaphoreCreateCounting(AUDIO_CAPTURE_BUFFERS, AUDIO_CAPTURE_BUFFERS);
+    if (s_chunk_queue && s_free_bufs) {
+        /* Same priority as the capture worker: the recording task spends
+         * nearly all its time blocked in esp_codec_dev_read() waiting on
+         * I2S DMA, so the uploader gets the CPU without needing to preempt
+         * it. Stack matches audio_worker's - this task runs the same
+         * esp_http_client path the capture task used to. */
+        xTaskCreate(uploader_task, "audio_uploader", 6144, NULL, 5, &s_uploader_task);
+    }
+    if (!s_chunk_queue || !s_free_bufs || !s_uploader_task) {
+        bufs_ok = false;
+    }
+
+    if (!bufs_ok) {
+        ESP_LOGE(TAG, "capture buffer/uploader init failed (%d buffers of %d bytes)",
+                 AUDIO_CAPTURE_BUFFERS, AUDIO_CAPTURE_BUFFER_BYTES);
         set_failed("BUFFER ALLOC FAILED");
     } else if (!mic_dev) {
         ESP_LOGE(TAG, "no microphone codec handle supplied");
@@ -783,9 +999,10 @@ void audio_capture_init(esp_codec_dev_handle_t mic_dev, audio_cap_event_cb_t cb,
     } else {
         s_mic_dev = mic_dev;
         s_mic_available = true;
-        ESP_LOGI(TAG, "microphone ready: %dHz/%d-bit/%dch, REC=%dms NOTE cap=%dms, buffer %d bytes",
+        ESP_LOGI(TAG, "microphone ready: %dHz/%d-bit/%dch, REC=%dms NOTE cap=%dms, %d x %d byte buffers",
                  AUDIO_SAMPLE_RATE_HZ, AUDIO_BITS_PER_SAMPLE, AUDIO_CHANNELS,
-                 AUDIO_CAPTURE_DURATION_MS, AUDIO_NOTE_MAX_DURATION_MS, AUDIO_CAPTURE_BUFFER_BYTES);
+                 AUDIO_CAPTURE_DURATION_MS, AUDIO_NOTE_MAX_DURATION_MS,
+                 AUDIO_CAPTURE_BUFFERS, AUDIO_CAPTURE_BUFFER_BYTES);
     }
 
     s_start_queue = xQueueCreate(1, sizeof(audio_capture_request_t));
@@ -866,5 +1083,5 @@ const uint8_t *audio_capture_get_buffer(size_t *len_out)
     if (len_out) {
         *len_out = s_last_complete_bytes;
     }
-    return s_capture_buf;
+    return s_capture_buf[0];
 }

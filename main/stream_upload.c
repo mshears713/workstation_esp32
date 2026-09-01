@@ -40,6 +40,24 @@ static const char *TAG = "stream_upload";
 #define UPLOAD_RETRY_MAX_ATTEMPTS 4
 #define UPLOAD_RETRY_DELAY_MS 500
 
+/* Chunks retry less than the finish call does, and the reason is a hard
+ * constraint rather than a preference: a chunk upload runs while the
+ * recording is still going, and audio_capture.c only has one spare buffer
+ * of slack (AUDIO_STREAM_CHUNK_MS, 15s) before the mic has to stop. The
+ * whole retry budget must therefore fit inside that slack, or a transient
+ * outage stalls the recording instead of being absorbed by it.
+ *
+ *   2 attempts x CHUNK_UPLOAD_TIMEOUT_MS + 1 x UPLOAD_RETRY_DELAY_MS
+ *   = 10,500ms worst case, against 15,000ms of slack.
+ *
+ * Measured before this was tuned: 4 attempts at a 10s timeout took 41,581ms
+ * with the backend down, which stalled the mic for 26,588ms and froze the
+ * on-screen timer for the whole time. The recording was doomed either way -
+ * the backend was gone - so spending 41s to discover that was pure cost.
+ * The finish call keeps the longer budget: it runs after the mic is closed,
+ * so a slow retry there costs no audio. */
+#define UPLOAD_CHUNK_MAX_ATTEMPTS 2
+
 typedef struct {
     char *buf;
     size_t buf_len;
@@ -80,12 +98,30 @@ static bool report_transport_failure(const char *op, esp_err_t err, int64_t elap
     return false;
 }
 
-bool stream_upload_chunk(const char *url, const uint8_t *pcm, size_t len, uint32_t timeout_ms,
-                          char *fail_reason_out, size_t fail_reason_out_len)
+bool stream_upload_chunk(const char *url, const uint8_t *pcm, size_t len, uint32_t offset,
+                          uint32_t timeout_ms, char *fail_reason_out, size_t fail_reason_out_len)
 {
-    for (int attempt = 1; attempt <= UPLOAD_RETRY_MAX_ATTEMPTS; attempt++) {
+    /* `offset` is where these bytes belong in the capture. The backend
+     * compares it against what it has already accumulated and rejects a
+     * gap or a reordering with 409 (see the backend's
+     * streaming_capture.append_chunk). It also makes the retry below safe:
+     * if a POST actually landed but its response was lost, the retry
+     * carries the same offset and the backend treats it as an idempotent
+     * no-op instead of appending the audio twice.
+     *
+     * Appended here rather than by each of the three clients so the wire
+     * format lives in one place. */
+    char url_with_offset[224];
+    int n = snprintf(url_with_offset, sizeof(url_with_offset), "%s?offset=%lu", url, (unsigned long)offset);
+    if (n < 0 || (size_t)n >= sizeof(url_with_offset)) {
+        ESP_LOGE(TAG, "chunk url too long: %s", url);
+        snprintf(fail_reason_out, fail_reason_out_len, "UPLOAD INIT FAILED");
+        return false;
+    }
+
+    for (int attempt = 1; attempt <= UPLOAD_CHUNK_MAX_ATTEMPTS; attempt++) {
         esp_http_client_config_t config = {
-            .url = url,
+            .url = url_with_offset,
             .method = HTTP_METHOD_POST,
             .timeout_ms = timeout_ms,
         };
@@ -107,9 +143,9 @@ bool stream_upload_chunk(const char *url, const uint8_t *pcm, size_t len, uint32
 
         if (err != ESP_OK) {
             esp_http_client_cleanup(client);
-            if (attempt < UPLOAD_RETRY_MAX_ATTEMPTS) {
+            if (attempt < UPLOAD_CHUNK_MAX_ATTEMPTS) {
                 ESP_LOGW(TAG, "chunk upload attempt %d/%d failed (%s), retrying in %dms",
-                         attempt, UPLOAD_RETRY_MAX_ATTEMPTS, esp_err_to_name(err), UPLOAD_RETRY_DELAY_MS);
+                         attempt, UPLOAD_CHUNK_MAX_ATTEMPTS, esp_err_to_name(err), UPLOAD_RETRY_DELAY_MS);
                 vTaskDelay(pdMS_TO_TICKS(UPLOAD_RETRY_DELAY_MS));
                 continue;
             }

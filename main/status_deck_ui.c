@@ -1103,8 +1103,17 @@ static void render_recording_overlay(void)
         break;
     case AUDIO_CAP_RECORDING: {
         uint32_t s = ast.elapsed_ms / 1000;
-        snprintf(status_buf, sizeof(status_buf), "%02u:%02u", (unsigned)(s / 60), (unsigned)(s % 60));
-        color = lv_palette_main(LV_PALETTE_RED);
+        if (ast.uploader_behind) {
+            /* The mic is genuinely stopped, waiting on a backed-up upload,
+             * so the counter below has frozen. Say so - a frozen timer with
+             * no explanation reads as a crash. */
+            snprintf(status_buf, sizeof(status_buf), "%02u:%02u  WAITING ON BACKEND",
+                     (unsigned)(s / 60), (unsigned)(s % 60));
+            color = lv_palette_main(LV_PALETTE_ORANGE);
+        } else {
+            snprintf(status_buf, sizeof(status_buf), "%02u:%02u", (unsigned)(s / 60), (unsigned)(s % 60));
+            color = lv_palette_main(LV_PALETTE_RED);
+        }
         recording = true;
         break;
     }

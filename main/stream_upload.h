@@ -37,8 +37,8 @@ extern "C" {
  * fail_reason_out the same way multipart_upload_post() does ("UPLOAD
  * TIMEOUT"/"UPLOAD UNREACHABLE"/"UPLOAD INIT FAILED"/"UPLOAD ERR <status>").
  */
-bool stream_upload_chunk(const char *url, const uint8_t *pcm, size_t len, uint32_t timeout_ms,
-                          char *fail_reason_out, size_t fail_reason_out_len);
+bool stream_upload_chunk(const char *url, const uint8_t *pcm, size_t len, uint32_t offset,
+                          uint32_t timeout_ms, char *fail_reason_out, size_t fail_reason_out_len);
 
 /**
  * POSTs `fields` as a small application/x-www-form-urlencoded body (no

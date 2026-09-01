@@ -33,7 +33,7 @@ static const char *TAG = "voice_inbox_client";
 #define VOICE_INBOX_SOURCE "esp32-box3"
 #define RESPONSE_BUF_LEN 256
 
-bool voice_inbox_client_submit_chunk(const char *request_id, const uint8_t *pcm, size_t len,
+bool voice_inbox_client_submit_chunk(const char *request_id, const uint8_t *pcm, size_t len, uint32_t offset,
                                       char *fail_reason_out, size_t fail_reason_out_len)
 {
     if (VOICE_INBOX_UPLOAD_PATH[0] == '\0') {
@@ -45,7 +45,7 @@ bool voice_inbox_client_submit_chunk(const char *request_id, const uint8_t *pcm,
     char url[192];
     snprintf(url, sizeof(url), "%s%s/%s/chunk", BACKEND_BASE_URL, VOICE_INBOX_UPLOAD_PATH, request_id);
 
-    return stream_upload_chunk(url, pcm, len, VOICE_INBOX_UPLOAD_TIMEOUT_MS, fail_reason_out, fail_reason_out_len);
+    return stream_upload_chunk(url, pcm, len, offset, CHUNK_UPLOAD_TIMEOUT_MS, fail_reason_out, fail_reason_out_len);
 }
 
 bool voice_inbox_client_submit_finish(const char *request_id,

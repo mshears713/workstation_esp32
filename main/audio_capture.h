@@ -82,6 +82,12 @@ typedef struct {
     uint32_t shortfall_ms;        /* elapsed_ms - audio_ms, 0 when clean */
     uint32_t dropped_reads;       /* mic reads that errored and were retried (each ~32ms of audio) */
     bool ended_at_cap;            /* true: hit duration_target_ms. false: STOP, or still running */
+    /* True only while the recording loop is stalled waiting for a free
+     * buffer, i.e. the uploader has fallen behind (backend down or slow).
+     * The mic really is stopped during this, so the elapsed timer freezes -
+     * without surfacing it, that is indistinguishable on screen from a
+     * crash. */
+    bool uploader_behind;
     char artifact_name[AUDIO_CAP_ARTIFACT_NAME_LEN]; /* "" until COMPLETE, e.g. "capture_003" */
     char fail_reason[AUDIO_CAP_REASON_LEN];          /* "" unless state == AUDIO_CAP_FAILED */
 } audio_cap_status_t;
@@ -110,9 +116,12 @@ typedef void (*audio_cap_event_cb_t)(audio_cap_state_t new_state, const char *bl
  * fail_reason_out as the reason) rather than silently dropping the chunk,
  * so a partial/gapped transcript is never sent for transcription.
  * `request_id` is the same string passed to audio_capture_start_note().
+ * `offset` is the byte position these bytes occupy in the finished
+ * recording; the backend uses it to reject a gap or a reordering rather
+ * than assembling scrambled audio, and to recognise a retried chunk.
  */
 typedef bool (*audio_note_chunk_fn_t)(const char *request_id, const uint8_t *pcm, size_t len,
-                                       char *fail_reason_out, size_t fail_reason_out_len);
+                                       uint32_t offset, char *fail_reason_out, size_t fail_reason_out_len);
 
 /**
  * Called once, after the last chunk (whether the recording ended via STOP

@@ -33,7 +33,7 @@ extern "C" {
  * is empty, returns false immediately with fail_reason_out =
  * "ENDPOINT NOT SET" and never attempts a request.
  */
-bool note_client_submit_chunk(const char *request_id, const uint8_t *pcm, size_t len,
+bool note_client_submit_chunk(const char *request_id, const uint8_t *pcm, size_t len, uint32_t offset,
                                char *fail_reason_out, size_t fail_reason_out_len);
 
 /**

@@ -92,6 +92,13 @@
 
 #define BACKEND_BASE_URL "http://192.168.1.65:8000"
 
+/* Chunk uploads run while the recording is still in progress and must fit,
+ * retries included, inside audio_capture.c's one spare buffer of slack
+ * (AUDIO_STREAM_CHUNK_MS). See stream_upload.c's UPLOAD_CHUNK_MAX_ATTEMPTS.
+ * The per-client *_UPLOAD_TIMEOUT_MS values still apply to finish/cancel,
+ * which run after the mic is closed and so cost no audio. */
+#define CHUNK_UPLOAD_TIMEOUT_MS 5000
+
 #define NOTE_UPLOAD_PATH "/api/v1/notes"
 
 #define VOICE_INBOX_UPLOAD_PATH "/api/v1/voice-inbox"
