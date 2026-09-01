@@ -142,6 +142,24 @@ static const char *TAG = "audio_capture";
 #define AUDIO_READ_CHUNK_BYTES (AUDIO_READ_CHUNK_SAMPLES * AUDIO_BYTES_PER_SAMPLE)
 #define AUDIO_READ_MAX_CONSEC_ERRORS 5
 
+/* Audio read and thrown away immediately after esp_codec_dev_open(), before
+ * the recording clock starts.
+ *
+ * The ES7210 emits a burst of full-scale (-32768) samples while it settles.
+ * Measured across every capture this board has made: peak always railed at
+ * exactly 1.000 and the clipped-sample count was always ~90-104 regardless
+ * of whether the recording was 15s or 167s, loud or quiet - a constant that
+ * obviously could not be speech. Dumping the samples of a delivered WAV
+ * located them precisely: all 99 sat between 13.8ms and 26.6ms, and nothing
+ * in the remaining 15 seconds came near full scale.
+ *
+ * So this is not a gain problem and must not be "fixed" by turning the gain
+ * down - the recordings run quiet already (RMS 0.009-0.031), and less gain
+ * would only hurt the real speech while the transient still railed. 64ms is
+ * two AUDIO_READ_CHUNK_SAMPLES reads, comfortably past the measured 26.6ms. */
+#define AUDIO_MIC_SETTLE_MS 64
+#define AUDIO_MIC_SETTLE_BYTES ((AUDIO_SAMPLE_RATE_HZ * AUDIO_MIC_SETTLE_MS / 1000) * AUDIO_BYTES_PER_SAMPLE)
+
 /* Recording-integrity thresholds. A capture that ran N ms of wall clock
  * should hold N ms of audio; the difference is what the mic path dropped.
  * NOTABLE is the "say so on screen and in the log" line; FAIL_PCT is the
@@ -551,6 +569,22 @@ static void perform_capture(const audio_capture_request_t *req)
          * tokens as uploads complete; drain_uploads() restores the count
          * on every exit path below. */
         xSemaphoreTake(s_free_bufs, portMAX_DELAY);
+    }
+
+    /* Discard the codec's settling transient before the clock starts, so it
+     * never reaches the recording and never counts against shortfall_ms.
+     * Buffer 0 is safe to scribble on here: streaming captures start on it
+     * and nothing else owns it (the uploader is drained between captures),
+     * and manual REC uses it too but has not begun accumulating yet. */
+    for (uint32_t discarded = 0; discarded < AUDIO_MIC_SETTLE_BYTES; ) {
+        uint32_t want = AUDIO_MIC_SETTLE_BYTES - discarded;
+        if (want > AUDIO_READ_CHUNK_BYTES) {
+            want = AUDIO_READ_CHUNK_BYTES;
+        }
+        if (esp_codec_dev_read(s_mic_dev, s_capture_buf[0], (int)want) != ESP_CODEC_DEV_OK) {
+            break; /* a real read failure is caught by the loop below */
+        }
+        discarded += want;
     }
 
     int64_t start_us = esp_timer_get_time();
