@@ -161,9 +161,10 @@ bool stream_upload_chunk(const char *url, const uint8_t *pcm, size_t len, uint32
         int status = esp_http_client_get_status_code(client);
         esp_http_client_cleanup(client);
 
-        if (status != 200 && status != 202) {
+        if (status < 200 || status >= 300) {
             /* Backend answered and rejected it - not a connectivity problem,
-             * retrying identical bytes won't change the outcome. */
+             * retrying identical bytes won't change the outcome. Whole 2xx
+             * family accepted, same reasoning as the finish path below. */
             ESP_LOGW(TAG, "chunk upload rejected, status=%d", status);
             snprintf(fail_reason_out, fail_reason_out_len, "UPLOAD ERR %d", status);
             return false;
@@ -240,7 +241,15 @@ bool stream_upload_finish(const char *url,
         if (status_out) {
             *status_out = status;
         }
-        if (status != 200 && status != 202) {
+        /* 201 as well as 200/202: the issue endpoint creates a resource
+         * synchronously and correctly answers 201 Created, where the
+         * notes/voice-inbox endpoints only accept an upload and answer 202.
+         * Missing it here turned a filed GitHub issue into "UPLOAD ERR 201"
+         * on screen - reporting a success as a failure, which is the mirror
+         * of the bug this codebase spent issue #1 removing. Accept the whole
+         * 2xx family rather than enumerating; any of them means the backend
+         * took it. */
+        if (status < 200 || status >= 300) {
             ESP_LOGW(TAG, "finish rejected, status=%d body=%s", status, response_buf ? response_buf : "");
             snprintf(fail_reason_out, fail_reason_out_len, "UPLOAD ERR %d", status);
             return false;

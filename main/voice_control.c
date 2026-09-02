@@ -294,6 +294,7 @@ static void run_send_command(void)
     s_status.last_command[sizeof(s_status.last_command) - 1] = '\0';
     strncpy(s_status.active_request_id, request_id, sizeof(s_status.active_request_id) - 1);
     s_status.active_request_id[sizeof(s_status.active_request_id) - 1] = '\0';
+    s_status.last_result[0] = 0;   /* a previous outcome must not linger */
     portEXIT_CRITICAL(&s_mux);
 
     char msg[40];
@@ -365,6 +366,15 @@ static void run_send_command(void)
     }
     ESP_LOGI(TAG, "send complete: id=%s bytes=%lu elapsed=%lums -> %s",
              request_id, (unsigned long)st.bytes_captured, (unsigned long)st.elapsed_ms, result_msg);
+    /* Published so render_recording_overlay() can show the outcome. Without
+     * this the overlay falls through to "STARTING..." for the whole result
+     * hold - the capture has finished, the audio state is back to IDLE, and
+     * the only place the result existed was the log. */
+    portENTER_CRITICAL(&s_mux);
+    strncpy(s_status.last_result, result_msg, sizeof(s_status.last_result) - 1);
+    s_status.last_result[sizeof(s_status.last_result) - 1] = '\0';
+    portEXIT_CRITICAL(&s_mux);
+
     notify(VOICE_STATE_SEND_ACTIVE, result_msg);
     hold_result_draining(RESULT_DISPLAY_MS);
 
@@ -390,6 +400,7 @@ static void run_note_command(void)
     s_status.last_command[sizeof(s_status.last_command) - 1] = '\0';
     strncpy(s_status.active_request_id, request_id, sizeof(s_status.active_request_id) - 1);
     s_status.active_request_id[sizeof(s_status.active_request_id) - 1] = '\0';
+    s_status.last_result[0] = 0;   /* a previous outcome must not linger */
     portEXIT_CRITICAL(&s_mux);
 
     char msg[40];
@@ -453,6 +464,15 @@ static void run_note_command(void)
     }
     ESP_LOGI(TAG, "note complete: id=%s bytes=%lu elapsed=%lums -> %s",
              request_id, (unsigned long)st.bytes_captured, (unsigned long)st.elapsed_ms, result_msg);
+    /* Published so render_recording_overlay() can show the outcome. Without
+     * this the overlay falls through to "STARTING..." for the whole result
+     * hold - the capture has finished, the audio state is back to IDLE, and
+     * the only place the result existed was the log. */
+    portENTER_CRITICAL(&s_mux);
+    strncpy(s_status.last_result, result_msg, sizeof(s_status.last_result) - 1);
+    s_status.last_result[sizeof(s_status.last_result) - 1] = '\0';
+    portEXIT_CRITICAL(&s_mux);
+
     notify(VOICE_STATE_NOTE_ACTIVE, result_msg);
     hold_result_draining(RESULT_DISPLAY_MS);
 
@@ -484,6 +504,7 @@ static void run_go_command(void)
     s_status.last_command[sizeof(s_status.last_command) - 1] = '\0';
     strncpy(s_status.active_request_id, request_id, sizeof(s_status.active_request_id) - 1);
     s_status.active_request_id[sizeof(s_status.active_request_id) - 1] = '\0';
+    s_status.last_result[0] = 0;   /* a previous outcome must not linger */
     portEXIT_CRITICAL(&s_mux);
 
     /* Checked before the mic is taken, not after the recording: making
@@ -575,6 +596,15 @@ static void run_go_command(void)
     }
     ESP_LOGI(TAG, "go complete: id=%s bytes=%lu elapsed=%lums -> %s",
              request_id, (unsigned long)st.bytes_captured, (unsigned long)st.elapsed_ms, result_msg);
+    /* Published so render_recording_overlay() can show the outcome. Without
+     * this the overlay falls through to "STARTING..." for the whole result
+     * hold - the capture has finished, the audio state is back to IDLE, and
+     * the only place the result existed was the log. */
+    portENTER_CRITICAL(&s_mux);
+    strncpy(s_status.last_result, result_msg, sizeof(s_status.last_result) - 1);
+    s_status.last_result[sizeof(s_status.last_result) - 1] = '\0';
+    portEXIT_CRITICAL(&s_mux);
+
     notify(VOICE_STATE_GRAPH_ACTIVE, result_msg);
     hold_result_draining(RESULT_DISPLAY_MS);
 

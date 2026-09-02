@@ -976,7 +976,7 @@ static void perform_capture(const audio_capture_request_t *req)
          * returned via fail_and_recover above) - finish_fn is just the "no
          * more chunks coming, go ahead and process it" signal. */
         set_state(AUDIO_CAP_UPLOADING);
-        notify(AUDIO_CAP_UPLOADING, "NOTE UPLOADING");
+        notify(AUDIO_CAP_UPLOADING, "UPLOADING");
 
         char fail_reason[AUDIO_CAP_REASON_LEN];
         if (!req->finish_fn(artifact_name, AUDIO_SAMPLE_RATE_HZ, AUDIO_BITS_PER_SAMPLE, AUDIO_CHANNELS,

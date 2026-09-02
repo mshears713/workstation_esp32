@@ -1206,11 +1206,24 @@ static void render_recording_overlay(void)
         break;
     case AUDIO_CAP_IDLE:
     default:
-        /* Brief window right after VOICE_STATE_SEND_ACTIVE/NOTE_ACTIVE is
-         * set but before audio_capture's worker task has picked up the
-         * request yet, or right after the result hold ends but before
-         * voice_control.c returns to LISTENING. */
-        snprintf(status_buf, sizeof(status_buf), "STARTING...");
+        if (vst.last_result[0] != '\0') {
+            /* The capture is over and the audio state is back to IDLE, but
+             * voice_control is still holding the overlay up to show what
+             * happened. This is the payoff moment - "GO ISSUE #13" - and it
+             * used to be swallowed by the "STARTING..." fallback below,
+             * leaving the outcome visible only in the serial log. */
+            snprintf(status_buf, sizeof(status_buf), "%s", vst.last_result);
+            bool bad = strstr(vst.last_result, "FAILED") != NULL ||
+                       strstr(vst.last_result, "CANCELLED") != NULL ||
+                       strstr(vst.last_result, "NOT ") != NULL ||
+                       strstr(vst.last_result, "NO ") != NULL;
+            color = bad ? lv_palette_main(LV_PALETTE_ORANGE)
+                        : lv_palette_main(LV_PALETTE_GREEN);
+        } else {
+            /* Genuinely still starting: the command is set but the audio
+             * worker has not picked the request up yet. */
+            snprintf(status_buf, sizeof(status_buf), "STARTING...");
+        }
         break;
     }
     lv_label_set_text(recording_status_label, status_buf);
