@@ -758,6 +758,7 @@ static lv_obj_t *cmd_buttons[VOICE_COMMAND_COUNT];
  * time - see render_recording_overlay() below. */
 static lv_obj_t *recording_overlay;
 static lv_obj_t *recording_title;
+static lv_obj_t *recording_progress;      /* elapsed/target bar, bounded captures only */
 static lv_obj_t *recording_send_btn;       /* hidden for auto-stop captures - see render_recording_overlay */
 static lv_obj_t *recording_repo_ctrl;      /* wide repository chooser along the bottom - GO only */
 static lv_obj_t *recording_repo_label;
@@ -868,19 +869,19 @@ static void render_settings_panel(void)
     char buf[48];
     switch (bh.state) {
     case BACKEND_HEALTH_OK:
-        snprintf(buf, sizeof(buf), "API: OK  %lums", (unsigned long)bh.latency_ms);
+        snprintf(buf, sizeof(buf), "API %lums", (unsigned long)bh.latency_ms);
         lv_obj_set_style_text_color(settings_api_label, lv_palette_main(LV_PALETTE_GREEN), 0);
         break;
     case BACKEND_HEALTH_DOWN:
-        snprintf(buf, sizeof(buf), "API: DOWN");
+        snprintf(buf, sizeof(buf), "API DOWN");
         lv_obj_set_style_text_color(settings_api_label, lv_palette_main(LV_PALETTE_RED), 0);
         break;
     case BACKEND_HEALTH_NO_NETWORK:
-        snprintf(buf, sizeof(buf), "API: NO NETWORK");
+        snprintf(buf, sizeof(buf), "API --");
         lv_obj_set_style_text_color(settings_api_label, lv_palette_main(LV_PALETTE_GREY), 0);
         break;
     default:
-        snprintf(buf, sizeof(buf), "API: ?");
+        snprintf(buf, sizeof(buf), "API ?");
         lv_obj_set_style_text_color(settings_api_label, lv_palette_main(LV_PALETTE_GREY), 0);
         break;
     }
@@ -1211,6 +1212,14 @@ static void render_recording_overlay(void)
         lv_obj_add_flag(recording_send_btn, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_clear_flag(recording_send_btn, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    if (auto_stop && ast_early.state == AUDIO_CAP_RECORDING) {
+        int32_t pct = (int32_t)((ast_early.elapsed_ms * 1000ULL) / ast_early.duration_target_ms);
+        lv_bar_set_value(recording_progress, pct > 1000 ? 1000 : pct, LV_ANIM_OFF);
+        lv_obj_clear_flag(recording_progress, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(recording_progress, LV_OBJ_FLAG_HIDDEN);
     }
 
     audio_cap_status_t ast;
@@ -1919,21 +1928,22 @@ void status_deck_ui(lv_obj_t *scr)
      * only on the NOTE recording screen, where it is actually used. */
     lv_obj_t *set_title = lv_label_create(page_set);
     lv_label_set_text(set_title, "SETTINGS");
+    lv_obj_set_style_text_font(set_title, &lv_font_montserrat_32, 0);
     lv_obj_set_style_text_color(set_title, lv_palette_main(LV_PALETTE_BLUE), 0);
-    lv_obj_align(set_title, LV_ALIGN_TOP_MID, 0, 14);
+    lv_obj_align(set_title, LV_ALIGN_TOP_MID, 0, 8);
 
     telemetry_label = lv_label_create(page_set);
-    lv_obj_align(telemetry_label, LV_ALIGN_TOP_LEFT, 8, 50);
+    lv_obj_align(telemetry_label, LV_ALIGN_TOP_LEFT, 8, 62);
 
     conn_label = lv_label_create(page_set);
-    lv_obj_align(conn_label, LV_ALIGN_TOP_RIGHT, -8, 50);
+    lv_obj_align(conn_label, LV_ALIGN_TOP_RIGHT, -8, 62);
     lv_label_set_text(conn_label, "WIFI: OFF");
 
     /* The widget on HOME carries backend reachability as motion and colour,
      * which is right for a glance across a room but says nothing about
      * latency. Spelling it out here is what a settings page is for. */
     settings_api_label = lv_label_create(page_set);
-    lv_obj_align(settings_api_label, LV_ALIGN_TOP_LEFT, 8, 74);
+    lv_obj_align(settings_api_label, LV_ALIGN_TOP_MID, 0, 62);
     lv_label_set_text(settings_api_label, "API: ?");
 
     lv_obj_t *vol_caption = lv_label_create(page_set);
@@ -2370,7 +2380,7 @@ void status_deck_ui(lv_obj_t *scr)
      * project selector NOTE uses. */
     recording_repo_ctrl = lv_obj_create(recording_overlay);
     lv_obj_set_size(recording_repo_ctrl, 268, 54);
-    lv_obj_align(recording_repo_ctrl, LV_ALIGN_BOTTOM_MID, 0, -18);
+    lv_obj_align(recording_repo_ctrl, LV_ALIGN_BOTTOM_MID, 0, -6);
     lv_obj_set_style_bg_color(recording_repo_ctrl, lv_palette_darken(LV_PALETTE_BLUE_GREY, 2), 0);
     lv_obj_set_style_bg_opa(recording_repo_ctrl, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(recording_repo_ctrl, 8, 0);
@@ -2404,10 +2414,26 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_set_style_text_font(repo_next_label, &lv_font_montserrat_20, 0);
     lv_obj_center(repo_next_label);
 
+    /* Fills the space SEND vacated on an auto-stopping capture, and earns
+     * it: on a 15s capture that ends itself, how much time is left is the
+     * only thing the operator can still act on. A number alone makes you
+     * read and subtract; a bar is glanceable. Hidden on NOTE, where there
+     * is no target to fill toward. */
+    recording_progress = lv_bar_create(recording_overlay);
+    lv_obj_set_size(recording_progress, 260, 16);
+    lv_obj_align(recording_progress, LV_ALIGN_CENTER, 0, 46);
+    lv_obj_set_style_radius(recording_progress, 8, 0);
+    lv_obj_set_style_bg_color(recording_progress, lv_palette_darken(LV_PALETTE_BLUE_GREY, 2), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(recording_progress, lv_palette_main(LV_PALETTE_RED), LV_PART_INDICATOR);
+    lv_obj_set_style_radius(recording_progress, 8, LV_PART_INDICATOR);
+    lv_bar_set_range(recording_progress, 0, 1000);
+    lv_bar_set_value(recording_progress, 0, LV_ANIM_OFF);
+    lv_obj_add_flag(recording_progress, LV_OBJ_FLAG_HIDDEN);
+
     recording_status_label = lv_label_create(recording_overlay);
     lv_label_set_text(recording_status_label, "");
-    lv_obj_set_style_text_font(recording_status_label, &lv_font_montserrat_20, 0);
-    lv_obj_align(recording_status_label, LV_ALIGN_CENTER, 10, 15);
+    lv_obj_set_style_text_font(recording_status_label, &lv_font_montserrat_32, 0);
+    lv_obj_align(recording_status_label, LV_ALIGN_CENTER, 10, 8);
 
     /* SEND, relabeled/recolored from the original STOP - still the same
      * audio_capture_stop() underneath (ending the recording here is also

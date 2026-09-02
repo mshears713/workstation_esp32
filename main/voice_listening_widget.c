@@ -56,8 +56,13 @@
  * only the transparent corners of its bounding box, never the circle. Every layer below
  * scales with it, mic glyph included, so the proportions are unchanged. */
 #define RING_DIAM 172
-#define RING_WIDTH 16
-#define GLINT_SPAN_DEG 40 /* how much of the outer ring the highlight covers */
+#define RING_WIDTH 10
+#define GLINT_SPAN_DEG 110 /* long sweep, not a short blip - see the file comment */
+
+#define COUNTER_RING_DIAM 146
+#define COUNTER_RING_WIDTH 3
+#define COUNTER_SPAN_DEG 70
+#define COUNTER_PERIOD_MS 11000   /* slower than the outer ring, and reversed */
 
 #define INNER_RING_DIAM 132
 #define INNER_RING_WIDTH 2
@@ -149,6 +154,32 @@ static lv_obj_t *build_outer_ring(lv_obj_t *parent)
 /* Thin, stationary, light-blue - no rotation applied to this one, and no
  * indicator/knob drawn on it at all (opa 0 for both parts) since it never
  * needs to show a highlight or be interactive. */
+/* Counter-rotating accent. Same one-property animation as the outer ring,
+ * turning the opposite way at a different rate - which is what makes the
+ * whole thing read as layered rather than as a single spinning circle. */
+static lv_obj_t *build_counter_ring(lv_obj_t *parent)
+{
+    lv_obj_t *ring = lv_arc_create(parent);
+    lv_obj_set_size(ring, COUNTER_RING_DIAM, COUNTER_RING_DIAM);
+    lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(ring, LV_ALIGN_CENTER, 0, 0);
+
+    /* No background arc at all - only the short indicator shows, so this
+     * layer is a moving accent rather than another full circle. */
+    lv_arc_set_bg_angles(ring, 0, 0);
+    lv_obj_set_style_arc_opa(ring, LV_OPA_TRANSP, LV_PART_MAIN);
+
+    lv_arc_set_angles(ring, 0, COUNTER_SPAN_DEG);
+    lv_obj_set_style_pad_all(ring, 0, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(ring, COUNTER_RING_WIDTH, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(ring, lv_palette_lighten(LV_PALETTE_CYAN, 2), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(ring, LV_OPA_70, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(ring, true, LV_PART_INDICATOR);
+    lv_obj_set_style_opa(ring, LV_OPA_TRANSP, LV_PART_KNOB);
+    return ring;
+}
+
 static lv_obj_t *build_inner_ring(lv_obj_t *parent)
 {
     lv_obj_t *ring = lv_arc_create(parent);
@@ -189,7 +220,9 @@ static void build_disc(lv_obj_t *parent)
     lv_obj_t *disc = lv_obj_create(parent);
     lv_obj_set_size(disc, DISC_DIAM, DISC_DIAM);
     lv_obj_set_style_radius(disc, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(disc, lv_palette_darken(LV_PALETTE_BLUE, 4), 0);
+    lv_obj_set_style_bg_color(disc, lv_palette_darken(LV_PALETTE_BLUE, 3), 0);
+    lv_obj_set_style_bg_grad_color(disc, lv_color_hex(0x0A1633), 0);
+    lv_obj_set_style_bg_grad_dir(disc, LV_GRAD_DIR_VER, 0);
     lv_obj_set_style_bg_opa(disc, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(disc, 0, 0);
     lv_obj_clear_flag(disc, LV_OBJ_FLAG_SCROLLABLE);
@@ -202,6 +235,21 @@ static void build_disc(lv_obj_t *parent)
 /* lv_anim_exec_xcb_t is `void(*)(void *, int32_t)` - lv_arc_set_rotation's
  * signature already matches it exactly, so no wrapper function is needed
  * (the same cast LVGL's own arc examples use). */
+/* Opposite direction (360 -> 0) and a slower period than start_rotation's.
+ * Two independent rates turning against each other is the whole trick. */
+static void start_counter_rotation(lv_obj_t *ring)
+{
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, ring);
+    lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)lv_arc_set_rotation);
+    lv_anim_set_values(&a, 360, 0);
+    lv_anim_set_duration(&a, COUNTER_PERIOD_MS);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&a, lv_anim_path_linear);
+    lv_anim_start(&a);
+}
+
 static void start_rotation(lv_obj_t *ring)
 {
     lv_anim_t a;
@@ -230,9 +278,11 @@ lv_obj_t *voice_listening_widget_create(lv_obj_t *parent)
     /* Back to front: outer rotating ring, static inner ring, halo+disc+icon
      * on top - see the file comment for the full layer list. */
     lv_obj_t *outer_ring = build_outer_ring(cont);
+    lv_obj_t *counter_ring = build_counter_ring(cont);
     build_inner_ring(cont);
     build_disc(cont);
     start_rotation(outer_ring);
+    start_counter_rotation(counter_ring);
 
     return cont;
 }
@@ -242,7 +292,7 @@ lv_obj_t *voice_listening_widget_create(lv_obj_t *parent)
  * outer ring being 0; these name the rest rather than leaving bare numbers
  * scattered about. The mic icon's three pieces are children of the disc. */
 #define CHILD_OUTER_RING 0
-#define CHILD_DISC       3
+#define CHILD_DISC       4   /* outer, counter, inner, halo, disc */
 #define MIC_PART_COUNT   3
 
 void voice_listening_widget_set_link(lv_obj_t *widget, voice_widget_link_t link)
