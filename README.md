@@ -18,6 +18,7 @@ item rather than discovering them by grep.**
 | Design-review graph | backend `app/graph/`, `app/api/runner.py`, `app/api/store.py`, `app/fixed_proposal.py`, firmware `main/graph_client.c` | GO's original one-shot trigger, before it recorded anything. Last run 2026-07-29. |
 | Single-shot multipart upload | firmware `main/multipart_upload.c` | Replaced by chunked streaming (`stream_upload.c`). Still referenced for its `multipart_text_field_t` typedef, so it cannot simply be deleted. |
 | Manual REC capture | firmware `audio_capture_start()` | The REC button was retired; voice commands are the only capture path now. |
+| AI-OS project list | firmware `main/project_selector.h` | Still compiled in, unlike the repository list which comes from the backend. Changing it needs a flash - the inconsistency worth closing next. |
 | Handshake | backend `/api/v1/handshake`, firmware `main/handshake_client.c` | Fires only from a manual SND button press on the LOG page. Not a health check — it ships accelerometer samples. Backend reachability is `backend_health.c` against `/health`. |
 
 **One trap in particular:** `app/graph/model.py` and `app/graph/structured.py`
@@ -25,7 +26,43 @@ live inside the dormant design-review package but are **live** — imported by
 `app/voice/graph.py`, `app/entries/graph.py` and `app/voice/audio_reliability.py`.
 The `app/graph/` package cannot be deleted wholesale.
 
-## Lineage
+## The console today
+
+Four pages, navigated by a button in each corner of the screen.
+
+| Page | What it shows |
+|---|---|
+| **HOME** | Nothing but a large microphone. Tapping it opens the command window - there is no TALK button any more, the microphone is the button. |
+| **SENS** | Accelerometer, temperature, humidity. |
+| **LOG** | The Black Box: the last 8 events with uptime, plus NET / SND / CLR. |
+| **SET** | Uptime, backend latency, Wi-Fi, volume, and which repository the next GO would file against. |
+
+The microphone carries two signals at once: the ring **rotating** means the
+backend is reachable, and the mic glyph's **colour** says why not when it
+stops - red for backend unreachable, grey for no Wi-Fi. Motion reads across
+a workshop; colour tells you which thing to go and fix.
+
+### The four commands
+
+Say **"computer"**, then one of these - or tap its tile, which takes the
+identical path.
+
+| Command | Length | Ends by | Destination |
+|---|---|---|---|
+| **SEND** | 15 s | itself | Notion Voice Inbox |
+| **NOTE** | up to 20 min | STOP | Notion Voice Inbox, with a project |
+| **GO** | 15 s | itself | a GitHub issue on the selected repository |
+| **YES** | — | — | answers a pending spoken notification |
+
+A bounded capture shows `00:07 of 15s` with a countdown bar and no SEND
+button - there is nothing to end early on a recording that ends itself.
+NOTE shows the SEND button and a project selector instead.
+
+GO reports the **GitHub issue number** rather than "sent", because its
+finish call waits for the issue to exist. Issue numbers are per repository,
+so the first issue filed against a fresh repo is `#1`.
+
+## Lineage## Lineage
 
 This project is updated in place, mission by mission - the working tree
 always reflects the newest mission, not a growing pile of sibling folders.
