@@ -9,12 +9,21 @@
  * @brief Current "which project is this for" selection - see
  *        project_selector.c.
  * @details App-agnostic like audio_playback.h/notification_client.h: knows
- *          nothing about LVGL. status_deck_ui.c owns the four VAN1/VAN2/
- *          GEN/NONE buttons and calls project_selector_set() when one is
- *          tapped; entry_client.c calls project_selector_get_hint() to
- *          read the current selection when building a GO upload's
- *          multipart fields. Session-only, like the volume control -
- *          resets to the default on reboot, not persisted to NVS.
+ *          nothing about LVGL. status_deck_ui.c owns the on-screen
+ *          up/down selector - one of the four values shown at a time, not
+ *          four separate buttons as this said previously - and calls
+ *          project_selector_set() when it changes. It appears both on HOME
+ *          and on the recording overlay, so a project can be chosen either
+ *          before starting or while a NOTE is running.
+ *
+ *          entry_client.c (GO) and voice_inbox_client.c (NOTE/SEND) both
+ *          call project_selector_get_hint() when building their finish
+ *          fields; it returns "none" when nothing is selected, so the
+ *          field is always present and the backend never has to guess
+ *          between "not chosen" and "not sent".
+ *
+ *          Session-only, like the volume control - resets to the default
+ *          on reboot, not persisted to NVS.
  */
 #pragma once
 

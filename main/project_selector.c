@@ -12,7 +12,14 @@
 
 #include "project_selector.h"
 
-static project_selection_t s_selection = PROJECT_SELECTION_NONE;
+/* volatile because this is written from the LVGL task (the on-screen
+ * selector) and read from the audio worker task (when a client builds its
+ * finish body). A single enum-sized word is atomic on this target, so no
+ * lock is needed - but without volatile the compiler is free to cache the
+ * read, and the reader would keep seeing a stale selection. Every other
+ * cross-task value in this firmware is already either volatile or under a
+ * portMUX; this one was the exception. */
+static volatile project_selection_t s_selection = PROJECT_SELECTION_NONE;
 
 void project_selector_set(project_selection_t selection)
 {

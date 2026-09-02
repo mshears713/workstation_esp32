@@ -738,6 +738,8 @@ static lv_obj_t *cmd_buttons[VOICE_COMMAND_COUNT];
  * time - see render_recording_overlay() below. */
 static lv_obj_t *recording_overlay;
 static lv_obj_t *recording_title;
+static lv_obj_t *recording_project_ctrl;   /* project selector on the recording overlay - NOTE only */
+static lv_obj_t *recording_project_label;
 static lv_obj_t *recording_id_label;
 static lv_obj_t *recording_dot;
 static lv_obj_t *recording_status_label;
@@ -1063,6 +1065,11 @@ static void render_command_overlay(void)
  * with a STOP button. Which command triggered it (vst.last_command,
  * "SEND"/"NOTE"/"GO") drives the title and result text so none of the
  * three is mislabeled as another. */
+/* Defined further down with the rest of the project-selector helpers;
+ * render_recording_overlay() needs it to keep the overlay's copy of the
+ * label in step while a NOTE is recording. */
+static void refresh_project_label(void);
+
 static void render_recording_overlay(void)
 {
     voice_status_t vst;
@@ -1083,13 +1090,35 @@ static void render_recording_overlay(void)
      * the short "SEND"/"NOTE"/"GO"/"YES" values it actually ever holds, so
      * these need enough room for the worst case the compiler can see, not
      * just the worst case that can happen at runtime. */
+    audio_cap_status_t ast_early;
+    audio_capture_get_status(&ast_early);
+
     char title_buf[48];
-    snprintf(title_buf, sizeof(title_buf), "RECORDING %s", vst.last_command);
+    if (ast_early.uploader_behind) {
+        /* The title, not the counter: the counter is genuinely frozen while
+         * the mic waits for a free buffer, and a long explanation appended
+         * to it would run into the project selector at the left edge. */
+        snprintf(title_buf, sizeof(title_buf), "WAITING ON BACKEND");
+        lv_obj_set_style_text_color(recording_title, lv_palette_main(LV_PALETTE_ORANGE), 0);
+    } else {
+        snprintf(title_buf, sizeof(title_buf), "RECORDING %s", vst.last_command);
+        lv_obj_set_style_text_color(recording_title, lv_color_white(), 0);
+    }
     lv_label_set_text(recording_title, title_buf);
 
     char id_buf[40];
     snprintf(id_buf, sizeof(id_buf), "ID: %s", vst.active_request_id);
     lv_label_set_text(recording_id_label, id_buf);
+
+    /* NOTE only. SEND is deliberately a quick capture with no selector
+     * (issue #3), and GO gets its own repository chooser in #8 rather than
+     * this project one. */
+    if (vst.state == VOICE_STATE_NOTE_ACTIVE) {
+        lv_obj_clear_flag(recording_project_ctrl, LV_OBJ_FLAG_HIDDEN);
+        refresh_project_label();
+    } else {
+        lv_obj_add_flag(recording_project_ctrl, LV_OBJ_FLAG_HIDDEN);
+    }
 
     audio_cap_status_t ast;
     audio_capture_get_status(&ast);
@@ -1104,17 +1133,10 @@ static void render_recording_overlay(void)
         break;
     case AUDIO_CAP_RECORDING: {
         uint32_t s = ast.elapsed_ms / 1000;
-        if (ast.uploader_behind) {
-            /* The mic is genuinely stopped, waiting on a backed-up upload,
-             * so the counter below has frozen. Say so - a frozen timer with
-             * no explanation reads as a crash. */
-            snprintf(status_buf, sizeof(status_buf), "%02u:%02u  WAITING ON BACKEND",
-                     (unsigned)(s / 60), (unsigned)(s % 60));
-            color = lv_palette_main(LV_PALETTE_ORANGE);
-        } else {
-            snprintf(status_buf, sizeof(status_buf), "%02u:%02u", (unsigned)(s / 60), (unsigned)(s % 60));
-            color = lv_palette_main(LV_PALETTE_RED);
-        }
+        /* Stall is shown in the title above, so this stays a clean timer. */
+        snprintf(status_buf, sizeof(status_buf), "%02u:%02u", (unsigned)(s / 60), (unsigned)(s % 60));
+        color = ast.uploader_behind ? lv_palette_main(LV_PALETTE_ORANGE)
+                                    : lv_palette_main(LV_PALETTE_RED);
         recording = true;
         break;
     }
@@ -1347,10 +1369,19 @@ static int project_option_index(project_selection_t sel)
     return 0;
 }
 
+/* Two labels now: the HOME control and the one on the recording overlay.
+ * Both are driven from project_selector_get(), so whichever is tapped, the
+ * other agrees - there is one selection, shown in two places, never two
+ * selections to reconcile. */
 static void refresh_project_label(void)
 {
     int idx = project_option_index(project_selector_get());
-    lv_label_set_text(project_label, PROJECT_OPTIONS[idx].text);
+    if (project_label) {
+        lv_label_set_text(project_label, PROJECT_OPTIONS[idx].text);
+    }
+    if (recording_project_label) {
+        lv_label_set_text(recording_project_label, PROJECT_OPTIONS[idx].text);
+    }
 }
 
 static void project_up_button_cb(lv_event_t *e)
@@ -2139,6 +2170,47 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_set_style_border_width(recording_dot, 0, 0);
     lv_obj_clear_flag(recording_dot, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_align(recording_dot, LV_ALIGN_CENTER, -40, 15);
+
+    /* Project selector, same up/label/down shape as the HOME control so it
+     * reads as the same thing in a second place - and it is: both drive
+     * project_selector_set(), there is only ever one selection.
+     *
+     * Sits at the overlay's left edge (x 6..44), which is the only region
+     * clear of everything else here: CANCEL spans x 90..230, the REC dot
+     * sits at x~113-127, the counter is centered, and SEND occupies the
+     * bottom from y=164. Hidden unless a NOTE is recording, see
+     * render_recording_overlay(). */
+    recording_project_ctrl = lv_obj_create(recording_overlay);
+    lv_obj_set_size(recording_project_ctrl, 44, 108);
+    lv_obj_align(recording_project_ctrl, LV_ALIGN_LEFT_MID, 4, 6);
+    lv_obj_set_style_bg_opa(recording_project_ctrl, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(recording_project_ctrl, 0, 0);
+    lv_obj_set_style_pad_all(recording_project_ctrl, 0, 0);
+    lv_obj_clear_flag(recording_project_ctrl, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(recording_project_ctrl, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *rec_project_up = lv_btn_create(recording_project_ctrl);
+    lv_obj_set_size(rec_project_up, 40, 34);
+    lv_obj_align(rec_project_up, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_add_event_cb(rec_project_up, project_up_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *rec_project_up_label = lv_label_create(rec_project_up);
+    lv_label_set_text(rec_project_up_label, "+");
+    lv_obj_set_style_text_font(rec_project_up_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(rec_project_up_label);
+
+    recording_project_label = lv_label_create(recording_project_ctrl);
+    lv_obj_set_style_text_font(recording_project_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(recording_project_label, LV_ALIGN_CENTER, 0, 0);
+    lv_label_set_text(recording_project_label, "NONE");
+
+    lv_obj_t *rec_project_down = lv_btn_create(recording_project_ctrl);
+    lv_obj_set_size(rec_project_down, 40, 34);
+    lv_obj_align(rec_project_down, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_add_event_cb(rec_project_down, project_down_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *rec_project_down_label = lv_label_create(rec_project_down);
+    lv_label_set_text(rec_project_down_label, "-");
+    lv_obj_set_style_text_font(rec_project_down_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(rec_project_down_label);
 
     recording_status_label = lv_label_create(recording_overlay);
     lv_label_set_text(recording_status_label, "");

@@ -19,6 +19,7 @@
 #include "esp_timer.h"
 #include "cJSON.h"
 #include "stream_upload.h"
+#include "project_selector.h"
 #include "voice_inbox_client.h"
 
 #if __has_include("backend_config.h")
@@ -69,6 +70,13 @@ bool voice_inbox_client_submit_finish(const char *request_id,
         { "sample_rate_hz", sample_rate_str },
         { "bits_per_sample", bits_str },
         { "channels", channels_str },
+        /* The operator's project selection (see project_selector.h), sent
+         * as routing/context metadata. The Voice Inbox stays authoritative
+         * downstream - this only tells the backend what was selected, it
+         * does not decide anything on the device. Always present:
+         * project_selector_get_hint() returns "none" when nothing is
+         * chosen, which the backend stores verbatim. */
+        { "project_hint", project_selector_get_hint() },
     };
 
     char url[160];
