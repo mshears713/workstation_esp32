@@ -363,19 +363,19 @@ static void run_send_command(void)
      * means THIS attempt failed, not a stale one from an earlier note. */
     char result_msg[56];
     if (st.state != AUDIO_CAP_IDLE) {
-        snprintf(result_msg, sizeof(result_msg), "SEND DID NOT FINISH %s", request_id);
+        snprintf(result_msg, sizeof(result_msg), "DID NOT FINISH");
     } else if (strcmp(st.fail_reason, "CANCELLED") == 0) {
-        snprintf(result_msg, sizeof(result_msg), "SEND CANCELLED %s", request_id);
+        snprintf(result_msg, sizeof(result_msg), "CANCELLED");
     } else if (strcmp(st.fail_reason, "ENDPOINT NOT SET") == 0) {
-        snprintf(result_msg, sizeof(result_msg), "SEND READY - ENDPOINT NOT SET");
+        snprintf(result_msg, sizeof(result_msg), "NO ENDPOINT SET");
     } else if (st.fail_reason[0] != '\0') {
-        snprintf(result_msg, sizeof(result_msg), "SEND FAIL: %s", st.fail_reason);
+        snprintf(result_msg, sizeof(result_msg), "FAILED: %s", st.fail_reason);
     } else {
         /* "SENT," not "SAVED" - the backend queues transcription/graph
          * processing after accepting the upload; this firmware doesn't
          * poll for that result, so it can only truthfully claim the
          * upload itself was accepted. */
-        snprintf(result_msg, sizeof(result_msg), "SEND SENT %s", request_id);
+        snprintf(result_msg, sizeof(result_msg), "SENT");
     }
     ESP_LOGI(TAG, "send complete: id=%s bytes=%lu elapsed=%lums -> %s",
              request_id, (unsigned long)st.bytes_captured, (unsigned long)st.elapsed_ms, result_msg);
@@ -461,19 +461,19 @@ static void run_note_command(void)
      * means THIS attempt failed, not a stale one from an earlier note. */
     char result_msg[56];
     if (st.state != AUDIO_CAP_IDLE) {
-        snprintf(result_msg, sizeof(result_msg), "NOTE DID NOT FINISH %s", request_id);
+        snprintf(result_msg, sizeof(result_msg), "DID NOT FINISH");
     } else if (strcmp(st.fail_reason, "CANCELLED") == 0) {
-        snprintf(result_msg, sizeof(result_msg), "NOTE CANCELLED %s", request_id);
+        snprintf(result_msg, sizeof(result_msg), "CANCELLED");
     } else if (strcmp(st.fail_reason, "ENDPOINT NOT SET") == 0) {
-        snprintf(result_msg, sizeof(result_msg), "NOTE READY - ENDPOINT NOT SET");
+        snprintf(result_msg, sizeof(result_msg), "NO ENDPOINT SET");
     } else if (st.fail_reason[0] != '\0') {
-        snprintf(result_msg, sizeof(result_msg), "NOTE FAIL: %s", st.fail_reason);
+        snprintf(result_msg, sizeof(result_msg), "FAILED: %s", st.fail_reason);
     } else {
         /* "SENT," not "SAVED" - the backend queues transcription/Notion-page
          * creation after accepting the upload; this firmware doesn't poll
          * for that result, so it can only truthfully claim the upload
          * itself was accepted. */
-        snprintf(result_msg, sizeof(result_msg), "NOTE SENT %s", request_id);
+        snprintf(result_msg, sizeof(result_msg), "NOTE SENT");
     }
     ESP_LOGI(TAG, "note complete: id=%s bytes=%lu elapsed=%lums -> %s",
              request_id, (unsigned long)st.bytes_captured, (unsigned long)st.elapsed_ms, result_msg);
@@ -585,13 +585,13 @@ static void run_go_command(void)
      * means THIS attempt failed, not a stale one from an earlier entry. */
     char result_msg[56];
     if (st.state != AUDIO_CAP_IDLE) {
-        snprintf(result_msg, sizeof(result_msg), "GO DID NOT FINISH %s", request_id);
+        snprintf(result_msg, sizeof(result_msg), "DID NOT FINISH");
     } else if (strcmp(st.fail_reason, "CANCELLED") == 0) {
-        snprintf(result_msg, sizeof(result_msg), "GO CANCELLED %s", request_id);
+        snprintf(result_msg, sizeof(result_msg), "CANCELLED");
     } else if (strcmp(st.fail_reason, "ENDPOINT NOT SET") == 0) {
-        snprintf(result_msg, sizeof(result_msg), "GO READY - ENDPOINT NOT SET");
+        snprintf(result_msg, sizeof(result_msg), "NO ENDPOINT SET");
     } else if (st.fail_reason[0] != '\0') {
-        snprintf(result_msg, sizeof(result_msg), "GO FAIL: %s", st.fail_reason);
+        snprintf(result_msg, sizeof(result_msg), "FAILED: %s", st.fail_reason);
     } else {
         /* "SENT," not "SAVED" - the backend queues transcription/entry-
          * architect/Notion processing after accepting the upload; this
@@ -602,9 +602,9 @@ static void run_go_command(void)
             /* "ISSUE #42", not "SENT": this endpoint waits for the issue to
              * actually exist, so the device can report the thing that was
              * created rather than that an upload was accepted. */
-            snprintf(result_msg, sizeof(result_msg), "GO ISSUE #%lu", (unsigned long)issue_number);
+            snprintf(result_msg, sizeof(result_msg), "ISSUE #%lu", (unsigned long)issue_number);
         } else {
-            snprintf(result_msg, sizeof(result_msg), "GO SENT %s", request_id);
+            snprintf(result_msg, sizeof(result_msg), "SENT");
         }
     }
     ESP_LOGI(TAG, "go complete: id=%s bytes=%lu elapsed=%lums -> %s",

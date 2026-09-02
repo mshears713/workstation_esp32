@@ -1920,29 +1920,29 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_t *set_title = lv_label_create(page_set);
     lv_label_set_text(set_title, "SETTINGS");
     lv_obj_set_style_text_color(set_title, lv_palette_main(LV_PALETTE_BLUE), 0);
-    lv_obj_align(set_title, LV_ALIGN_TOP_MID, 0, 12);
+    lv_obj_align(set_title, LV_ALIGN_TOP_MID, 0, 14);
 
     telemetry_label = lv_label_create(page_set);
-    lv_obj_align(telemetry_label, LV_ALIGN_TOP_LEFT, 8, 52);
+    lv_obj_align(telemetry_label, LV_ALIGN_TOP_LEFT, 8, 50);
 
     conn_label = lv_label_create(page_set);
-    lv_obj_align(conn_label, LV_ALIGN_TOP_RIGHT, -8, 52);
+    lv_obj_align(conn_label, LV_ALIGN_TOP_RIGHT, -8, 50);
     lv_label_set_text(conn_label, "WIFI: OFF");
 
     /* The widget on HOME carries backend reachability as motion and colour,
      * which is right for a glance across a room but says nothing about
      * latency. Spelling it out here is what a settings page is for. */
     settings_api_label = lv_label_create(page_set);
-    lv_obj_align(settings_api_label, LV_ALIGN_TOP_LEFT, 8, 76);
+    lv_obj_align(settings_api_label, LV_ALIGN_TOP_LEFT, 8, 74);
     lv_label_set_text(settings_api_label, "API: ?");
 
     lv_obj_t *vol_caption = lv_label_create(page_set);
     lv_label_set_text(vol_caption, "VOLUME");
-    lv_obj_align(vol_caption, LV_ALIGN_TOP_LEFT, 8, 110);
+    lv_obj_align(vol_caption, LV_ALIGN_TOP_LEFT, 8, 106);
 
     lv_obj_t *vol_down = lv_btn_create(page_set);
     lv_obj_set_size(vol_down, 46, 34);
-    lv_obj_align(vol_down, LV_ALIGN_TOP_LEFT, 132, 102);
+    lv_obj_align(vol_down, LV_ALIGN_TOP_LEFT, 132, 98);
     lv_obj_add_event_cb(vol_down, volume_down_button_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *vol_down_label = lv_label_create(vol_down);
     lv_label_set_text(vol_down_label, "-");
@@ -1951,11 +1951,11 @@ void status_deck_ui(lv_obj_t *scr)
 
     volume_label = lv_label_create(page_set);
     lv_obj_set_style_text_font(volume_label, &lv_font_montserrat_20, 0);
-    lv_obj_align(volume_label, LV_ALIGN_TOP_LEFT, 194, 106);
+    lv_obj_align(volume_label, LV_ALIGN_TOP_LEFT, 194, 102);
 
     lv_obj_t *vol_up = lv_btn_create(page_set);
     lv_obj_set_size(vol_up, 46, 34);
-    lv_obj_align(vol_up, LV_ALIGN_TOP_RIGHT, -8, 102);
+    lv_obj_align(vol_up, LV_ALIGN_TOP_RIGHT, -8, 98);
     lv_obj_add_event_cb(vol_up, volume_up_button_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *vol_up_label = lv_label_create(vol_up);
     lv_label_set_text(vol_up_label, "+");
@@ -1964,11 +1964,11 @@ void status_deck_ui(lv_obj_t *scr)
 
     lv_obj_t *repo_caption = lv_label_create(page_set);
     lv_label_set_text(repo_caption, "GO FILES TO");
-    lv_obj_align(repo_caption, LV_ALIGN_TOP_LEFT, 8, 154);
+    lv_obj_align(repo_caption, LV_ALIGN_TOP_LEFT, 8, 148);
 
     lv_obj_t *set_repo_prev = lv_btn_create(page_set);
     lv_obj_set_size(set_repo_prev, 46, 34);
-    lv_obj_align(set_repo_prev, LV_ALIGN_TOP_LEFT, 132, 146);
+    lv_obj_align(set_repo_prev, LV_ALIGN_TOP_LEFT, 132, 140);
     lv_obj_add_event_cb(set_repo_prev, recording_repo_prev_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *set_repo_prev_label = lv_label_create(set_repo_prev);
     lv_label_set_text(set_repo_prev_label, "<");
@@ -1976,12 +1976,12 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_center(set_repo_prev_label);
 
     settings_repo_label = lv_label_create(page_set);
-    lv_obj_align(settings_repo_label, LV_ALIGN_TOP_LEFT, 186, 154);
+    lv_obj_align(settings_repo_label, LV_ALIGN_TOP_LEFT, 186, 148);
     lv_label_set_text(settings_repo_label, "...");
 
     lv_obj_t *set_repo_next = lv_btn_create(page_set);
     lv_obj_set_size(set_repo_next, 46, 34);
-    lv_obj_align(set_repo_next, LV_ALIGN_TOP_RIGHT, -8, 146);
+    lv_obj_align(set_repo_next, LV_ALIGN_TOP_RIGHT, -8, 140);
     lv_obj_add_event_cb(set_repo_next, recording_repo_next_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *set_repo_next_label = lv_label_create(set_repo_next);
     lv_label_set_text(set_repo_next_label, ">");
@@ -2002,11 +2002,11 @@ void status_deck_ui(lv_obj_t *scr)
      * chart alone spanning the full 304px width. */
     lv_obj_t *accel_caption = lv_label_create(page_sens);
     lv_label_set_text(accel_caption, "ACCEL (G)  0.50 - 1.50");
-    lv_obj_align(accel_caption, LV_ALIGN_TOP_MID, 0, 48);
+    lv_obj_align(accel_caption, LV_ALIGN_TOP_MID, 0, 46);
 
     accel_value_label = lv_label_create(page_sens);
     lv_label_set_text(accel_value_label, "--");
-    lv_obj_align(accel_value_label, LV_ALIGN_TOP_LEFT, 8, 74);
+    lv_obj_align(accel_value_label, LV_ALIGN_TOP_LEFT, 8, 72);
 
     /* Acceleration-magnitude trend line, zoomed to 0.50-1.50g (was a fixed
      * 0.00-4.00g). At rest the board reads ~1.00g regardless of
@@ -2019,7 +2019,7 @@ void status_deck_ui(lv_obj_t *scr)
      * value that actually matters. */
     chart = lv_chart_create(page_sens);
     lv_obj_set_size(chart, 250, 32);
-    lv_obj_align(chart, LV_ALIGN_TOP_LEFT, 62, 62);
+    lv_obj_align(chart, LV_ALIGN_TOP_LEFT, 62, 60);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(chart, SENSOR_HISTORY_LEN);
     lv_chart_set_update_mode(chart, LV_CHART_UPDATE_MODE_SHIFT);
@@ -2034,15 +2034,15 @@ void status_deck_ui(lv_obj_t *scr)
      * mislabeled) to F before pushing it here or into temp_value_label. */
     lv_obj_t *temp_caption = lv_label_create(page_sens);
     lv_label_set_text(temp_caption, "TEMP (F)  60 - 90");
-    lv_obj_align(temp_caption, LV_ALIGN_TOP_MID, 0, 96);
+    lv_obj_align(temp_caption, LV_ALIGN_TOP_MID, 0, 93);
 
     temp_value_label = lv_label_create(page_sens);
     lv_label_set_text(temp_value_label, "--");
-    lv_obj_align(temp_value_label, LV_ALIGN_TOP_LEFT, 8, 122);
+    lv_obj_align(temp_value_label, LV_ALIGN_TOP_LEFT, 8, 119);
 
     temp_chart = lv_chart_create(page_sens);
     lv_obj_set_size(temp_chart, 250, 32);
-    lv_obj_align(temp_chart, LV_ALIGN_TOP_LEFT, 62, 110);
+    lv_obj_align(temp_chart, LV_ALIGN_TOP_LEFT, 62, 107);
     lv_chart_set_type(temp_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(temp_chart, HUMITURE_HISTORY_LEN);
     lv_chart_set_update_mode(temp_chart, LV_CHART_UPDATE_MODE_SHIFT);
@@ -2051,15 +2051,15 @@ void status_deck_ui(lv_obj_t *scr)
 
     lv_obj_t *humi_caption = lv_label_create(page_sens);
     lv_label_set_text(humi_caption, "HUMIDITY (%)  0 - 100");
-    lv_obj_align(humi_caption, LV_ALIGN_TOP_MID, 0, 144);
+    lv_obj_align(humi_caption, LV_ALIGN_TOP_MID, 0, 140);
 
     humi_value_label = lv_label_create(page_sens);
     lv_label_set_text(humi_value_label, "--");
-    lv_obj_align(humi_value_label, LV_ALIGN_TOP_LEFT, 8, 170);
+    lv_obj_align(humi_value_label, LV_ALIGN_TOP_LEFT, 8, 166);
 
     humi_chart = lv_chart_create(page_sens);
     lv_obj_set_size(humi_chart, 250, 32);
-    lv_obj_align(humi_chart, LV_ALIGN_TOP_LEFT, 62, 158);
+    lv_obj_align(humi_chart, LV_ALIGN_TOP_LEFT, 62, 154);
     lv_chart_set_type(humi_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(humi_chart, HUMITURE_HISTORY_LEN);
     lv_chart_set_update_mode(humi_chart, LV_CHART_UPDATE_MODE_SHIFT);
@@ -2075,8 +2075,8 @@ void status_deck_ui(lv_obj_t *scr)
      * leaving just enough room below for the button row - see
      * EVENT_DISPLAY_LINES's comment). */
     lv_obj_t *log_panel = lv_obj_create(page_log);
-    lv_obj_set_size(log_panel, 304, 88);
-    lv_obj_align(log_panel, LV_ALIGN_TOP_MID, 0, 50);
+    lv_obj_set_size(log_panel, 304, 84);
+    lv_obj_align(log_panel, LV_ALIGN_TOP_MID, 0, 52);
     lv_obj_set_style_pad_all(log_panel, 4, 0);
     lv_obj_clear_flag(log_panel, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -2091,7 +2091,7 @@ void status_deck_ui(lv_obj_t *scr)
      * label reparented in below. */
     lv_obj_t *log_btn_row = lv_obj_create(page_log);
     lv_obj_set_size(log_btn_row, 304, 44);
-    lv_obj_align(log_btn_row, LV_ALIGN_TOP_MID, 0, 144);
+    lv_obj_align(log_btn_row, LV_ALIGN_TOP_MID, 0, 142);
     lv_obj_set_style_pad_all(log_btn_row, 2, 0);
     lv_obj_set_style_pad_column(log_btn_row, 5, 0);
     lv_obj_clear_flag(log_btn_row, LV_OBJ_FLAG_SCROLLABLE);
@@ -2145,7 +2145,9 @@ void status_deck_ui(lv_obj_t *scr)
      * for, and it gives the fourth page somewhere to live now that TALK is
      * no longer a button - tapping the microphone does that job.
      *
-     * 84x46 in each corner, and the pages are now full-screen underneath
+     * 96x52 in each corner with montserrat_20 labels - these are read and
+     * hit at arm's length, so the text carries as much as the target size
+     * does. The pages are full-screen underneath
      * rather than squeezed into the gap between them. That matters because
      * HOME is a circle: the corners of its bounding box are transparent, so
      * big corner buttons and a big microphone can share the same 320x240
@@ -2165,13 +2167,13 @@ void status_deck_ui(lv_obj_t *scr)
     };
     for (size_t i = 0; i < sizeof(nav_button_defs) / sizeof(nav_button_defs[0]); i++) {
         lv_obj_t *btn = lv_btn_create(scr);
-        lv_obj_set_size(btn, 84, 46);
+        lv_obj_set_size(btn, 96, 52);
         lv_obj_align(btn, nav_button_defs[i].align, nav_button_defs[i].x, nav_button_defs[i].y);
         lv_obj_add_event_cb(btn, nav_button_defs[i].cb, LV_EVENT_CLICKED, NULL);
 
         lv_obj_t *btn_label = lv_label_create(btn);
         lv_label_set_text(btn_label, nav_button_defs[i].label);
-        lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_20, 0);
         lv_obj_center(btn_label);
 
         nav_buttons[i] = btn;
