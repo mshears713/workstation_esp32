@@ -25,6 +25,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "ir_roku.h"
+#include "wifi_manager.h"
 #include "remote_client.h"
 
 #if __has_include("backend_config.h")
@@ -40,6 +41,18 @@ static const char *TAG = "remote_client";
  * starve other tasks polling the same wifi link. */
 #define REMOTE_POLL_INTERVAL_MS 150
 #define REMOTE_REQUEST_TIMEOUT_MS 2000
+
+/* While Wi-Fi is down there is nothing to poll, so this is just how often to
+ * re-check whether it came back. */
+#define REMOTE_POLL_OFFLINE_MS 1000
+
+/* Used only while the backend is unreachable. Still responsive enough that a
+ * button press lands within a second of the backend returning, without the
+ * socket churn of the full rate. */
+#define REMOTE_POLL_BACKOFF_MS 2000
+
+/* Set by poll_once(), read by poll_task(). Single bool, one writer. */
+static bool s_backend_reachable = false;
 #define JSON_RESPONSE_BUF_LEN 256
 #define COMMAND_ID_LEN 40
 #define KEY_NAME_LEN 24
@@ -161,10 +174,16 @@ static void poll_once(void)
         esp_http_client_cleanup(client);
         /* Backend unreachable is an expected, unremarkable state for a
          * background poll - same reasoning as notification_client.c's own
-         * poll_once(). */
+         * poll_once(). Recorded so poll_task can slow down rather than keep
+         * hammering a backend that is not there. */
+        s_backend_reachable = false;
         ESP_LOGD(TAG, "pending poll unreachable: %s", esp_err_to_name(err));
         return;
     }
+
+    /* Something answered, so the backend is there even if this particular
+     * response is an error - full rate resumes. */
+    s_backend_reachable = true;
 
     int status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
@@ -222,8 +241,30 @@ static void poll_task(void *arg)
 {
     (void)arg;
     for (;;) {
+        wifi_mgr_status_t wst;
+        wifi_mgr_get_status(&wst);
+
+        if (wst.state != WIFI_MGR_ONLINE) {
+            /* Do not open a socket with no route. Without this the poll kept
+             * trying ~7 times a second through the whole of a slow DHCP -
+             * measured at ~150 failed connections over one 23s lease wait -
+             * and CONFIG_LWIP_MAX_SOCKETS is 10, so it starved anything else
+             * that wanted one. repo_selector's first catalog fetch failed
+             * with "Failed to create socket" because of exactly this. */
+            s_backend_reachable = false;
+            vTaskDelay(pdMS_TO_TICKS(REMOTE_POLL_OFFLINE_MS));
+            continue;
+        }
+
         poll_once();
-        vTaskDelay(pdMS_TO_TICKS(REMOTE_POLL_INTERVAL_MS));
+
+        /* Full rate only while the backend is actually answering. A remote
+         * button should feel instant, so the fast interval is not negotiable
+         * in normal use - but a backend that is not there does not need
+         * probing seven times a second, and the first success restores the
+         * fast rate before the next key press could matter. */
+        vTaskDelay(pdMS_TO_TICKS(s_backend_reachable ? REMOTE_POLL_INTERVAL_MS
+                                                     : REMOTE_POLL_BACKOFF_MS));
     }
 }
 

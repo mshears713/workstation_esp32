@@ -356,7 +356,7 @@ static void run_send_command(void)
     } else if (strcmp(st.fail_reason, "ENDPOINT NOT SET") == 0) {
         snprintf(result_msg, sizeof(result_msg), "SEND READY - ENDPOINT NOT SET");
     } else if (st.fail_reason[0] != '\0') {
-        snprintf(result_msg, sizeof(result_msg), "SEND UPLOAD FAILED: %s", st.fail_reason);
+        snprintf(result_msg, sizeof(result_msg), "SEND FAIL: %s", st.fail_reason);
     } else {
         /* "SENT," not "SAVED" - the backend queues transcription/graph
          * processing after accepting the upload; this firmware doesn't
@@ -454,7 +454,7 @@ static void run_note_command(void)
     } else if (strcmp(st.fail_reason, "ENDPOINT NOT SET") == 0) {
         snprintf(result_msg, sizeof(result_msg), "NOTE READY - ENDPOINT NOT SET");
     } else if (st.fail_reason[0] != '\0') {
-        snprintf(result_msg, sizeof(result_msg), "NOTE UPLOAD FAILED: %s", st.fail_reason);
+        snprintf(result_msg, sizeof(result_msg), "NOTE FAIL: %s", st.fail_reason);
     } else {
         /* "SENT," not "SAVED" - the backend queues transcription/Notion-page
          * creation after accepting the upload; this firmware doesn't poll
@@ -578,7 +578,7 @@ static void run_go_command(void)
     } else if (strcmp(st.fail_reason, "ENDPOINT NOT SET") == 0) {
         snprintf(result_msg, sizeof(result_msg), "GO READY - ENDPOINT NOT SET");
     } else if (st.fail_reason[0] != '\0') {
-        snprintf(result_msg, sizeof(result_msg), "GO UPLOAD FAILED: %s", st.fail_reason);
+        snprintf(result_msg, sizeof(result_msg), "GO FAIL: %s", st.fail_reason);
     } else {
         /* "SENT," not "SAVED" - the backend queues transcription/entry-
          * architect/Notion processing after accepting the upload; this
@@ -850,37 +850,17 @@ static void detect_task(void *arg)
 
     bool in_command_window = false;
     uint32_t detect_since_yield = 0;   /* see the yield in the command window below */
-    uint32_t fetch_calls = 0;          /* issue #9 diagnostic, rolled up once a second */
-    uint32_t fetch_blocked_us = 0;
-    int64_t fetch_rollup_us = esp_timer_get_time();
 
     for (;;) {
-        /* Diagnostic for issue #9: fetch() is meant to block until a chunk
-         * of audio is ready, and that block is the only thing pacing this
-         * loop. If it ever stops blocking - which is what a backed-up AFE
-         * ring causes - this loop spins and starves IDLE1 on core 1, which
-         * is exactly the watchdog trip observed during a command window.
-         * Rolled up once a second so the answer is a measurement rather
-         * than an assumption. */
-        int64_t fetch_start_us = esp_timer_get_time();
+        /* An issue #9 diagnostic used to time this call and log a
+         * once-a-second rollup of how much of each second was spent blocked
+         * here. It has been removed now that it has served its purpose, but
+         * what it established is worth keeping: fetch() blocks 99% of the
+         * time at idle, and only ~22% inside a command window, the rest
+         * going to multinet->detect(). That is why DETECT_YIELD_EVERY exists
+         * - the window is genuinely compute-bound, not backed up. Restore
+         * the timing around this call if that ever needs re-measuring. */
         afe_fetch_result_t *res = s_afe_handle->fetch(afe_data);
-        int64_t now_us = esp_timer_get_time();
-        fetch_calls++;
-        fetch_blocked_us += (uint32_t)(now_us - fetch_start_us);
-        if (now_us - fetch_rollup_us >= 1000000) {
-            uint32_t window_ms = (uint32_t)((now_us - fetch_rollup_us) / 1000);
-            uint32_t blocked_ms = fetch_blocked_us / 1000;
-            /* blocked_ms close to window_ms means fetch() is blocking and
-             * the loop is real-time. Near zero means it is spinning. */
-            ESP_LOGI(TAG, "afe fetch: %lu calls in %lums, blocked %lums (%lu%%)%s",
-                     (unsigned long)fetch_calls, (unsigned long)window_ms,
-                     (unsigned long)blocked_ms,
-                     (unsigned long)(window_ms ? (blocked_ms * 100 / window_ms) : 0),
-                     in_command_window ? " [command window]" : "");
-            fetch_calls = 0;
-            fetch_blocked_us = 0;
-            fetch_rollup_us = now_us;
-        }
         if (!res || res->ret_value == ESP_FAIL) {
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;

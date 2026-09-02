@@ -231,7 +231,18 @@ typedef enum {
 } event_type_t;
 
 #define EVENT_HISTORY_LEN 8
-#define EVENT_MSG_LEN 28
+/* 32, up from 28. The failure *reason* was the part getting clipped, which
+ * is the part worth reading - "NOTE UPLOAD FAILED: UPLOAD" lost its
+ * "TIMEOUT", and "GO UPLOAD FAILED: UPLOAD ER" lost the status code.
+ *
+ * Bounded by the panel, not by taste: log_panel is 304px with 4px padding,
+ * so ~296px at montserrat_14, and each line is prefixed "%3lus " (5 chars).
+ * 31 message chars puts the longest realistic line around 289px. Going much
+ * further would wrap, and a wrapped line costs one of the eight history rows
+ * this panel exists to show. The messages themselves were shortened too -
+ * see voice_control.c - since "UPLOAD FAILED: UPLOAD TIMEOUT" said UPLOAD
+ * twice. */
+#define EVENT_MSG_LEN 32
 /* Mission 15: the LOG page now gives the log panel most of the screen (see
  * status_deck_ui()), so the compact panel no longer has to show fewer lines
  * than the recorder keeps - this now equals EVENT_HISTORY_LEN, i.e. every
