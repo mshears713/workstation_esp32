@@ -1138,6 +1138,41 @@ static void render_command_overlay(void)
  * counter should show a target. */
 #define AUTO_STOP_MAX_MS 60000
 
+/* The panel look, in one function.
+ *
+ * It started on GO's repository chooser, which read better than everything
+ * around it - a bordered, filled block with its content grouped inside,
+ * rather than labels floating on the page background. Applied per page it
+ * would drift the way the command hints did, so it lives here and the pages
+ * call it.
+ *
+ * Used as a *backing* panel: created before a page's content and never
+ * reparenting it, so existing layout coordinates keep working and this is
+ * purely a visual layer behind them. */
+static void apply_panel_style(lv_obj_t *obj)
+{
+    lv_obj_set_style_bg_color(obj, lv_palette_darken(LV_PALETTE_BLUE_GREY, 3), 0);
+    lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(obj, 10, 0);
+    lv_obj_set_style_border_width(obj, 2, 0);
+    lv_obj_set_style_border_color(obj, lv_palette_darken(LV_PALETTE_BLUE, 2), 0);
+    lv_obj_set_style_pad_all(obj, 0, 0);
+    lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+}
+
+/* A backing panel filling a page's safe band - the region clear of the
+ * corner nav buttons. Created first so it sits behind everything the page
+ * adds afterwards. */
+static lv_obj_t *page_panel(lv_obj_t *page, int y, int h)
+{
+    lv_obj_t *panel = lv_obj_create(page);
+    lv_obj_set_size(panel, 304, h);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, y);
+    apply_panel_style(panel);
+    return panel;
+}
+
 static void refresh_project_label(void);
 
 static void render_recording_overlay(void)
@@ -1926,6 +1961,10 @@ void status_deck_ui(lv_obj_t *scr)
      * fetched from the backend (repo_selector.h), so what is on screen is
      * what a GO capture would file against. The project selector now lives
      * only on the NOTE recording screen, where it is actually used. */
+    page_panel(page_set, 46, 40);    /* status:  uptime / API / Wi-Fi */
+    page_panel(page_set, 92, 48);    /* volume */
+    page_panel(page_set, 146, 48);   /* repository GO files to */
+
     lv_obj_t *set_title = lv_label_create(page_set);
     lv_label_set_text(set_title, "SETTINGS");
     lv_obj_set_style_text_font(set_title, &lv_font_montserrat_32, 0);
@@ -1933,26 +1972,26 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_align(set_title, LV_ALIGN_TOP_MID, 0, 8);
 
     telemetry_label = lv_label_create(page_set);
-    lv_obj_align(telemetry_label, LV_ALIGN_TOP_LEFT, 8, 62);
+    lv_obj_align(telemetry_label, LV_ALIGN_TOP_LEFT, 14, 58);
 
     conn_label = lv_label_create(page_set);
-    lv_obj_align(conn_label, LV_ALIGN_TOP_RIGHT, -8, 62);
+    lv_obj_align(conn_label, LV_ALIGN_TOP_RIGHT, -14, 58);
     lv_label_set_text(conn_label, "WIFI: OFF");
 
     /* The widget on HOME carries backend reachability as motion and colour,
      * which is right for a glance across a room but says nothing about
      * latency. Spelling it out here is what a settings page is for. */
     settings_api_label = lv_label_create(page_set);
-    lv_obj_align(settings_api_label, LV_ALIGN_TOP_MID, 0, 62);
+    lv_obj_align(settings_api_label, LV_ALIGN_TOP_MID, 0, 58);
     lv_label_set_text(settings_api_label, "API: ?");
 
     lv_obj_t *vol_caption = lv_label_create(page_set);
     lv_label_set_text(vol_caption, "VOLUME");
-    lv_obj_align(vol_caption, LV_ALIGN_TOP_LEFT, 8, 106);
+    lv_obj_align(vol_caption, LV_ALIGN_TOP_LEFT, 14, 108);
 
     lv_obj_t *vol_down = lv_btn_create(page_set);
     lv_obj_set_size(vol_down, 46, 34);
-    lv_obj_align(vol_down, LV_ALIGN_TOP_LEFT, 132, 98);
+    lv_obj_align(vol_down, LV_ALIGN_TOP_LEFT, 130, 99);
     lv_obj_add_event_cb(vol_down, volume_down_button_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *vol_down_label = lv_label_create(vol_down);
     lv_label_set_text(vol_down_label, "-");
@@ -1961,11 +2000,11 @@ void status_deck_ui(lv_obj_t *scr)
 
     volume_label = lv_label_create(page_set);
     lv_obj_set_style_text_font(volume_label, &lv_font_montserrat_20, 0);
-    lv_obj_align(volume_label, LV_ALIGN_TOP_LEFT, 194, 102);
+    lv_obj_align(volume_label, LV_ALIGN_TOP_LEFT, 192, 102);
 
     lv_obj_t *vol_up = lv_btn_create(page_set);
     lv_obj_set_size(vol_up, 46, 34);
-    lv_obj_align(vol_up, LV_ALIGN_TOP_RIGHT, -8, 98);
+    lv_obj_align(vol_up, LV_ALIGN_TOP_RIGHT, -14, 99);
     lv_obj_add_event_cb(vol_up, volume_up_button_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *vol_up_label = lv_label_create(vol_up);
     lv_label_set_text(vol_up_label, "+");
@@ -1974,11 +2013,11 @@ void status_deck_ui(lv_obj_t *scr)
 
     lv_obj_t *repo_caption = lv_label_create(page_set);
     lv_label_set_text(repo_caption, "GO FILES TO");
-    lv_obj_align(repo_caption, LV_ALIGN_TOP_LEFT, 8, 148);
+    lv_obj_align(repo_caption, LV_ALIGN_TOP_LEFT, 14, 162);
 
     lv_obj_t *set_repo_prev = lv_btn_create(page_set);
     lv_obj_set_size(set_repo_prev, 46, 34);
-    lv_obj_align(set_repo_prev, LV_ALIGN_TOP_LEFT, 132, 140);
+    lv_obj_align(set_repo_prev, LV_ALIGN_TOP_LEFT, 130, 153);
     lv_obj_add_event_cb(set_repo_prev, recording_repo_prev_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *set_repo_prev_label = lv_label_create(set_repo_prev);
     lv_label_set_text(set_repo_prev_label, "<");
@@ -1986,12 +2025,12 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_center(set_repo_prev_label);
 
     settings_repo_label = lv_label_create(page_set);
-    lv_obj_align(settings_repo_label, LV_ALIGN_TOP_LEFT, 186, 148);
+    lv_obj_align(settings_repo_label, LV_ALIGN_TOP_LEFT, 186, 162);
     lv_label_set_text(settings_repo_label, "...");
 
     lv_obj_t *set_repo_next = lv_btn_create(page_set);
     lv_obj_set_size(set_repo_next, 46, 34);
-    lv_obj_align(set_repo_next, LV_ALIGN_TOP_RIGHT, -8, 140);
+    lv_obj_align(set_repo_next, LV_ALIGN_TOP_RIGHT, -14, 153);
     lv_obj_add_event_cb(set_repo_next, recording_repo_next_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *set_repo_next_label = lv_label_create(set_repo_next);
     lv_label_set_text(set_repo_next_label, ">");
@@ -2001,6 +2040,8 @@ void status_deck_ui(lv_obj_t *scr)
     refresh_volume_label();
 
     /* ---- SENS: three stacked trend charts, each a third of the page ----- */
+
+    page_panel(page_sens, 40, 150);
 
     /* Band layout: 144 / 3 = 48px each, inside y=48..192 to clear the
      * corner nav buttons. Same
@@ -2086,9 +2127,9 @@ void status_deck_ui(lv_obj_t *scr)
      * EVENT_DISPLAY_LINES's comment). */
     lv_obj_t *log_panel = lv_obj_create(page_log);
     lv_obj_set_size(log_panel, 304, 84);
-    lv_obj_align(log_panel, LV_ALIGN_TOP_MID, 0, 52);
-    lv_obj_set_style_pad_all(log_panel, 4, 0);
-    lv_obj_clear_flag(log_panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(log_panel, LV_ALIGN_TOP_MID, 0, 46);
+    apply_panel_style(log_panel);
+    lv_obj_set_style_pad_all(log_panel, 6, 0);
 
     log_label = lv_label_create(log_panel);
     lv_obj_align(log_label, LV_ALIGN_TOP_LEFT, 0, 0);
@@ -2341,10 +2382,7 @@ void status_deck_ui(lv_obj_t *scr)
     recording_project_ctrl = lv_obj_create(recording_overlay);
     lv_obj_set_size(recording_project_ctrl, 44, 108);
     lv_obj_align(recording_project_ctrl, LV_ALIGN_LEFT_MID, 4, 6);
-    lv_obj_set_style_bg_opa(recording_project_ctrl, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(recording_project_ctrl, 0, 0);
-    lv_obj_set_style_pad_all(recording_project_ctrl, 0, 0);
-    lv_obj_clear_flag(recording_project_ctrl, LV_OBJ_FLAG_SCROLLABLE);
+    apply_panel_style(recording_project_ctrl);
     lv_obj_add_flag(recording_project_ctrl, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *rec_project_up = lv_btn_create(recording_project_ctrl);
@@ -2381,13 +2419,7 @@ void status_deck_ui(lv_obj_t *scr)
     recording_repo_ctrl = lv_obj_create(recording_overlay);
     lv_obj_set_size(recording_repo_ctrl, 268, 54);
     lv_obj_align(recording_repo_ctrl, LV_ALIGN_BOTTOM_MID, 0, -6);
-    lv_obj_set_style_bg_color(recording_repo_ctrl, lv_palette_darken(LV_PALETTE_BLUE_GREY, 2), 0);
-    lv_obj_set_style_bg_opa(recording_repo_ctrl, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(recording_repo_ctrl, 8, 0);
-    lv_obj_set_style_border_width(recording_repo_ctrl, 2, 0);
-    lv_obj_set_style_border_color(recording_repo_ctrl, lv_palette_main(LV_PALETTE_BLUE), 0);
-    lv_obj_set_style_pad_all(recording_repo_ctrl, 0, 0);
-    lv_obj_clear_flag(recording_repo_ctrl, LV_OBJ_FLAG_SCROLLABLE);
+    apply_panel_style(recording_repo_ctrl);
     lv_obj_add_flag(recording_repo_ctrl, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *repo_prev = lv_btn_create(recording_repo_ctrl);
@@ -2413,6 +2445,13 @@ void status_deck_ui(lv_obj_t *scr)
     lv_label_set_text(repo_next_label, ">");
     lv_obj_set_style_text_font(repo_next_label, &lv_font_montserrat_20, 0);
     lv_obj_center(repo_next_label);
+
+    /* Backs the dot + counter + progress bar as one block. Created before
+     * them so it sits behind; they keep their own coordinates. */
+    lv_obj_t *rec_panel = lv_obj_create(recording_overlay);
+    lv_obj_set_size(rec_panel, 288, 96);
+    lv_obj_align(rec_panel, LV_ALIGN_CENTER, 0, 22);
+    apply_panel_style(rec_panel);
 
     /* Fills the space SEND vacated on an auto-stopping capture, and earns
      * it: on a 15s capture that ends itself, how much time is left is the
