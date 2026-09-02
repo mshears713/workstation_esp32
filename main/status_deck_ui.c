@@ -154,6 +154,7 @@
 #include <math.h>
 #include "lvgl.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
@@ -730,12 +731,19 @@ typedef enum {
     APP_PAGE_HOME = 0,
     APP_PAGE_SENS,
     APP_PAGE_LOG,
+    APP_PAGE_SET,
     APP_PAGE_COUNT,
 } app_page_t;
 
 static lv_obj_t *page_home;
 static lv_obj_t *page_sens;
 static lv_obj_t *page_log;
+static lv_obj_t *page_set;          /* SETTINGS - replaced TALK in the nav */
+/* SETTINGS reuses telemetry_label / conn_label / volume_label - the same
+ * objects HOME used to own, just reparented to this page. Only the two
+ * genuinely new rows need their own handles. */
+static lv_obj_t *settings_api_label;
+static lv_obj_t *settings_repo_label;
 static lv_obj_t *nav_buttons[APP_PAGE_COUNT];
 
 /* Command Window overlay (Mission 12): four-button recognition-test grid,
@@ -845,6 +853,44 @@ static void log_sensor_event(const char *text)
  * 15): full IP shortened to its last octet - the network prefix is implied
  * and this is evidence the device is on *some* address, not a substitute
  * for the Black Box/serial log if the exact IP ever matters. */
+/* SETTINGS is a passive page: everything on it is read from somewhere else,
+ * so it only has to be re-read, never pushed to. Driven off the same 500ms
+ * timer as the Wi-Fi row - nothing here changes faster than that, and the
+ * page is hidden most of the time anyway. */
+static void render_settings_panel(void)
+{
+    if (!settings_api_label) {
+        return;
+    }
+
+    backend_health_status_t bh;
+    backend_health_get_status(&bh);
+    char buf[48];
+    switch (bh.state) {
+    case BACKEND_HEALTH_OK:
+        snprintf(buf, sizeof(buf), "API: OK  %lums", (unsigned long)bh.latency_ms);
+        lv_obj_set_style_text_color(settings_api_label, lv_palette_main(LV_PALETTE_GREEN), 0);
+        break;
+    case BACKEND_HEALTH_DOWN:
+        snprintf(buf, sizeof(buf), "API: DOWN");
+        lv_obj_set_style_text_color(settings_api_label, lv_palette_main(LV_PALETTE_RED), 0);
+        break;
+    case BACKEND_HEALTH_NO_NETWORK:
+        snprintf(buf, sizeof(buf), "API: NO NETWORK");
+        lv_obj_set_style_text_color(settings_api_label, lv_palette_main(LV_PALETTE_GREY), 0);
+        break;
+    default:
+        snprintf(buf, sizeof(buf), "API: ?");
+        lv_obj_set_style_text_color(settings_api_label, lv_palette_main(LV_PALETTE_GREY), 0);
+        break;
+    }
+    lv_label_set_text(settings_api_label, buf);
+
+    if (settings_repo_label) {
+        lv_label_set_text(settings_repo_label, repo_selector_get_label());
+    }
+}
+
 static void render_wifi_panel(void)
 {
     wifi_mgr_status_t st;
@@ -905,6 +951,7 @@ static void wifi_ui_timer_cb(lv_timer_t *t)
         log_event(EVT_NETWORK, drained[i].message);
     }
     render_wifi_panel();
+    render_settings_panel();
 }
 
 /* Mission 15: no more on-screen HS status label (dropped from HOME along
@@ -1394,7 +1441,9 @@ static void net_button_cb(lv_event_t *e)
 
 static void refresh_volume_label(void)
 {
-    lv_label_set_text_fmt(volume_label, "%d", audio_playback_get_volume());
+    if (volume_label) {   /* lives on SETTINGS now, not HOME */
+        lv_label_set_text_fmt(volume_label, "%d", audio_playback_get_volume());
+    }
 }
 
 static void volume_up_button_cb(lv_event_t *e)
@@ -1511,7 +1560,7 @@ static void send_handshake_button_cb(lv_event_t *e)
  * panels above, just for which page is on screen rather than a data value. */
 static void set_active_page(app_page_t page)
 {
-    lv_obj_t *pages[APP_PAGE_COUNT] = { page_home, page_sens, page_log };
+    lv_obj_t *pages[APP_PAGE_COUNT] = { page_home, page_sens, page_log, page_set };
     for (int i = 0; i < APP_PAGE_COUNT; i++) {
         if (i == (int)page) {
             lv_obj_clear_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
@@ -1563,6 +1612,12 @@ static void log_nav_button_cb(lv_event_t *e)
  * detect_task silently ignores if a window is already open or the pipeline
  * never started, so there is no "rejected press" case for handle_command to
  * avoid logging. */
+static void set_nav_button_cb(lv_event_t *e)
+{
+    (void)e;
+    set_active_page(APP_PAGE_SET);
+}
+
 static void talk_button_cb(lv_event_t *e)
 {
     voice_control_manual_wake();
@@ -1808,8 +1863,9 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_t *pages_init[APP_PAGE_COUNT];
     for (int i = 0; i < APP_PAGE_COUNT; i++) {
         lv_obj_t *page = lv_obj_create(scr);
-        lv_obj_set_size(page, 320, 180);
-        lv_obj_align(page, LV_ALIGN_TOP_LEFT, 0, 0);
+        /* The band between the corner nav buttons (34px tall each). */
+        lv_obj_set_size(page, 320, 172);
+        lv_obj_align(page, LV_ALIGN_TOP_LEFT, 0, 34);
         lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(page, 0, 0);
         lv_obj_set_style_radius(page, 0, 0);
@@ -1820,133 +1876,112 @@ void status_deck_ui(lv_obj_t *scr)
     page_home = pages_init[APP_PAGE_HOME];
     page_sens = pages_init[APP_PAGE_SENS];
     page_log = pages_init[APP_PAGE_LOG];
+    page_set = pages_init[APP_PAGE_SET];
 
-    /* ---- HOME: title + UP/WIFI + VoiceListeningWidget -------------------- */
+    /* ---- HOME: nothing but the microphone ---------------------------- */
 
-    /* Mission 15: renamed from "HOMEBOUND STATUS DECK", set in blue - both
-     * the front label and its faux-bold offset copy get the color so the
-     * bold effect (see comment below) still reads as one solid-looking
-     * title, not two mismatched layers. */
-    lv_obj_t *title = lv_label_create(page_home);
-    lv_label_set_text(title, "OPERATION HOMEBOUND");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(title, lv_palette_main(LV_PALETTE_BLUE), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 2);
+    /* Stripped back deliberately. The title, uptime and Wi-Fi row, the
+     * project selector and the volume control all moved off (title dropped,
+     * the rest to SETTINGS) so this page is one thing: a large microphone
+     * that shows whether the workstation is listening and reachable.
+     *
+     * Tapping it is what TALK used to do. A dedicated TALK button in the
+     * nav made sense when the nav was a bar along the bottom; with the
+     * microphone filling the page, the microphone *is* the button. */
+    voice_widget = voice_listening_widget_create(page_home);
+    lv_obj_align(voice_widget, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(voice_widget, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(voice_widget, talk_button_cb, LV_EVENT_CLICKED, NULL);
 
-    /* Faux-bold: LVGL's bundled Montserrat has no bold weight, so draw a
-     * second copy offset by 1px to thicken the strokes. */
-    lv_obj_t *title_bold = lv_label_create(page_home);
-    lv_label_set_text(title_bold, "OPERATION HOMEBOUND");
-    lv_obj_set_style_text_font(title_bold, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(title_bold, lv_palette_main(LV_PALETTE_BLUE), 0);
-    lv_obj_align(title_bold, LV_ALIGN_TOP_MID, 1, 2);
+    /* ---- SETTINGS: the things HOME used to carry -------------------- */
 
-    /* UP/WIFI (Mission 15): now one row (was UP alone, with WIFI on its own
-     * row below) - HS dropped entirely (see the file header comment), which
-     * freed the row WIFI used to occupy. */
-    telemetry_label = lv_label_create(page_home);
-    lv_obj_align(telemetry_label, LV_ALIGN_TOP_LEFT, 8, 26);
+    /* Took over the nav slot TALK vacated. Everything here was previously
+     * competing with the microphone for space on HOME: uptime, Wi-Fi,
+     * volume, and the selector that used to show project names.
+     *
+     * The repository row is the one genuinely new thing. HOME's old +/-
+     * scroller showed the AI-OS project list (VAN1/VAN2/GEN) which was
+     * easy to mistake for the GitHub repositories - they are different
+     * lists for different commands. This one shows the actual repositories,
+     * fetched from the backend (repo_selector.h), so what is on screen is
+     * what a GO capture would file against. The project selector now lives
+     * only on the NOTE recording screen, where it is actually used. */
+    lv_obj_t *set_title = lv_label_create(page_set);
+    lv_label_set_text(set_title, "SETTINGS");
+    lv_obj_set_style_text_color(set_title, lv_palette_main(LV_PALETTE_BLUE), 0);
+    lv_obj_align(set_title, LV_ALIGN_TOP_MID, 0, 4);
 
-    conn_label = lv_label_create(page_home);
-    lv_obj_align(conn_label, LV_ALIGN_TOP_RIGHT, -8, 26);
+    telemetry_label = lv_label_create(page_set);
+    lv_obj_align(telemetry_label, LV_ALIGN_TOP_LEFT, 8, 30);
+
+    conn_label = lv_label_create(page_set);
+    lv_obj_align(conn_label, LV_ALIGN_TOP_RIGHT, -8, 30);
     lv_label_set_text(conn_label, "WIFI: OFF");
 
-    /* Mission 17: AUD's status row and the widget's own caption/label are
-     * both dropped (see the file header comment) so the VoiceListeningWidget
-     * can take over nearly all of the remaining page. Mission 18 nudges it
-     * up from y=44 to y=28 for more clearance above the nav bar below the
-     * page - safe to sit this close under the UP/WIFI row above despite the
-     * y-ranges overlapping on paper, since UP/WIFI sit at the left/right
-     * edges (x=8 / x=-8) while the widget is horizontally centered; their
-     * actual pixels never touch. Mission 19 keeps this same y=28 top (it
-     * was already right) and grows the widget itself (130px -> 148px, see
-     * voice_listening_widget.c) so the bottom now reaches y=176, just
-     * above the page's own bottom edge at 180 (and the nav bar right
-     * below it), instead of leaving a visible gap. */
-    voice_widget = voice_listening_widget_create(page_home);
-    lv_obj_align(voice_widget, LV_ALIGN_TOP_MID, 0, 28);
+    /* The widget on HOME carries backend reachability as motion and colour,
+     * which is right for a glance across a room but says nothing about
+     * latency. Spelling it out here is what a settings page is for. */
+    settings_api_label = lv_label_create(page_set);
+    lv_obj_align(settings_api_label, LV_ALIGN_TOP_LEFT, 8, 54);
+    lv_label_set_text(settings_api_label, "API: ?");
 
-    /* Volume control: small up/label/down column in the gap to the right of
-     * the 148px-diameter ring (ring's own right edge sits at x=234 on this
-     * 320px-wide page, see voice_listening_widget.c's RING_DIAM) - x=105
-     * offset from page center (pulled in from an earlier 117 to sit closer
-     * to the ring, alongside the project selector below getting the same
-     * inward nudge on the opposite side) puts this column at roughly
-     * x=240-280, clear of the ring with a small margin to spare. Container
-     * height (130) roughly matches the ring's own vertical span so the
-     * up/down buttons land near its top/bottom rather than floating off to
-     * one side. */
-    lv_obj_t *volume_ctrl = lv_obj_create(page_home);
-    lv_obj_set_size(volume_ctrl, 50, 130);
-    lv_obj_align(volume_ctrl, LV_ALIGN_TOP_MID, 105, 38);
-    lv_obj_set_style_bg_opa(volume_ctrl, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(volume_ctrl, 0, 0);
-    lv_obj_set_style_pad_all(volume_ctrl, 0, 0);
-    lv_obj_clear_flag(volume_ctrl, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *vol_caption = lv_label_create(page_set);
+    lv_label_set_text(vol_caption, "VOLUME");
+    lv_obj_align(vol_caption, LV_ALIGN_TOP_LEFT, 8, 90);
 
-    lv_obj_t *volume_up_btn = lv_btn_create(volume_ctrl);
-    lv_obj_set_size(volume_up_btn, 40, 36);
-    lv_obj_align(volume_up_btn, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_add_event_cb(volume_up_btn, volume_up_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *volume_up_label = lv_label_create(volume_up_btn);
-    lv_label_set_text(volume_up_label, "+");
-    lv_obj_set_style_text_font(volume_up_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(volume_up_label);
+    lv_obj_t *vol_down = lv_btn_create(page_set);
+    lv_obj_set_size(vol_down, 46, 34);
+    lv_obj_align(vol_down, LV_ALIGN_TOP_LEFT, 132, 82);
+    lv_obj_add_event_cb(vol_down, volume_down_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *vol_down_label = lv_label_create(vol_down);
+    lv_label_set_text(vol_down_label, "-");
+    lv_obj_set_style_text_font(vol_down_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(vol_down_label);
 
-    volume_label = lv_label_create(volume_ctrl);
-    lv_obj_align(volume_label, LV_ALIGN_CENTER, 0, 0);
+    volume_label = lv_label_create(page_set);
+    lv_obj_set_style_text_font(volume_label, &lv_font_montserrat_20, 0);
+    lv_obj_align(volume_label, LV_ALIGN_TOP_LEFT, 194, 86);
 
-    lv_obj_t *volume_down_btn = lv_btn_create(volume_ctrl);
-    lv_obj_set_size(volume_down_btn, 40, 36);
-    lv_obj_align(volume_down_btn, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_add_event_cb(volume_down_btn, volume_down_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *volume_down_label = lv_label_create(volume_down_btn);
-    lv_label_set_text(volume_down_label, "-");
-    lv_obj_set_style_text_font(volume_down_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(volume_down_label);
+    lv_obj_t *vol_up = lv_btn_create(page_set);
+    lv_obj_set_size(vol_up, 46, 34);
+    lv_obj_align(vol_up, LV_ALIGN_TOP_RIGHT, -8, 82);
+    lv_obj_add_event_cb(vol_up, volume_up_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *vol_up_label = lv_label_create(vol_up);
+    lv_label_set_text(vol_up_label, "+");
+    lv_obj_set_style_text_font(vol_up_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(vol_up_label);
+
+    lv_obj_t *repo_caption = lv_label_create(page_set);
+    lv_label_set_text(repo_caption, "GO FILES TO");
+    lv_obj_align(repo_caption, LV_ALIGN_TOP_LEFT, 8, 134);
+
+    lv_obj_t *set_repo_prev = lv_btn_create(page_set);
+    lv_obj_set_size(set_repo_prev, 46, 34);
+    lv_obj_align(set_repo_prev, LV_ALIGN_TOP_LEFT, 132, 126);
+    lv_obj_add_event_cb(set_repo_prev, recording_repo_prev_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *set_repo_prev_label = lv_label_create(set_repo_prev);
+    lv_label_set_text(set_repo_prev_label, "<");
+    lv_obj_set_style_text_font(set_repo_prev_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(set_repo_prev_label);
+
+    settings_repo_label = lv_label_create(page_set);
+    lv_obj_align(settings_repo_label, LV_ALIGN_TOP_LEFT, 186, 134);
+    lv_label_set_text(settings_repo_label, "...");
+
+    lv_obj_t *set_repo_next = lv_btn_create(page_set);
+    lv_obj_set_size(set_repo_next, 46, 34);
+    lv_obj_align(set_repo_next, LV_ALIGN_TOP_RIGHT, -8, 126);
+    lv_obj_add_event_cb(set_repo_next, recording_repo_next_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *set_repo_next_label = lv_label_create(set_repo_next);
+    lv_label_set_text(set_repo_next_label, ">");
+    lv_obj_set_style_text_font(set_repo_next_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(set_repo_next_label);
 
     refresh_volume_label();
 
-    /* Project selector: same up/label/down scroller shape as the volume
-     * control, mirrored to the ring's left (ring's own left edge sits at
-     * x=86, mirroring the volume control's x=105 offset above). Current
-     * selection shows in the center; the arrows cycle through
-     * PROJECT_OPTIONS instead of stepping a number. */
-    lv_obj_t *project_ctrl = lv_obj_create(page_home);
-    lv_obj_set_size(project_ctrl, 50, 130);
-    lv_obj_align(project_ctrl, LV_ALIGN_TOP_MID, -105, 38);
-    lv_obj_set_style_bg_opa(project_ctrl, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(project_ctrl, 0, 0);
-    lv_obj_set_style_pad_all(project_ctrl, 0, 0);
-    lv_obj_clear_flag(project_ctrl, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *project_up_btn = lv_btn_create(project_ctrl);
-    lv_obj_set_size(project_up_btn, 40, 36);
-    lv_obj_align(project_up_btn, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_add_event_cb(project_up_btn, project_up_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *project_up_label = lv_label_create(project_up_btn);
-    lv_label_set_text(project_up_label, "+");
-    lv_obj_set_style_text_font(project_up_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(project_up_label);
-
-    project_label = lv_label_create(project_ctrl);
-    lv_obj_set_style_text_font(project_label, &lv_font_montserrat_14, 0);
-    lv_obj_align(project_label, LV_ALIGN_CENTER, 0, 0);
-
-    lv_obj_t *project_down_btn = lv_btn_create(project_ctrl);
-    lv_obj_set_size(project_down_btn, 40, 36);
-    lv_obj_align(project_down_btn, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_add_event_cb(project_down_btn, project_down_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *project_down_label = lv_label_create(project_down_btn);
-    lv_label_set_text(project_down_label, "-");
-    lv_obj_set_style_text_font(project_down_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(project_down_label);
-
-    refresh_project_label();
-
     /* ---- SENS: three stacked trend charts, each a third of the page ----- */
 
-    /* Band layout: 180 / 3 = 60px each (caption + value/chart row), same
+    /* Band layout: 168 / 3 = 56px each (caption + value/chart row), same
      * for all three - ACCEL (y 0-60), TEMP (y 60-120), HUMIDITY (y
      * 120-180). Caption stays centered above the row (quantity, unit, fixed
      * axis range - see the chart globals' comment for why a caption
@@ -1987,15 +2022,15 @@ void status_deck_ui(lv_obj_t *scr)
      * mislabeled) to F before pushing it here or into temp_value_label. */
     lv_obj_t *temp_caption = lv_label_create(page_sens);
     lv_label_set_text(temp_caption, "TEMP (F)  60 - 90");
-    lv_obj_align(temp_caption, LV_ALIGN_TOP_MID, 0, 62);
+    lv_obj_align(temp_caption, LV_ALIGN_TOP_MID, 0, 58);
 
     temp_value_label = lv_label_create(page_sens);
     lv_label_set_text(temp_value_label, "--");
-    lv_obj_align(temp_value_label, LV_ALIGN_TOP_LEFT, 8, 90);
+    lv_obj_align(temp_value_label, LV_ALIGN_TOP_LEFT, 8, 86);
 
     temp_chart = lv_chart_create(page_sens);
     lv_obj_set_size(temp_chart, 250, 40);
-    lv_obj_align(temp_chart, LV_ALIGN_TOP_LEFT, 62, 78);
+    lv_obj_align(temp_chart, LV_ALIGN_TOP_LEFT, 62, 74);
     lv_chart_set_type(temp_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(temp_chart, HUMITURE_HISTORY_LEN);
     lv_chart_set_update_mode(temp_chart, LV_CHART_UPDATE_MODE_SHIFT);
@@ -2004,15 +2039,15 @@ void status_deck_ui(lv_obj_t *scr)
 
     lv_obj_t *humi_caption = lv_label_create(page_sens);
     lv_label_set_text(humi_caption, "HUMIDITY (%)  0 - 100");
-    lv_obj_align(humi_caption, LV_ALIGN_TOP_MID, 0, 122);
+    lv_obj_align(humi_caption, LV_ALIGN_TOP_MID, 0, 114);
 
     humi_value_label = lv_label_create(page_sens);
     lv_label_set_text(humi_value_label, "--");
-    lv_obj_align(humi_value_label, LV_ALIGN_TOP_LEFT, 8, 150);
+    lv_obj_align(humi_value_label, LV_ALIGN_TOP_LEFT, 8, 142);
 
     humi_chart = lv_chart_create(page_sens);
     lv_obj_set_size(humi_chart, 250, 40);
-    lv_obj_align(humi_chart, LV_ALIGN_TOP_LEFT, 62, 138);
+    lv_obj_align(humi_chart, LV_ALIGN_TOP_LEFT, 62, 130);
     lv_chart_set_type(humi_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(humi_chart, HUMITURE_HISTORY_LEN);
     lv_chart_set_update_mode(humi_chart, LV_CHART_UPDATE_MODE_SHIFT);
@@ -2028,8 +2063,8 @@ void status_deck_ui(lv_obj_t *scr)
      * leaving just enough room below for the button row - see
      * EVENT_DISPLAY_LINES's comment). */
     lv_obj_t *log_panel = lv_obj_create(page_log);
-    lv_obj_set_size(log_panel, 304, 112);
-    lv_obj_align(log_panel, LV_ALIGN_TOP_MID, 0, 6);
+    lv_obj_set_size(log_panel, 304, 104);
+    lv_obj_align(log_panel, LV_ALIGN_TOP_MID, 0, 2);
     lv_obj_set_style_pad_all(log_panel, 4, 0);
     lv_obj_clear_flag(log_panel, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -2044,7 +2079,7 @@ void status_deck_ui(lv_obj_t *scr)
      * label reparented in below. */
     lv_obj_t *log_btn_row = lv_obj_create(page_log);
     lv_obj_set_size(log_btn_row, 304, 48);
-    lv_obj_align(log_btn_row, LV_ALIGN_TOP_MID, 0, 126);
+    lv_obj_align(log_btn_row, LV_ALIGN_TOP_MID, 0, 112);
     lv_obj_set_style_pad_all(log_btn_row, 2, 0);
     lv_obj_set_style_pad_column(log_btn_row, 5, 0);
     lv_obj_clear_flag(log_btn_row, LV_OBJ_FLAG_SCROLLABLE);
@@ -2093,36 +2128,38 @@ void status_deck_ui(lv_obj_t *scr)
      * (not inside any page) - same size/position the old NET/SND/REC/CLR
      * row used, so the overlays below (already sized to cover it) still
      * cover exactly the same area. */
-    lv_obj_t *nav_row = lv_obj_create(scr);
-    lv_obj_set_size(nav_row, 304, 56);
-    lv_obj_align(nav_row, LV_ALIGN_BOTTOM_MID, 0, -4);
-    lv_obj_set_style_pad_all(nav_row, 2, 0);
-    lv_obj_set_style_pad_column(nav_row, 4, 0);
-    lv_obj_clear_flag(nav_row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(nav_row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(nav_row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
+    /* Four corners rather than a bottom bar. That frees the whole middle of
+     * the screen for the listening widget, which is what HOME is actually
+     * for, and it gives the fourth page somewhere to live now that TALK is
+     * no longer a button - tapping the microphone does that job.
+     *
+     * 62x34 in each corner leaves a clear band from y=34 to y=206 (172px),
+     * which is what the pages are sized to. SENS and LOG were compressed to
+     * suit (bands 60->56, log panel 112->104). */
     static const struct {
         const char *label;
+        lv_align_t align;
+        int x;
+        int y;
         lv_event_cb_t cb;
     } nav_button_defs[] = {
-        { "HOME", home_nav_button_cb },
-        { "SENS", sens_nav_button_cb },
-        { "LOG",  log_nav_button_cb },
-        { "TALK", talk_button_cb },
+        { "HOME", LV_ALIGN_TOP_LEFT,      2,  2, home_nav_button_cb },
+        { "SENS", LV_ALIGN_TOP_RIGHT,    -2,  2, sens_nav_button_cb },
+        { "LOG",  LV_ALIGN_BOTTOM_LEFT,   2, -2, log_nav_button_cb  },
+        { "SET",  LV_ALIGN_BOTTOM_RIGHT, -2, -2, set_nav_button_cb  },
     };
     for (size_t i = 0; i < sizeof(nav_button_defs) / sizeof(nav_button_defs[0]); i++) {
-        lv_obj_t *btn = lv_btn_create(nav_row);
-        lv_obj_set_size(btn, 68, 48);
+        lv_obj_t *btn = lv_btn_create(scr);
+        lv_obj_set_size(btn, 62, 34);
+        lv_obj_align(btn, nav_button_defs[i].align, nav_button_defs[i].x, nav_button_defs[i].y);
         lv_obj_add_event_cb(btn, nav_button_defs[i].cb, LV_EVENT_CLICKED, NULL);
 
         lv_obj_t *btn_label = lv_label_create(btn);
         lv_label_set_text(btn_label, nav_button_defs[i].label);
+        lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_12, 0);
         lv_obj_center(btn_label);
 
-        if (i < (size_t)APP_PAGE_COUNT) {
-            nav_buttons[i] = btn;
-        }
+        nav_buttons[i] = btn;
     }
 
     /* Command Window overlay (Mission 12): full-screen, built last so it
@@ -2147,19 +2184,19 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_set_style_text_font(cmd_title, &lv_font_montserrat_20, 0);
     lv_obj_align(cmd_title, LV_ALIGN_TOP_MID, 0, 4);
 
-    /* 2 columns x 2 rows (SEND/NOTE, GO/YES) via flex wrap - two 136px
-     * buttons plus an 8px gap is 280px, comfortably inside the 304px usable
-     * width. Not clickable (directive: touch activation isn't required
-     * this pass and none existed here before - clearing
-     * LV_OBJ_FLAG_CLICKABLE means a stray tap can't be confused with a
-     * real MultiNet recognition highlight). Each button now stacks a
-     * 3-word hint under the command word (see cmd_defs's own comment) -
-     * grid/button height grew from the original single-line 44px to fit
-     * that second line; 288x120 (was 288x96) still leaves comfortable room
-     * above cmd_status_label at the bottom of the 240px-tall overlay. */
+    /* 2 columns x 2 rows (SEND/NOTE, GO/YES) via flex wrap. Two 140px
+     * buttons plus an 8px gap is 288px, inside the 304px usable width.
+     *
+     * Grown for issue #13 - 140x74 buttons in a 296x158 grid, command word
+     * at montserrat_20, up from 136x56 in 288x120 at the default 14. Two
+     * rows of 74 plus the 8px gap is 156, so the grid still clears
+     * cmd_status_label along the bottom of the 240px overlay.
+     *
+     * Not clickable: clearing LV_OBJ_FLAG_CLICKABLE means a stray tap
+     * cannot be confused with a real MultiNet recognition highlight. */
     lv_obj_t *cmd_grid = lv_obj_create(cmd_overlay);
-    lv_obj_set_size(cmd_grid, 288, 120);
-    lv_obj_align(cmd_grid, LV_ALIGN_TOP_MID, 0, 32);
+    lv_obj_set_size(cmd_grid, 296, 158);
+    lv_obj_align(cmd_grid, LV_ALIGN_TOP_MID, 0, 30);
     lv_obj_set_style_pad_all(cmd_grid, 0, 0);
     lv_obj_set_style_pad_row(cmd_grid, 8, 0);
     lv_obj_set_style_pad_column(cmd_grid, 8, 0);
@@ -2171,7 +2208,7 @@ void status_deck_ui(lv_obj_t *scr)
 
     for (int i = 0; i < VOICE_COMMAND_COUNT; i++) {
         lv_obj_t *btn = lv_btn_create(cmd_grid);
-        lv_obj_set_size(btn, 136, 56);
+        lv_obj_set_size(btn, 140, 74);
         lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_style_bg_color(btn, CMD_BTN_INACTIVE_BG, 0);
@@ -2183,6 +2220,12 @@ void status_deck_ui(lv_obj_t *scr)
 
         lv_obj_t *btn_label = lv_label_create(btn);
         lv_label_set_text(btn_label, cmd_defs[i].label);
+        /* Issue #13, in Mike's own words captured through GO: "they should
+         * be bigger so that I can see them better. It doesn't occupy the
+         * whole screen right now." These are read at arm's length across a
+         * workshop during a 10s window, so the word is the thing that has
+         * to carry - the hint under it can stay small. */
+        lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_20, 0);
 
         lv_obj_t *btn_hint = lv_label_create(btn);
         lv_label_set_text(btn_hint, cmd_defs[i].hint);
@@ -2462,5 +2505,22 @@ void status_deck_ui(lv_obj_t *scr)
 
     /* Boots on HOME - hides SENS/LOG and sets the nav bar's initial
      * highlight, same as set_active_page does on every later press. */
+    /* Internal RAM is the scarce one on this board - PSRAM is 16MB, but
+     * Wi-Fi, task stacks, DMA and esp_timer all need DRAM. The UI grew
+     * enough in one go (a fourth page, four corner buttons, a larger
+     * widget) to push Wi-Fi's phy_track_pll_init over the edge:
+     *
+     *   ESP_ERROR_CHECK failed: ESP_ERR_NO_MEM at phy_common.c:118
+     *   func: phy_track_pll_init
+     *
+     * It rebooted and came up fine, which is worse than a hard failure -
+     * a marginal boot fails intermittently. Logged at the one point where
+     * the whole UI exists but Wi-Fi has not started, so the margin is
+     * visible rather than inferred after the next crash. */
+    ESP_LOGI(TAG, "UI built: internal heap %u free (%u largest block), PSRAM %u free",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
     set_active_page(APP_PAGE_HOME);
 }

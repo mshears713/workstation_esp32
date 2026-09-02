@@ -54,15 +54,20 @@
  * ~1.14x factor and the same proportional gaps between layers) so the
  * bottom edge reaches close to the nav bar - see the alignment call in
  * status_deck_ui() for the exact top/bottom math. */
-#define RING_DIAM 148
-#define RING_WIDTH 14
+/* Grown from 148. HOME carries nothing else now - title, uptime, Wi-Fi,
+ * volume and the project scroller all moved off - so the widget gets the
+ * page. 168 is the practical ceiling: the page band between the corner nav
+ * buttons is 172px tall. Every other dimension below scales with it, mic
+ * glyph included, so the proportions are unchanged. */
+#define RING_DIAM 168
+#define RING_WIDTH 16
 #define GLINT_SPAN_DEG 40 /* how much of the outer ring the highlight covers */
 
-#define INNER_RING_DIAM 114
+#define INNER_RING_DIAM 130
 #define INNER_RING_WIDTH 2
 
-#define HALO_DIAM 102
-#define DISC_DIAM 86
+#define HALO_DIAM 116
+#define DISC_DIAM 98
 
 /* ~7s per rotation - inside the requested 6-8s range. Linear path (constant
  * angular speed, no ease-in/out) is what keeps this reading as "calm" and
@@ -78,34 +83,34 @@
 static void build_mic_icon(lv_obj_t *disc)
 {
     lv_obj_t *head = lv_obj_create(disc);
-    lv_obj_set_size(head, 32, 46);
-    lv_obj_set_style_radius(head, 16, 0);
+    lv_obj_set_size(head, 36, 52);
+    lv_obj_set_style_radius(head, 18, 0);
     lv_obj_set_style_bg_color(head, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(head, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(head, 0, 0);
     lv_obj_clear_flag(head, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(head, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_align(head, LV_ALIGN_CENTER, 0, -16);
+    lv_obj_align(head, LV_ALIGN_CENTER, 0, -18);
 
     lv_obj_t *stand = lv_obj_create(disc);
-    lv_obj_set_size(stand, 6, 19);
+    lv_obj_set_size(stand, 7, 22);
     lv_obj_set_style_radius(stand, 3, 0);
     lv_obj_set_style_bg_color(stand, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(stand, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(stand, 0, 0);
     lv_obj_clear_flag(stand, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(stand, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_align(stand, LV_ALIGN_CENTER, 0, 16);
+    lv_obj_align(stand, LV_ALIGN_CENTER, 0, 18);
 
     lv_obj_t *base = lv_obj_create(disc);
-    lv_obj_set_size(base, 34, 6);
+    lv_obj_set_size(base, 39, 7);
     lv_obj_set_style_radius(base, 3, 0);
     lv_obj_set_style_bg_color(base, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(base, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(base, 0, 0);
     lv_obj_clear_flag(base, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(base, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_align(base, LV_ALIGN_CENTER, 0, 27);
+    lv_obj_align(base, LV_ALIGN_CENTER, 0, 31);
 }
 
 /* An lv_arc, not a plain circle + overlay: its background/indicator split
