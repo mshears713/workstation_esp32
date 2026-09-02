@@ -166,6 +166,7 @@
 #include "voice_control.h"
 #include "voice_listening_widget.h"
 #include "backend_health.h"
+#include "repo_selector.h"
 #include "notification_client.h"
 #include "remote_client.h"
 #include "audio_playback.h"
@@ -738,6 +739,9 @@ static lv_obj_t *cmd_buttons[VOICE_COMMAND_COUNT];
  * time - see render_recording_overlay() below. */
 static lv_obj_t *recording_overlay;
 static lv_obj_t *recording_title;
+static lv_obj_t *recording_send_btn;       /* hidden for auto-stop captures - see render_recording_overlay */
+static lv_obj_t *recording_repo_ctrl;      /* wide repository chooser along the bottom - GO only */
+static lv_obj_t *recording_repo_label;
 static lv_obj_t *recording_project_ctrl;   /* project selector on the recording overlay - NOTE only */
 static lv_obj_t *recording_project_label;
 static lv_obj_t *recording_id_label;
@@ -1068,6 +1072,12 @@ static void render_command_overlay(void)
 /* Defined further down with the rest of the project-selector helpers;
  * render_recording_overlay() needs it to keep the overlay's copy of the
  * label in step while a NOTE is recording. */
+/* Above this, a capture is long-form and ends when the operator says so
+ * (NOTE's cap is 20 minutes); at or below it, the capture stops itself.
+ * Used to decide whether the SEND button is meaningful and whether the
+ * counter should show a target. */
+#define AUTO_STOP_MAX_MS 60000
+
 static void refresh_project_label(void);
 
 static void render_recording_overlay(void)
@@ -1110,14 +1120,38 @@ static void render_recording_overlay(void)
     snprintf(id_buf, sizeof(id_buf), "ID: %s", vst.active_request_id);
     lv_label_set_text(recording_id_label, id_buf);
 
-    /* NOTE only. SEND is deliberately a quick capture with no selector
-     * (issue #3), and GO gets its own repository chooser in #8 rather than
-     * this project one. */
+    /* One scroller slot, two different lists depending on the command:
+     * NOTE picks an AI-OS project, GO picks a GitHub repository. SEND is
+     * deliberately a quick capture with no selector at all (issue #3).
+     *
+     * Sharing the widget rather than building a second one keeps the
+     * crowded overlay from getting worse, and the two are never wanted at
+     * the same time - a capture is one command or the other. */
     if (vst.state == VOICE_STATE_NOTE_ACTIVE) {
         lv_obj_clear_flag(recording_project_ctrl, LV_OBJ_FLAG_HIDDEN);
         refresh_project_label();
     } else {
         lv_obj_add_flag(recording_project_ctrl, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    if (vst.state == VOICE_STATE_GRAPH_ACTIVE) {
+        lv_obj_clear_flag(recording_repo_ctrl, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(recording_repo_label, repo_selector_get_label());
+    } else {
+        lv_obj_add_flag(recording_repo_ctrl, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    /* SEND ends a recording early. On a capture that ends itself there is
+     * nothing to end - the button is clutter, and on GO it also sits exactly
+     * where the repository chooser belongs. Driven off the target duration
+     * rather than the command, so it follows whatever a command's duration
+     * is set to rather than needing to be kept in sync by hand. */
+    bool auto_stop = ast_early.duration_target_ms > 0 &&
+                     ast_early.duration_target_ms <= AUTO_STOP_MAX_MS;
+    if (auto_stop) {
+        lv_obj_add_flag(recording_send_btn, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_clear_flag(recording_send_btn, LV_OBJ_FLAG_HIDDEN);
     }
 
     audio_cap_status_t ast;
@@ -1133,8 +1167,17 @@ static void render_recording_overlay(void)
         break;
     case AUDIO_CAP_RECORDING: {
         uint32_t s = ast.elapsed_ms / 1000;
-        /* Stall is shown in the title above, so this stays a clean timer. */
-        snprintf(status_buf, sizeof(status_buf), "%02u:%02u", (unsigned)(s / 60), (unsigned)(s % 60));
+        /* Stall is shown in the title above, so this stays a clean timer.
+         * On a bounded capture the target comes with it - "00:07 of 15s"
+         * tells the operator how long they have left to talk, which on an
+         * auto-stopping capture is the thing they actually need to know. */
+        if (ast.duration_target_ms > 0 && ast.duration_target_ms <= AUTO_STOP_MAX_MS) {
+            snprintf(status_buf, sizeof(status_buf), "%02u:%02u of %lus",
+                     (unsigned)(s / 60), (unsigned)(s % 60),
+                     (unsigned long)(ast.duration_target_ms / 1000));
+        } else {
+            snprintf(status_buf, sizeof(status_buf), "%02u:%02u", (unsigned)(s / 60), (unsigned)(s % 60));
+        }
         color = ast.uploader_behind ? lv_palette_main(LV_PALETTE_ORANGE)
                                     : lv_palette_main(LV_PALETTE_RED);
         recording = true;
@@ -1382,6 +1425,18 @@ static void refresh_project_label(void)
     if (recording_project_label) {
         lv_label_set_text(recording_project_label, PROJECT_OPTIONS[idx].text);
     }
+}
+
+static void recording_repo_next_cb(lv_event_t *e)
+{
+    repo_selector_next();
+    lv_label_set_text(recording_repo_label, repo_selector_get_label());
+}
+
+static void recording_repo_prev_cb(lv_event_t *e)
+{
+    repo_selector_prev();
+    lv_label_set_text(recording_repo_label, repo_selector_get_label());
 }
 
 static void project_up_button_cb(lv_event_t *e)
@@ -2212,6 +2267,50 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_set_style_text_font(rec_project_down_label, &lv_font_montserrat_20, 0);
     lv_obj_center(rec_project_down_label);
 
+    /* Repository chooser for GO. Deliberately a second, wider control rather
+     * than reusing the narrow left-edge one: GO auto-stops, so its SEND
+     * button is hidden and the whole bottom strip is free. Choosing where an
+     * issue gets filed is the one decision the operator makes during a GO,
+     * so it gets the prominent slot rather than a 44px sliver.
+     *
+     * Only ever visible for GO, so it cannot collide with the left-edge
+     * project selector NOTE uses. */
+    recording_repo_ctrl = lv_obj_create(recording_overlay);
+    lv_obj_set_size(recording_repo_ctrl, 268, 54);
+    lv_obj_align(recording_repo_ctrl, LV_ALIGN_BOTTOM_MID, 0, -18);
+    lv_obj_set_style_bg_color(recording_repo_ctrl, lv_palette_darken(LV_PALETTE_BLUE_GREY, 2), 0);
+    lv_obj_set_style_bg_opa(recording_repo_ctrl, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(recording_repo_ctrl, 8, 0);
+    lv_obj_set_style_border_width(recording_repo_ctrl, 2, 0);
+    lv_obj_set_style_border_color(recording_repo_ctrl, lv_palette_main(LV_PALETTE_BLUE), 0);
+    lv_obj_set_style_pad_all(recording_repo_ctrl, 0, 0);
+    lv_obj_clear_flag(recording_repo_ctrl, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(recording_repo_ctrl, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *repo_prev = lv_btn_create(recording_repo_ctrl);
+    lv_obj_set_size(repo_prev, 52, 46);
+    lv_obj_align(repo_prev, LV_ALIGN_LEFT_MID, 4, 0);
+    lv_obj_add_event_cb(repo_prev, recording_repo_prev_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *repo_prev_label = lv_label_create(repo_prev);
+    lv_label_set_text(repo_prev_label, "<");
+    lv_obj_set_style_text_font(repo_prev_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(repo_prev_label);
+
+    recording_repo_label = lv_label_create(recording_repo_ctrl);
+    lv_obj_set_style_text_font(recording_repo_label, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(recording_repo_label, lv_color_white(), 0);
+    lv_obj_align(recording_repo_label, LV_ALIGN_CENTER, 0, 0);
+    lv_label_set_text(recording_repo_label, "...");
+
+    lv_obj_t *repo_next = lv_btn_create(recording_repo_ctrl);
+    lv_obj_set_size(repo_next, 52, 46);
+    lv_obj_align(repo_next, LV_ALIGN_RIGHT_MID, -4, 0);
+    lv_obj_add_event_cb(repo_next, recording_repo_next_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *repo_next_label = lv_label_create(repo_next);
+    lv_label_set_text(repo_next_label, ">");
+    lv_obj_set_style_text_font(repo_next_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(repo_next_label);
+
     recording_status_label = lv_label_create(recording_overlay);
     lv_label_set_text(recording_status_label, "");
     lv_obj_set_style_text_font(recording_status_label, &lv_font_montserrat_20, 0);
@@ -2223,6 +2322,7 @@ void status_deck_ui(lv_obj_t *scr)
      * "ready to press" now instead of red/stop-styled, since CANCEL above
      * took over the "this is the destructive one" red styling. */
     lv_obj_t *send_btn = lv_btn_create(recording_overlay);
+    recording_send_btn = send_btn;
     lv_obj_set_size(send_btn, 220, 56);
     lv_obj_align(send_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
     lv_obj_set_style_bg_color(send_btn, lv_palette_main(LV_PALETTE_GREEN), 0);
@@ -2312,6 +2412,9 @@ void status_deck_ui(lv_obj_t *scr)
     /* After wifi_mgr_init above - the poll task reads wifi_mgr_get_status()
      * to avoid calling a backend it has no route to. */
     backend_health_init();
+    /* Also after wifi_mgr_init - it waits for ONLINE before its first fetch,
+     * and stops once the catalog loads. */
+    repo_selector_init();
 
     render_command_overlay();
     render_recording_overlay();

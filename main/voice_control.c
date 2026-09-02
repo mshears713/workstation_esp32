@@ -53,6 +53,8 @@
 #include "audio_capture.h"
 #include "voice_inbox_client.h"
 #include "entry_client.h"
+#include "issue_client.h"
+#include "repo_selector.h"
 #include "notification_client.h"
 #include "audio_playback.h"
 #include "voice_control.h"
@@ -484,6 +486,19 @@ static void run_go_command(void)
     s_status.active_request_id[sizeof(s_status.active_request_id) - 1] = '\0';
     portEXIT_CRITICAL(&s_mux);
 
+    /* Checked before the mic is taken, not after the recording: making
+     * someone speak for 15 seconds and only then saying "no repository" is
+     * the wrong order. Happens when the backend has never been reachable
+     * since boot, so the catalog never loaded. */
+    if (repo_selector_count() <= 0) {
+        ESP_LOGW(TAG, "GO refused: no repository catalog loaded");
+        notify(VOICE_STATE_GRAPH_ACTIVE, "GO - NO REPO LIST");
+        hold_result_draining(RESULT_DISPLAY_MS);
+        set_state(VOICE_STATE_LISTENING);
+        notify(VOICE_STATE_LISTENING, "LISTENING RESTORED");
+        return;
+    }
+
     char msg[40];
     snprintf(msg, sizeof(msg), "GO START %s", request_id);
     ESP_LOGI(TAG, "%s", msg);
@@ -492,9 +507,16 @@ static void run_go_command(void)
     s_mic_owner = MIC_OWNER_CAPTURE;
     voice_mic_close();
 
-    if (!audio_capture_start_note(request_id, AUDIO_NOTE_MAX_DURATION_MS,
-                                   entry_client_submit_chunk, entry_client_submit_finish,
-                                   entry_client_submit_cancel)) {
+    /* AUDIO_GO_DURATION_MS, not the long cap: GO is a quick "file this as an
+     * issue", the same shape as SEND. Auto-stop, no STOP press needed.
+     *
+     * issue_client rather than entry_client: GO used to record into the
+     * van build log / entries pipeline. That pipeline still works and is
+     * kept deliberately - see the dormant-functionality section in the
+     * README - it simply has no trigger now. */
+    if (!audio_capture_start_note(request_id, AUDIO_GO_DURATION_MS,
+                                   issue_client_submit_chunk, issue_client_submit_finish,
+                                   issue_client_submit_cancel)) {
         /* Only realistic cause: audio_capture's own busy-guard (a capture
          * already in flight, e.g. a manual REC press racing the wake word)
          * or its init failed independently of us. Either way, nothing to
@@ -541,7 +563,15 @@ static void run_go_command(void)
          * architect/Notion processing after accepting the upload; this
          * firmware doesn't poll for that result, so it can only truthfully
          * claim the upload itself was accepted. */
-        snprintf(result_msg, sizeof(result_msg), "GO SENT %s", request_id);
+        uint32_t issue_number = issue_client_get_last_issue();
+        if (issue_number > 0) {
+            /* "ISSUE #42", not "SENT": this endpoint waits for the issue to
+             * actually exist, so the device can report the thing that was
+             * created rather than that an upload was accepted. */
+            snprintf(result_msg, sizeof(result_msg), "GO ISSUE #%lu", (unsigned long)issue_number);
+        } else {
+            snprintf(result_msg, sizeof(result_msg), "GO SENT %s", request_id);
+        }
     }
     ESP_LOGI(TAG, "go complete: id=%s bytes=%lu elapsed=%lums -> %s",
              request_id, (unsigned long)st.bytes_captured, (unsigned long)st.elapsed_ms, result_msg);

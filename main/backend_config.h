@@ -114,6 +114,15 @@
 
 #define ENTRY_UPLOAD_PATH "/api/v1/entries"
 
+/* GO's destination: chunk/finish exactly like the other kinds, but /finish
+ * transcribes and creates the GitHub issue before it answers, so the device
+ * gets the issue number back instead of having to poll. */
+#define ISSUE_UPLOAD_PATH "/api/v1/issues"
+
+/* The approved projects and repositories the device may select, so adding a
+ * target is a backend edit rather than a reflash. */
+#define PROJECTS_PATH "/api/v1/projects"
+
 #define NOTIFICATIONS_BASE_PATH "/api/v1/notifications"
 
 #define REMOTE_BASE_PATH "/api/v1/remote"

@@ -67,6 +67,12 @@ typedef enum {
  * enforced by the recording loop, NOT a buffer-size limit - chunked
  * streaming means 20 minutes of audio never has to fit in RAM. */
 #define AUDIO_SEND_DURATION_MS 15000
+
+/* GO is the same shape as SEND - a quick capture that ends by itself - just
+ * bound for a GitHub issue instead of the Voice Inbox. Starting equal to
+ * SEND deliberately: 15s is what real use settled on for "say one thing",
+ * and #8 says to tune this from actual use rather than guessing up front. */
+#define AUDIO_GO_DURATION_MS 15000
 #define AUDIO_NOTE_MAX_DURATION_MS 1200000
 
 #define AUDIO_CAP_ARTIFACT_NAME_LEN 24
