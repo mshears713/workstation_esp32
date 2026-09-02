@@ -135,6 +135,15 @@ void voice_control_get_status(voice_status_t *out);
  */
 void voice_control_manual_wake(void);
 
+/**
+ * Runs a command as if it had been spoken, from a tap on its tile in the
+ * command window. Safe from the LVGL task: it only raises a flag that
+ * detect_task consumes, so the mic handoff still happens on the task that
+ * owns it. Ignored unless a command window is open, and ignored for an
+ * unknown id.
+ */
+void voice_control_manual_command(voice_command_id_t id);
+
 #ifdef __cplusplus
 }
 #endif

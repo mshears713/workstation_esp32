@@ -145,6 +145,19 @@ static volatile mic_owner_t s_mic_owner = MIC_OWNER_LISTENING;
  * already open is not lost - it just waits for the next opportunity. */
 static volatile bool s_manual_wake_requested = false;
 
+/* Same pattern, for a command chosen by tapping its tile in the command
+ * window rather than saying it. Set on the LVGL task, consumed by
+ * detect_task at the one point it already dispatches a recognized command,
+ * so a tap and a spoken word take the identical path - including the mic
+ * handoff, which must not happen from the LVGL task.
+ *
+ * The tiles were deliberately non-clickable when the command window was
+ * new, so a stray touch could not be mistaken for a MultiNet hit. That was
+ * the right call then; now the window is the only screen that ignores
+ * touch, and a deliberate tap is a reasonable way to drive a command when
+ * the room is loud or a word will not take. */
+static volatile voice_command_id_t s_manual_command_requested = VOICE_CMD_NONE;
+
 static const esp_afe_sr_iface_t *s_afe_handle = NULL;
 static esp_afe_sr_data_t *s_afe_data = NULL;
 static srmodel_list_t *s_models = NULL; /* scanned once in voice_control_init, reused by detect_task */
@@ -773,6 +786,38 @@ static int register_commands(void)
     return registered;
 }
 
+/* Runs a recognized command. Shared by speech recognition and by a tapped
+ * tile, so the two cannot drift apart - both end up doing the mic handoff
+ * on this task, which is the part that must not happen from the LVGL task.
+ * Each run_*_command() owns its own result display and return to LISTENING. */
+static void dispatch_command(const voice_command_def_t *def)
+{
+    if (def->id == VOICE_CMD_SEND) {
+        run_send_command();
+        return;
+    }
+    if (def->id == VOICE_CMD_NOTE) {
+        run_note_command();
+        return;
+    }
+    if (def->id == VOICE_CMD_GO) {
+        run_go_command();
+        return;
+    }
+    if (def->id == VOICE_CMD_YES) {
+        notification_status_t nst;
+        notification_client_get_status(&nst);
+        if (nst.pending) {
+            run_notification_command(nst.notification_id);
+            return;
+        }
+        /* Nothing pending - YES is recognition-only, handled below. */
+    }
+
+    set_command_recognized(def);
+    hold_result_draining(COMMAND_HIGHLIGHT_MS);
+}
+
 static void detect_task(void *arg)
 {
     esp_afe_sr_data_t *afe_data = arg;
@@ -903,6 +948,20 @@ static void detect_task(void *arg)
         esp_mn_state_t mn_state = multinet->detect(model_data, res->data);
 
         if (mn_state == ESP_MN_STATE_DETECTING) {
+            /* A tapped tile short-circuits the wait, taking the same path a
+             * recognized word does from here on. */
+            if (s_manual_command_requested != VOICE_CMD_NONE) {
+                voice_command_id_t tapped = s_manual_command_requested;
+                s_manual_command_requested = VOICE_CMD_NONE;
+                in_command_window = false;
+                const voice_command_def_t *tdef = command_def_for_id((int)tapped);
+                if (tdef) {
+                    char tmsg[40];
+                    snprintf(tmsg, sizeof(tmsg), "CMD %s (TAP)", tdef->label);
+                    notify(VOICE_STATE_COMMAND_RECOGNIZED, tmsg);
+                    dispatch_command(tdef);
+                }
+            }
             continue;
         }
 
@@ -931,33 +990,7 @@ static void detect_task(void *arg)
                 snprintf(msg, sizeof(msg), "CMD %s id=%d p=%.2f", def->label, primary_id, (double)primary_prob);
                 notify(VOICE_STATE_COMMAND_RECOGNIZED, msg);
 
-                if (def->id == VOICE_CMD_SEND) {
-                    run_send_command(); /* owns its own result display + return to LISTENING */
-                    continue;
-                }
-                if (def->id == VOICE_CMD_NOTE) {
-                    run_note_command(); /* owns its own result display + return to LISTENING */
-                    continue;
-                }
-                if (def->id == VOICE_CMD_GO) {
-                    run_go_command(); /* owns its own result display + return to LISTENING */
-                    continue;
-                }
-                if (def->id == VOICE_CMD_YES) {
-                    notification_status_t nst;
-                    notification_client_get_status(&nst);
-                    if (nst.pending) {
-                        run_notification_command(nst.notification_id); /* owns its own result display + return to LISTENING */
-                        continue;
-                    }
-                    /* fall through: nothing pending, YES stays recognition-only below */
-                }
-
-                /* YES with nothing pending (or any other recognized command
-                 * reaching here, which per COMMAND_DEFS is only ever YES):
-                 * recognition-only. */
-                set_command_recognized(def);
-                hold_result_draining(COMMAND_HIGHLIGHT_MS);
+                dispatch_command(def);
             } else {
                 ESP_LOGW(TAG, "recognized command_id=%d not one of the four registered commands", primary_id);
                 set_state(VOICE_STATE_UNRECOGNIZED);
@@ -1050,4 +1083,11 @@ void voice_control_get_status(voice_status_t *out)
 void voice_control_manual_wake(void)
 {
     s_manual_wake_requested = true;
+}
+
+void voice_control_manual_command(voice_command_id_t id)
+{
+    if (command_def_for_id((int)id)) {
+        s_manual_command_requested = id;
+    }
 }

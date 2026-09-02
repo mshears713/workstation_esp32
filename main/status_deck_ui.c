@@ -1030,21 +1030,22 @@ static void audio_ui_timer_cb(lv_timer_t *t)
  * (keeps the two decoupled in case a future pass reorders the grid).
  *
  * `hint` (added after Mike said he kept forgetting which word does what):
- * three words, one line at montserrat_12, summarizing where each command's
- * recording actually goes - SEND (note_client.c -> app/voice/graph.py's
- * interpret/extract-actions pipeline), NOTE (voice_inbox_client.c -> Notion
- * "Voice Inbox", unprocessed), GO (entry_client.c -> entry-architect ->
- * Notion Sources + Van Build Log), YES (confirms/answers a pending spoken
- * notification, not a new recording at all). */
+ * three words, one line at montserrat_12, saying where each command's
+ * recording actually ends up. Kept current deliberately - these went stale
+ * once already and a wrong hint is worse than none:
+ *   SEND - 15s auto-stop  -> Notion Voice Inbox
+ *   NOTE - long, manual   -> Notion Voice Inbox, with a project
+ *   GO   - 15s auto-stop  -> a GitHub issue on the selected repository
+ *   YES  - not a recording; answers a pending spoken notification */
 static const struct {
     voice_command_id_t id;
     const char *label;
     const char *hint;
 } cmd_defs[VOICE_COMMAND_COUNT] = {
-    { VOICE_CMD_SEND, "SEND", "Quick task note" },
-    { VOICE_CMD_NOTE, "NOTE", "Raw Notion inbox" },
-    { VOICE_CMD_GO,   "GO",   "Van build log" },
-    { VOICE_CMD_YES,  "YES",  "Reply to alert" },
+    { VOICE_CMD_SEND, "SEND", "Quick voice note" },
+    { VOICE_CMD_NOTE, "NOTE", "Long note + project" },
+    { VOICE_CMD_GO,   "GO",   "New GitHub issue" },
+    { VOICE_CMD_YES,  "YES",  "Answer a message" },
 };
 
 #define CMD_BTN_INACTIVE_BG lv_palette_darken(LV_PALETTE_GREY, 2)
@@ -1618,6 +1619,15 @@ static void set_nav_button_cb(lv_event_t *e)
     set_active_page(APP_PAGE_SET);
 }
 
+/* A tapped command tile. The command id rides in the event user data rather
+ * than being looked up from the button, so the grid can be reordered without
+ * this needing to know. */
+static void cmd_tile_cb(lv_event_t *e)
+{
+    voice_command_id_t id = (voice_command_id_t)(intptr_t)lv_event_get_user_data(e);
+    voice_control_manual_command(id);
+}
+
 static void talk_button_cb(lv_event_t *e)
 {
     voice_control_manual_wake();
@@ -1863,9 +1873,10 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_t *pages_init[APP_PAGE_COUNT];
     for (int i = 0; i < APP_PAGE_COUNT; i++) {
         lv_obj_t *page = lv_obj_create(scr);
-        /* The band between the corner nav buttons (34px tall each). */
-        lv_obj_set_size(page, 320, 172);
-        lv_obj_align(page, LV_ALIGN_TOP_LEFT, 0, 34);
+        /* Full screen. The corner buttons float on top; each page is
+         * responsible for keeping its own content clear of them. */
+        lv_obj_set_size(page, 320, 240);
+        lv_obj_align(page, LV_ALIGN_TOP_LEFT, 0, 0);
         lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(page, 0, 0);
         lv_obj_set_style_radius(page, 0, 0);
@@ -1909,29 +1920,29 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_t *set_title = lv_label_create(page_set);
     lv_label_set_text(set_title, "SETTINGS");
     lv_obj_set_style_text_color(set_title, lv_palette_main(LV_PALETTE_BLUE), 0);
-    lv_obj_align(set_title, LV_ALIGN_TOP_MID, 0, 4);
+    lv_obj_align(set_title, LV_ALIGN_TOP_MID, 0, 12);
 
     telemetry_label = lv_label_create(page_set);
-    lv_obj_align(telemetry_label, LV_ALIGN_TOP_LEFT, 8, 30);
+    lv_obj_align(telemetry_label, LV_ALIGN_TOP_LEFT, 8, 52);
 
     conn_label = lv_label_create(page_set);
-    lv_obj_align(conn_label, LV_ALIGN_TOP_RIGHT, -8, 30);
+    lv_obj_align(conn_label, LV_ALIGN_TOP_RIGHT, -8, 52);
     lv_label_set_text(conn_label, "WIFI: OFF");
 
     /* The widget on HOME carries backend reachability as motion and colour,
      * which is right for a glance across a room but says nothing about
      * latency. Spelling it out here is what a settings page is for. */
     settings_api_label = lv_label_create(page_set);
-    lv_obj_align(settings_api_label, LV_ALIGN_TOP_LEFT, 8, 54);
+    lv_obj_align(settings_api_label, LV_ALIGN_TOP_LEFT, 8, 76);
     lv_label_set_text(settings_api_label, "API: ?");
 
     lv_obj_t *vol_caption = lv_label_create(page_set);
     lv_label_set_text(vol_caption, "VOLUME");
-    lv_obj_align(vol_caption, LV_ALIGN_TOP_LEFT, 8, 90);
+    lv_obj_align(vol_caption, LV_ALIGN_TOP_LEFT, 8, 110);
 
     lv_obj_t *vol_down = lv_btn_create(page_set);
     lv_obj_set_size(vol_down, 46, 34);
-    lv_obj_align(vol_down, LV_ALIGN_TOP_LEFT, 132, 82);
+    lv_obj_align(vol_down, LV_ALIGN_TOP_LEFT, 132, 102);
     lv_obj_add_event_cb(vol_down, volume_down_button_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *vol_down_label = lv_label_create(vol_down);
     lv_label_set_text(vol_down_label, "-");
@@ -1940,11 +1951,11 @@ void status_deck_ui(lv_obj_t *scr)
 
     volume_label = lv_label_create(page_set);
     lv_obj_set_style_text_font(volume_label, &lv_font_montserrat_20, 0);
-    lv_obj_align(volume_label, LV_ALIGN_TOP_LEFT, 194, 86);
+    lv_obj_align(volume_label, LV_ALIGN_TOP_LEFT, 194, 106);
 
     lv_obj_t *vol_up = lv_btn_create(page_set);
     lv_obj_set_size(vol_up, 46, 34);
-    lv_obj_align(vol_up, LV_ALIGN_TOP_RIGHT, -8, 82);
+    lv_obj_align(vol_up, LV_ALIGN_TOP_RIGHT, -8, 102);
     lv_obj_add_event_cb(vol_up, volume_up_button_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *vol_up_label = lv_label_create(vol_up);
     lv_label_set_text(vol_up_label, "+");
@@ -1953,11 +1964,11 @@ void status_deck_ui(lv_obj_t *scr)
 
     lv_obj_t *repo_caption = lv_label_create(page_set);
     lv_label_set_text(repo_caption, "GO FILES TO");
-    lv_obj_align(repo_caption, LV_ALIGN_TOP_LEFT, 8, 134);
+    lv_obj_align(repo_caption, LV_ALIGN_TOP_LEFT, 8, 154);
 
     lv_obj_t *set_repo_prev = lv_btn_create(page_set);
     lv_obj_set_size(set_repo_prev, 46, 34);
-    lv_obj_align(set_repo_prev, LV_ALIGN_TOP_LEFT, 132, 126);
+    lv_obj_align(set_repo_prev, LV_ALIGN_TOP_LEFT, 132, 146);
     lv_obj_add_event_cb(set_repo_prev, recording_repo_prev_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *set_repo_prev_label = lv_label_create(set_repo_prev);
     lv_label_set_text(set_repo_prev_label, "<");
@@ -1965,12 +1976,12 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_center(set_repo_prev_label);
 
     settings_repo_label = lv_label_create(page_set);
-    lv_obj_align(settings_repo_label, LV_ALIGN_TOP_LEFT, 186, 134);
+    lv_obj_align(settings_repo_label, LV_ALIGN_TOP_LEFT, 186, 154);
     lv_label_set_text(settings_repo_label, "...");
 
     lv_obj_t *set_repo_next = lv_btn_create(page_set);
     lv_obj_set_size(set_repo_next, 46, 34);
-    lv_obj_align(set_repo_next, LV_ALIGN_TOP_RIGHT, -8, 126);
+    lv_obj_align(set_repo_next, LV_ALIGN_TOP_RIGHT, -8, 146);
     lv_obj_add_event_cb(set_repo_next, recording_repo_next_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *set_repo_next_label = lv_label_create(set_repo_next);
     lv_label_set_text(set_repo_next_label, ">");
@@ -1981,7 +1992,8 @@ void status_deck_ui(lv_obj_t *scr)
 
     /* ---- SENS: three stacked trend charts, each a third of the page ----- */
 
-    /* Band layout: 168 / 3 = 56px each (caption + value/chart row), same
+    /* Band layout: 144 / 3 = 48px each, inside y=48..192 to clear the
+     * corner nav buttons. Same
      * for all three - ACCEL (y 0-60), TEMP (y 60-120), HUMIDITY (y
      * 120-180). Caption stays centered above the row (quantity, unit, fixed
      * axis range - see the chart globals' comment for why a caption
@@ -1990,11 +2002,11 @@ void status_deck_ui(lv_obj_t *scr)
      * chart alone spanning the full 304px width. */
     lv_obj_t *accel_caption = lv_label_create(page_sens);
     lv_label_set_text(accel_caption, "ACCEL (G)  0.50 - 1.50");
-    lv_obj_align(accel_caption, LV_ALIGN_TOP_MID, 0, 2);
+    lv_obj_align(accel_caption, LV_ALIGN_TOP_MID, 0, 48);
 
     accel_value_label = lv_label_create(page_sens);
     lv_label_set_text(accel_value_label, "--");
-    lv_obj_align(accel_value_label, LV_ALIGN_TOP_LEFT, 8, 30);
+    lv_obj_align(accel_value_label, LV_ALIGN_TOP_LEFT, 8, 74);
 
     /* Acceleration-magnitude trend line, zoomed to 0.50-1.50g (was a fixed
      * 0.00-4.00g). At rest the board reads ~1.00g regardless of
@@ -2006,8 +2018,8 @@ void status_deck_ui(lv_obj_t *scr)
      * a static range, same tradeoff as before, just recentered on the
      * value that actually matters. */
     chart = lv_chart_create(page_sens);
-    lv_obj_set_size(chart, 250, 40);
-    lv_obj_align(chart, LV_ALIGN_TOP_LEFT, 62, 18);
+    lv_obj_set_size(chart, 250, 32);
+    lv_obj_align(chart, LV_ALIGN_TOP_LEFT, 62, 62);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(chart, SENSOR_HISTORY_LEN);
     lv_chart_set_update_mode(chart, LV_CHART_UPDATE_MODE_SHIFT);
@@ -2022,15 +2034,15 @@ void status_deck_ui(lv_obj_t *scr)
      * mislabeled) to F before pushing it here or into temp_value_label. */
     lv_obj_t *temp_caption = lv_label_create(page_sens);
     lv_label_set_text(temp_caption, "TEMP (F)  60 - 90");
-    lv_obj_align(temp_caption, LV_ALIGN_TOP_MID, 0, 58);
+    lv_obj_align(temp_caption, LV_ALIGN_TOP_MID, 0, 96);
 
     temp_value_label = lv_label_create(page_sens);
     lv_label_set_text(temp_value_label, "--");
-    lv_obj_align(temp_value_label, LV_ALIGN_TOP_LEFT, 8, 86);
+    lv_obj_align(temp_value_label, LV_ALIGN_TOP_LEFT, 8, 122);
 
     temp_chart = lv_chart_create(page_sens);
-    lv_obj_set_size(temp_chart, 250, 40);
-    lv_obj_align(temp_chart, LV_ALIGN_TOP_LEFT, 62, 74);
+    lv_obj_set_size(temp_chart, 250, 32);
+    lv_obj_align(temp_chart, LV_ALIGN_TOP_LEFT, 62, 110);
     lv_chart_set_type(temp_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(temp_chart, HUMITURE_HISTORY_LEN);
     lv_chart_set_update_mode(temp_chart, LV_CHART_UPDATE_MODE_SHIFT);
@@ -2039,15 +2051,15 @@ void status_deck_ui(lv_obj_t *scr)
 
     lv_obj_t *humi_caption = lv_label_create(page_sens);
     lv_label_set_text(humi_caption, "HUMIDITY (%)  0 - 100");
-    lv_obj_align(humi_caption, LV_ALIGN_TOP_MID, 0, 114);
+    lv_obj_align(humi_caption, LV_ALIGN_TOP_MID, 0, 144);
 
     humi_value_label = lv_label_create(page_sens);
     lv_label_set_text(humi_value_label, "--");
-    lv_obj_align(humi_value_label, LV_ALIGN_TOP_LEFT, 8, 142);
+    lv_obj_align(humi_value_label, LV_ALIGN_TOP_LEFT, 8, 170);
 
     humi_chart = lv_chart_create(page_sens);
-    lv_obj_set_size(humi_chart, 250, 40);
-    lv_obj_align(humi_chart, LV_ALIGN_TOP_LEFT, 62, 130);
+    lv_obj_set_size(humi_chart, 250, 32);
+    lv_obj_align(humi_chart, LV_ALIGN_TOP_LEFT, 62, 158);
     lv_chart_set_type(humi_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(humi_chart, HUMITURE_HISTORY_LEN);
     lv_chart_set_update_mode(humi_chart, LV_CHART_UPDATE_MODE_SHIFT);
@@ -2063,8 +2075,8 @@ void status_deck_ui(lv_obj_t *scr)
      * leaving just enough room below for the button row - see
      * EVENT_DISPLAY_LINES's comment). */
     lv_obj_t *log_panel = lv_obj_create(page_log);
-    lv_obj_set_size(log_panel, 304, 104);
-    lv_obj_align(log_panel, LV_ALIGN_TOP_MID, 0, 2);
+    lv_obj_set_size(log_panel, 304, 88);
+    lv_obj_align(log_panel, LV_ALIGN_TOP_MID, 0, 50);
     lv_obj_set_style_pad_all(log_panel, 4, 0);
     lv_obj_clear_flag(log_panel, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -2078,8 +2090,8 @@ void status_deck_ui(lv_obj_t *scr)
      * narrowed 68px -> 54px) to leave room on the right for the FPS/CPU
      * label reparented in below. */
     lv_obj_t *log_btn_row = lv_obj_create(page_log);
-    lv_obj_set_size(log_btn_row, 304, 48);
-    lv_obj_align(log_btn_row, LV_ALIGN_TOP_MID, 0, 112);
+    lv_obj_set_size(log_btn_row, 304, 44);
+    lv_obj_align(log_btn_row, LV_ALIGN_TOP_MID, 0, 144);
     lv_obj_set_style_pad_all(log_btn_row, 2, 0);
     lv_obj_set_style_pad_column(log_btn_row, 5, 0);
     lv_obj_clear_flag(log_btn_row, LV_OBJ_FLAG_SCROLLABLE);
@@ -2133,9 +2145,12 @@ void status_deck_ui(lv_obj_t *scr)
      * for, and it gives the fourth page somewhere to live now that TALK is
      * no longer a button - tapping the microphone does that job.
      *
-     * 62x34 in each corner leaves a clear band from y=34 to y=206 (172px),
-     * which is what the pages are sized to. SENS and LOG were compressed to
-     * suit (bands 60->56, log panel 112->104). */
+     * 84x46 in each corner, and the pages are now full-screen underneath
+     * rather than squeezed into the gap between them. That matters because
+     * HOME is a circle: the corners of its bounding box are transparent, so
+     * big corner buttons and a big microphone can share the same 320x240
+     * without touching. SENS and LOG do have rectangular content, so they
+     * keep theirs inside y=48..192 by their own offsets. */
     static const struct {
         const char *label;
         lv_align_t align;
@@ -2150,7 +2165,7 @@ void status_deck_ui(lv_obj_t *scr)
     };
     for (size_t i = 0; i < sizeof(nav_button_defs) / sizeof(nav_button_defs[0]); i++) {
         lv_obj_t *btn = lv_btn_create(scr);
-        lv_obj_set_size(btn, 62, 34);
+        lv_obj_set_size(btn, 84, 46);
         lv_obj_align(btn, nav_button_defs[i].align, nav_button_defs[i].x, nav_button_defs[i].y);
         lv_obj_add_event_cb(btn, nav_button_defs[i].cb, LV_EVENT_CLICKED, NULL);
 
@@ -2209,7 +2224,16 @@ void status_deck_ui(lv_obj_t *scr)
     for (int i = 0; i < VOICE_COMMAND_COUNT; i++) {
         lv_obj_t *btn = lv_btn_create(cmd_grid);
         lv_obj_set_size(btn, 140, 74);
-        lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+        /* Tappable now. These were deliberately non-clickable when the
+         * command window was new, so a stray touch could not be mistaken
+         * for a MultiNet hit - the right call then, but it left this as the
+         * one screen that ignores touch entirely, which reads as broken.
+         *
+         * The tap does not run anything here: it raises a flag that
+         * detect_task consumes and dispatches exactly as it would a spoken
+         * word, because the mic handoff must not happen on the LVGL task. */
+        lv_obj_add_event_cb(btn, cmd_tile_cb, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)cmd_defs[i].id);
         lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_style_bg_color(btn, CMD_BTN_INACTIVE_BG, 0);
         lv_obj_set_style_border_width(btn, 2, 0);
@@ -2221,11 +2245,11 @@ void status_deck_ui(lv_obj_t *scr)
         lv_obj_t *btn_label = lv_label_create(btn);
         lv_label_set_text(btn_label, cmd_defs[i].label);
         /* Issue #13, in Mike's own words captured through GO: "they should
-         * be bigger so that I can see them better. It doesn't occupy the
-         * whole screen right now." These are read at arm's length across a
-         * workshop during a 10s window, so the word is the thing that has
-         * to carry - the hint under it can stay small. */
-        lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_20, 0);
+         * be bigger so that I can see them better." 20 was still too small
+         * on the device - at montserrat_32 a four-letter word nearly fills
+         * the 140px tile, which is the intent. The hint under it stays at
+         * 12: it is a reminder, read once, not from across the room. */
+        lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_32, 0);
 
         lv_obj_t *btn_hint = lv_label_create(btn);
         lv_label_set_text(btn_hint, cmd_defs[i].hint);

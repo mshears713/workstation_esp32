@@ -50,24 +50,20 @@
 
 #include "voice_listening_widget.h"
 
-/* Mission 19: grown from 130 to 148 (all inner layers scaled with it, same
- * ~1.14x factor and the same proportional gaps between layers) so the
- * bottom edge reaches close to the nav bar - see the alignment call in
- * status_deck_ui() for the exact top/bottom math. */
-/* Grown from 148. HOME carries nothing else now - title, uptime, Wi-Fi,
- * volume and the project scroller all moved off - so the widget gets the
- * page. 168 is the practical ceiling: the page band between the corner nav
- * buttons is 172px tall. Every other dimension below scales with it, mic
- * glyph included, so the proportions are unchanged. */
-#define RING_DIAM 168
+/* 130 -> 148 (Mission 19) -> 156 now. HOME carries nothing else any more -
+ * title, uptime, Wi-Fi, volume and the project scroller all moved off or to
+ * SETTINGS - so the widget gets the page. 172 fits the full 240px screen with margin - the corner buttons overlap
+ * only the transparent corners of its bounding box, never the circle. Every layer below
+ * scales with it, mic glyph included, so the proportions are unchanged. */
+#define RING_DIAM 172
 #define RING_WIDTH 16
 #define GLINT_SPAN_DEG 40 /* how much of the outer ring the highlight covers */
 
-#define INNER_RING_DIAM 130
+#define INNER_RING_DIAM 132
 #define INNER_RING_WIDTH 2
 
-#define HALO_DIAM 116
-#define DISC_DIAM 98
+#define HALO_DIAM 118
+#define DISC_DIAM 100
 
 /* ~7s per rotation - inside the requested 6-8s range. Linear path (constant
  * angular speed, no ease-in/out) is what keeps this reading as "calm" and
@@ -77,9 +73,8 @@
 
 /* Capsule + stand + base, all parented directly to the disc and centered on
  * it - so they track the disc's own box with no separate alignment math.
- * Scaled with the rest of Mission 19's resize; the disc (86px) still has
- * enough radius to hold them (the icon's own extent is ~39px from center,
- * disc radius is 43px). */
+ * Scaled with the ring; the 92px disc still has enough radius to hold them
+ * (the icon extends ~35px from center, disc radius is 46px). */
 static void build_mic_icon(lv_obj_t *disc)
 {
     lv_obj_t *head = lv_obj_create(disc);

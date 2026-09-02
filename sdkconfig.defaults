@@ -56,3 +56,20 @@ CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 # keeps almost everything internal; 4KB lets medium buffers move to PSRAM
 # while small, latency-sensitive allocations still stay put.
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+
+# LCD draw buffer: 320 x N x 2 bytes, and it needs DMA-capable memory, so it
+# lands in internal RAM where MultiNet also needs to live. At 100 rows that
+# is 64,000 bytes of the ~231KB the board has.
+#
+# Halved to 50 rows (32,000 bytes) after the UI restructure left only 15,487
+# bytes of internal heap free and MultiNet7 could no longer be created - the
+# voice pipeline silently never came up. LVGL renders in more, smaller
+# flushes as a result; on a 320x240 UI that updates a few labels a second
+# that is not a cost worth 32KB.
+CONFIG_BSP_LCD_DRAW_BUF_HEIGHT=50
+
+# Command-window tiles are read at arm's length during a 10s window, so the
+# word wants to nearly fill its 140x74 tile - 20 was still small. Font data
+# lives in flash rodata, not RAM, so this costs image size rather than the
+# internal heap that MultiNet needs.
+CONFIG_LV_FONT_MONTSERRAT_32=y
