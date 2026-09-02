@@ -88,6 +88,11 @@ static const voice_command_def_t COMMAND_DEFS[] = {
  * MultiNet allows for a command before ESP_MN_STATE_TIMEOUT. ~10s (Mission
  * 12), to give Mike comfortable room to hear the wake chime, glance at the
  * screen, and speak one of four words rather than one fixed phrase. */
+/* Fetches between forced yields inside the command window. 10 at ~30
+ * fetches/sec is 3 yields a second - ample for IDLE1, which only has to run
+ * once per 5s watchdog period. */
+#define DETECT_YIELD_EVERY 10
+
 #define COMMAND_WINDOW_MS 10000
 
 /* YES highlight hold ("approximately one to two seconds" per the
@@ -242,6 +247,38 @@ static void voice_mic_close(void)
  * the mic, wait for it to finish, reopen listening), now around
  * audio_capture_start_note() instead of plain audio_capture_start(). STOP
  * (status_deck_ui.c) calls audio_capture_stop() directly, not through here. */
+/* Holds a result on screen without letting the AFE ring back up.
+ *
+ * The plain vTaskDelay() this replaces is the cause of issue #9. By this
+ * point the mic has been handed back, so feed_task is filling the AFE ring
+ * again - but detect_task is the only thing that ever calls fetch(), and it
+ * was asleep for the whole hold. Five seconds of feeding with nothing
+ * draining overruns the ring ("Ringbuffer of AFE(FEED) is full", 121 of them
+ * measured after one 20-minute NOTE) and leaves the pipeline seconds behind
+ * real time when it wakes.
+ *
+ * Fetching and discarding for the same duration keeps the ring drained and
+ * the pipeline at real time. Nothing is lost: audio spoken while a result is
+ * being displayed is not wanted anyway.
+ *
+ * The 5ms floor per iteration is a safety net, not pacing. fetch() is
+ * supposed to block until a chunk is ready, which paces this loop by itself;
+ * the floor only matters if it ever stops blocking, so that this can never
+ * become the spin it is meant to cure.
+ */
+static void hold_result_draining(uint32_t hold_ms)
+{
+    int64_t deadline_us = esp_timer_get_time() + (int64_t)hold_ms * 1000;
+    while (esp_timer_get_time() < deadline_us) {
+        int64_t t0 = esp_timer_get_time();
+        afe_fetch_result_t *res = s_afe_handle->fetch(s_afe_data);
+        (void)res; /* deliberately discarded - see above */
+        if ((esp_timer_get_time() - t0) < 5000) {
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+    }
+}
+
 static void run_send_command(void)
 {
     char request_id[REQUEST_ID_LEN];
@@ -327,7 +364,7 @@ static void run_send_command(void)
     ESP_LOGI(TAG, "send complete: id=%s bytes=%lu elapsed=%lums -> %s",
              request_id, (unsigned long)st.bytes_captured, (unsigned long)st.elapsed_ms, result_msg);
     notify(VOICE_STATE_SEND_ACTIVE, result_msg);
-    vTaskDelay(pdMS_TO_TICKS(RESULT_DISPLAY_MS));
+    hold_result_draining(RESULT_DISPLAY_MS);
 
     set_state(VOICE_STATE_LISTENING);
     notify(VOICE_STATE_LISTENING, "LISTENING RESTORED");
@@ -415,7 +452,7 @@ static void run_note_command(void)
     ESP_LOGI(TAG, "note complete: id=%s bytes=%lu elapsed=%lums -> %s",
              request_id, (unsigned long)st.bytes_captured, (unsigned long)st.elapsed_ms, result_msg);
     notify(VOICE_STATE_NOTE_ACTIVE, result_msg);
-    vTaskDelay(pdMS_TO_TICKS(RESULT_DISPLAY_MS));
+    hold_result_draining(RESULT_DISPLAY_MS);
 
     set_state(VOICE_STATE_LISTENING);
     notify(VOICE_STATE_LISTENING, "LISTENING RESTORED");
@@ -509,7 +546,7 @@ static void run_go_command(void)
     ESP_LOGI(TAG, "go complete: id=%s bytes=%lu elapsed=%lums -> %s",
              request_id, (unsigned long)st.bytes_captured, (unsigned long)st.elapsed_ms, result_msg);
     notify(VOICE_STATE_GRAPH_ACTIVE, result_msg);
-    vTaskDelay(pdMS_TO_TICKS(RESULT_DISPLAY_MS));
+    hold_result_draining(RESULT_DISPLAY_MS);
 
     set_state(VOICE_STATE_LISTENING);
     notify(VOICE_STATE_LISTENING, "LISTENING RESTORED");
@@ -595,7 +632,7 @@ static void run_notification_command(const char *notification_id)
     s_status.last_result[sizeof(s_status.last_result) - 1] = '\0';
     portEXIT_CRITICAL(&s_mux);
     notify(VOICE_STATE_NOTIFICATION_ACTIVE, result_msg);
-    vTaskDelay(pdMS_TO_TICKS(RESULT_DISPLAY_MS));
+    hold_result_draining(RESULT_DISPLAY_MS);
 
     set_state(VOICE_STATE_LISTENING);
     notify(VOICE_STATE_LISTENING, "LISTENING RESTORED");
@@ -752,9 +789,38 @@ static void detect_task(void *arg)
     notify(VOICE_STATE_LISTENING, "VOICE LISTENING");
 
     bool in_command_window = false;
+    uint32_t detect_since_yield = 0;   /* see the yield in the command window below */
+    uint32_t fetch_calls = 0;          /* issue #9 diagnostic, rolled up once a second */
+    uint32_t fetch_blocked_us = 0;
+    int64_t fetch_rollup_us = esp_timer_get_time();
 
     for (;;) {
+        /* Diagnostic for issue #9: fetch() is meant to block until a chunk
+         * of audio is ready, and that block is the only thing pacing this
+         * loop. If it ever stops blocking - which is what a backed-up AFE
+         * ring causes - this loop spins and starves IDLE1 on core 1, which
+         * is exactly the watchdog trip observed during a command window.
+         * Rolled up once a second so the answer is a measurement rather
+         * than an assumption. */
+        int64_t fetch_start_us = esp_timer_get_time();
         afe_fetch_result_t *res = s_afe_handle->fetch(afe_data);
+        int64_t now_us = esp_timer_get_time();
+        fetch_calls++;
+        fetch_blocked_us += (uint32_t)(now_us - fetch_start_us);
+        if (now_us - fetch_rollup_us >= 1000000) {
+            uint32_t window_ms = (uint32_t)((now_us - fetch_rollup_us) / 1000);
+            uint32_t blocked_ms = fetch_blocked_us / 1000;
+            /* blocked_ms close to window_ms means fetch() is blocking and
+             * the loop is real-time. Near zero means it is spinning. */
+            ESP_LOGI(TAG, "afe fetch: %lu calls in %lums, blocked %lums (%lu%%)%s",
+                     (unsigned long)fetch_calls, (unsigned long)window_ms,
+                     (unsigned long)blocked_ms,
+                     (unsigned long)(window_ms ? (blocked_ms * 100 / window_ms) : 0),
+                     in_command_window ? " [command window]" : "");
+            fetch_calls = 0;
+            fetch_blocked_us = 0;
+            fetch_rollup_us = now_us;
+        }
         if (!res || res->ret_value == ESP_FAIL) {
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
@@ -776,6 +842,22 @@ static void detect_task(void *arg)
 
         if (!in_command_window) {
             continue;
+        }
+
+        /* multinet->detect() is expensive: measured at ~78% of core 1 for
+         * the whole command window, with fetch() blocking only ~22%. That
+         * is not enough for IDLE1 (priority 0) to be scheduled, so the task
+         * watchdog fires every 5s during any window that runs its full
+         * length. It was never a backlog artifact - the very first window
+         * after boot, with an empty ring, already showed it.
+         *
+         * One tick every DETECT_YIELD_EVERY fetches is enough for IDLE1 to
+         * run and reset the watchdog, while costing ~30ms per second of
+         * detection time against the ~220ms of headroom measured - so
+         * recognition is not pushed behind real time. */
+        if (++detect_since_yield >= DETECT_YIELD_EVERY) {
+            detect_since_yield = 0;
+            vTaskDelay(1);
         }
 
         esp_mn_state_t mn_state = multinet->detect(model_data, res->data);
@@ -835,12 +917,12 @@ static void detect_task(void *arg)
                  * reaching here, which per COMMAND_DEFS is only ever YES):
                  * recognition-only. */
                 set_command_recognized(def);
-                vTaskDelay(pdMS_TO_TICKS(COMMAND_HIGHLIGHT_MS));
+                hold_result_draining(COMMAND_HIGHLIGHT_MS);
             } else {
                 ESP_LOGW(TAG, "recognized command_id=%d not one of the four registered commands", primary_id);
                 set_state(VOICE_STATE_UNRECOGNIZED);
                 notify(VOICE_STATE_UNRECOGNIZED, "COMMAND UNRECOGNIZED");
-                vTaskDelay(pdMS_TO_TICKS(COMMAND_BRIEF_MS));
+                hold_result_draining(COMMAND_BRIEF_MS);
             }
 
             set_state(VOICE_STATE_LISTENING);
@@ -853,7 +935,7 @@ static void detect_task(void *arg)
             ESP_LOGI(TAG, "MultiNet TIMEOUT: no command matched within %dms window", COMMAND_WINDOW_MS);
             set_state(VOICE_STATE_TIMEOUT);
             notify(VOICE_STATE_TIMEOUT, "COMMAND TIMEOUT");
-            vTaskDelay(pdMS_TO_TICKS(COMMAND_BRIEF_MS));
+            hold_result_draining(COMMAND_BRIEF_MS);
             set_state(VOICE_STATE_LISTENING);
             notify(VOICE_STATE_LISTENING, "LISTENING RESTORED");
             continue;

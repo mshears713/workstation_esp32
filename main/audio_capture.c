@@ -157,8 +157,7 @@ static const char *TAG = "audio_capture";
  * down - the recordings run quiet already (RMS 0.009-0.031), and less gain
  * would only hurt the real speech while the transient still railed. 64ms is
  * two AUDIO_READ_CHUNK_SAMPLES reads, comfortably past the measured 26.6ms. */
-#define AUDIO_MIC_SETTLE_MS 64
-#define AUDIO_MIC_SETTLE_BYTES ((AUDIO_SAMPLE_RATE_HZ * AUDIO_MIC_SETTLE_MS / 1000) * AUDIO_BYTES_PER_SAMPLE)
+#define AUDIO_MIC_SETTLE_MAX_READS 8 /* 8 x 32ms = 256ms ceiling */
 
 /* Recording-integrity thresholds. A capture that ran N ms of wall clock
  * should hold N ms of audio; the difference is what the mic path dropped.
@@ -573,18 +572,49 @@ static void perform_capture(const audio_capture_request_t *req)
 
     /* Discard the codec's settling transient before the clock starts, so it
      * never reaches the recording and never counts against shortfall_ms.
+     *
+     * Discards until a read comes back that is not railing, rather than for
+     * a fixed time. A fixed 64ms window was tried first and was not robust:
+     * it removed the transient on one capture (clipped=0) and missed it on
+     * the next (clipped=84, the rail simply appearing 11ms earlier in the
+     * recording), because how much settling audio arrives before the first
+     * successful read varies. Testing the samples tests the actual
+     * condition instead of guessing at its duration.
+     *
+     * Bounded so a genuinely loud start cannot eat the recording, and a read
+     * error retries rather than giving up - the previous version broke out
+     * of the loop on the first error, which is one way it silently
+     * discarded nothing at all.
+     *
      * Buffer 0 is safe to scribble on here: streaming captures start on it
      * and nothing else owns it (the uploader is drained between captures),
      * and manual REC uses it too but has not begun accumulating yet. */
-    for (uint32_t discarded = 0; discarded < AUDIO_MIC_SETTLE_BYTES; ) {
-        uint32_t want = AUDIO_MIC_SETTLE_BYTES - discarded;
-        if (want > AUDIO_READ_CHUNK_BYTES) {
-            want = AUDIO_READ_CHUNK_BYTES;
+    uint32_t settle_bytes = 0;
+    uint32_t settle_peak = 0;
+    for (int attempt = 0; attempt < AUDIO_MIC_SETTLE_MAX_READS; attempt++) {
+        if (esp_codec_dev_read(s_mic_dev, s_capture_buf[0], AUDIO_READ_CHUNK_BYTES) != ESP_CODEC_DEV_OK) {
+            vTaskDelay(pdMS_TO_TICKS(2));
+            continue;
         }
-        if (esp_codec_dev_read(s_mic_dev, s_capture_buf[0], (int)want) != ESP_CODEC_DEV_OK) {
-            break; /* a real read failure is caught by the loop below */
+        settle_bytes += AUDIO_READ_CHUNK_BYTES;
+        const int16_t *sp = (const int16_t *)s_capture_buf[0];
+        uint32_t peak = 0;
+        for (int i = 0; i < AUDIO_READ_CHUNK_SAMPLES; i++) {
+            int32_t v = sp[i] < 0 ? -(int32_t)sp[i] : (int32_t)sp[i];
+            if ((uint32_t)v > peak) {
+                peak = (uint32_t)v;
+            }
         }
-        discarded += want;
+        settle_peak = peak;
+        if (peak < AUDIO_CLIP_THRESHOLD) {
+            break; /* codec has settled - this read is real audio */
+        }
+    }
+    if (settle_bytes > AUDIO_READ_CHUNK_BYTES) {
+        /* One read is the normal case. More means the codec took a while,
+         * which is worth seeing if it ever becomes many. */
+        ESP_LOGI(TAG, "mic settled after %lums (last peak %lu)",
+                 (unsigned long)(settle_bytes / AUDIO_BYTES_PER_MS), (unsigned long)settle_peak);
     }
 
     int64_t start_us = esp_timer_get_time();
