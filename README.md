@@ -1,5 +1,30 @@
 # Operation Homebound — Workstation Console
 
+## Dormant functionality — read this before any large change
+
+Several complete, working features are kept in the tree with **no caller**.
+They were deliberately parked, not abandoned, and they are easy to delete by
+accident during a rewrite because nothing references them and nothing fails
+when they go.
+
+**Anyone planning the next major version, a big refactor, or a dependency
+upgrade should read this list first and make an explicit decision about each
+item rather than discovering them by grep.**
+
+| What | Where | Why it is dormant |
+|---|---|---|
+| Van build log / entry pipeline | backend `app/entries/`, `app/api/entries_*`, firmware `main/entry_client.c` | GO used to record into it. GO became GitHub-issue capture (#8), so nothing calls it. The pipeline itself still works: transcribe → entry architect graph → Notion Sources + Van Build Log → semantic verifier. |
+| Local LangGraph notes route | backend `app/api/notes_*`, `app/voice/graph.py`, firmware `main/note_client.c` | SEND used this before moving to the Voice Inbox (#3). Writes nothing to Notion — results stay on disk as JSON. |
+| Design-review graph | backend `app/graph/`, `app/api/runner.py`, `app/api/store.py`, `app/fixed_proposal.py`, firmware `main/graph_client.c` | GO's original one-shot trigger, before it recorded anything. Last run 2026-07-29. |
+| Single-shot multipart upload | firmware `main/multipart_upload.c` | Replaced by chunked streaming (`stream_upload.c`). Still referenced for its `multipart_text_field_t` typedef, so it cannot simply be deleted. |
+| Manual REC capture | firmware `audio_capture_start()` | The REC button was retired; voice commands are the only capture path now. |
+| Handshake | backend `/api/v1/handshake`, firmware `main/handshake_client.c` | Fires only from a manual SND button press on the LOG page. Not a health check — it ships accelerometer samples. Backend reachability is `backend_health.c` against `/health`. |
+
+**One trap in particular:** `app/graph/model.py` and `app/graph/structured.py`
+live inside the dormant design-review package but are **live** — imported by
+`app/voice/graph.py`, `app/entries/graph.py` and `app/voice/audio_reliability.py`.
+The `app/graph/` package cannot be deleted wholesale.
+
 ## Lineage
 
 This project is updated in place, mission by mission - the working tree
@@ -173,20 +198,25 @@ board) the first time you flash this mission - if this specific unit
 genuinely has less flash, `partitions.csv` needs to shrink to match, not
 the other way around.
 
-## Run the backend (required before Mission 09's SND button or Mission 10's REC upload will work)
+## Run the backend (required before any voice command will complete)
 
-The backend uses this machine's existing global Python 3.13 install, which
-already has `fastapi`/`uvicorn`/`pydantic` (see `backend/requirements.txt`
-for the exact versions - no venv needed):
+**The backend is a separate repository now** - `mshears713/workstation-backend`,
+checked out alongside this one. The `backend/` directory still in this repo is
+the retired Mission 10 version, kept only as history; do not run it.
 
 ```
-python backend/main.py
+cd ../workstation-backend
+.venv\Scripts\python.exe -m uvicorn app.api.main:app --host 0.0.0.0 --port 8000
 ```
 
-It binds `0.0.0.0:8000` (reachable from the ESP32 over the LAN, not just
-this machine) and logs the LAN IP it's reachable at on startup - confirm
-that matches `BACKEND_BASE_URL` in `main/backend_config.h`. Plain HTTP, no
-TLS - a local learning setup only, not for anything beyond the LAN.
+`--host 0.0.0.0` matters: `127.0.0.1` would be unreachable from the ESP32.
+Confirm the LAN address matches `BACKEND_BASE_URL` in `main/backend_config.h`.
+Plain HTTP, no TLS - a local setup only, not for anything beyond the LAN.
+
+`GET /health` reports the commit the server is running, which is worth
+checking after any backend change - uvicorn is started by hand and stays up
+for hours, so it is easy to test firmware against a backend that never loaded
+the matching change.
 
 The first time it starts and accepts a connection from another device (the
 ESP32), Windows Firewall may prompt to allow `python.exe` on **private**
