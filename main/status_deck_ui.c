@@ -733,6 +733,10 @@ typedef enum {
     APP_PAGE_SENS,
     APP_PAGE_LOG,
     APP_PAGE_SET,
+    /* Reached from a button on SETTINGS rather than from a corner of its own -
+     * there are only four corners, and browsing projects is something you do
+     * occasionally, not something you need one tap away from anywhere. */
+    APP_PAGE_PROJECTS,
     APP_PAGE_COUNT,
 } app_page_t;
 
@@ -740,12 +744,17 @@ static lv_obj_t *page_home;
 static lv_obj_t *page_sens;
 static lv_obj_t *page_log;
 static lv_obj_t *page_set;          /* SETTINGS - replaced TALK in the nav */
+static lv_obj_t *page_projects;     /* PROJECTS - reached from SETTINGS */
 /* SETTINGS reuses telemetry_label / conn_label / volume_label - the same
  * objects HOME used to own, just reparented to this page. Only the two
  * genuinely new rows need their own handles. */
 static lv_obj_t *settings_api_label;
 static lv_obj_t *settings_repo_label;
-static lv_obj_t *nav_buttons[APP_PAGE_COUNT];
+/* Four corners, five pages: the corner buttons stopped being one-per-page
+ * when PROJECTS arrived. Index i still addresses page i for i < this, which is
+ * what set_active_page() relies on to highlight the current tab. */
+#define NAV_BUTTON_COUNT 4
+static lv_obj_t *nav_buttons[NAV_BUTTON_COUNT];
 
 /* Command Window overlay (Mission 12): four-button recognition-test grid,
  * hidden by default, shown full-screen over the dashboard for the ~10s
@@ -765,11 +774,9 @@ static lv_obj_t *recording_repo_ctrl;      /* wide repository chooser along the 
 static lv_obj_t *recording_repo_label;
 static lv_obj_t *recording_project_ctrl;   /* project selector on the recording overlay - NOTE only */
 static lv_obj_t *recording_project_label;
-/* The cue toast on the recording overlay - see project_tap_cb(). */
-static lv_obj_t *recording_cue_panel;
-static lv_obj_t *recording_cue_label;
-static lv_timer_t *recording_cue_timer;
-static lv_obj_t *recording_id_label;
+/* The PROJECTS page's own copy of the same selection, plus its cue. */
+static lv_obj_t *projects_page_label;
+static lv_obj_t *projects_page_cue;
 static lv_obj_t *recording_dot;
 static lv_obj_t *recording_status_label;
 
@@ -779,7 +786,6 @@ static lv_obj_t *recording_status_label;
  * playback runs long enough (5-20s) to be worth interrupting - see
  * render_notification_overlay() below. */
 static lv_obj_t *notification_overlay;
-static lv_obj_t *notification_id_label;
 static lv_obj_t *notification_status_label;
 
 /* HOME page's animated listening ring - kept as a file-scope handle (not
@@ -1237,10 +1243,6 @@ static void render_recording_overlay(void)
     }
     lv_label_set_text(recording_title, title_buf);
 
-    char id_buf[40];
-    snprintf(id_buf, sizeof(id_buf), "ID: %s", vst.active_request_id);
-    lv_label_set_text(recording_id_label, id_buf);
-
     /* One scroller slot, two different lists depending on the command:
      * NOTE picks an AI-OS project, GO picks a GitHub repository. SEND is
      * deliberately a quick capture with no selector at all (issue #3).
@@ -1379,10 +1381,6 @@ static void render_notification_overlay(void)
     }
     lv_obj_clear_flag(notification_overlay, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(notification_overlay);
-
-    char id_buf[40];
-    snprintf(id_buf, sizeof(id_buf), "ID: %s", vst.active_request_id);
-    lv_label_set_text(notification_id_label, id_buf);
 
     lv_color_t color = lv_palette_main(LV_PALETTE_ORANGE);
     if (strcmp(vst.last_result, "NOTIFICATION DELIVERED") == 0) {
@@ -1547,48 +1545,16 @@ static void refresh_project_label(void)
     if (recording_project_label) {
         lv_label_set_text(recording_project_label, text);
     }
-}
-
-/* The cue toast. A 12-character label is not enough to be sure you picked the
- * right project - "VAN FLIP" and "VAN DEAL" are one glance apart - so tapping
- * the selector shows the AI-OS's own Cue for it, the "2-6 word memory hook"
- * that database already maintains for exactly this purpose.
- *
- * Transient rather than always-on: the overlay is busy during a capture and
- * the cue is a confirmation, not a status. It hides itself after
- * CUE_VISIBLE_MS, or on the next tap. */
-#define CUE_VISIBLE_MS 2500
-
-static void hide_project_cue(lv_timer_t *timer)
-{
-    if (recording_cue_panel) {
-        lv_obj_add_flag(recording_cue_panel, LV_OBJ_FLAG_HIDDEN);
+    if (projects_page_label) {
+        lv_label_set_text(projects_page_label, text);
     }
-    if (timer) {
-        lv_timer_delete(timer);
+    if (projects_page_cue) {
+        /* Say so plainly when there is no cue. An empty panel reads as broken;
+         * "no cue set" is a fact about that AI-OS page worth knowing, and the
+         * fix for it is one edit away in Notion. */
+        const char *cue = backend_catalog_project_cue();
+        lv_label_set_text(projects_page_cue, (cue && cue[0] != '\0') ? cue : "no cue set");
     }
-    recording_cue_timer = NULL;
-}
-
-static void project_tap_cb(lv_event_t *e)
-{
-    (void)e;
-    if (!recording_cue_panel || !recording_cue_label) {
-        return;
-    }
-    /* One timer at a time: tapping again should restart the dwell, not stack
-     * up timers that each hide a panel the operator is still reading. */
-    if (recording_cue_timer) {
-        lv_timer_delete(recording_cue_timer);
-        recording_cue_timer = NULL;
-    }
-
-    const char *cue = backend_catalog_project_cue();
-    /* Say which, honestly. "No cue set" is a fact about the AI-OS page worth
-     * knowing; blanking the panel would just look broken. */
-    lv_label_set_text(recording_cue_label, (cue && cue[0] != '\0') ? cue : "no cue set");
-    lv_obj_clear_flag(recording_cue_panel, LV_OBJ_FLAG_HIDDEN);
-    recording_cue_timer = lv_timer_create(hide_project_cue, CUE_VISIBLE_MS, NULL);
 }
 
 static void recording_repo_next_cb(lv_event_t *e)
@@ -1649,13 +1615,17 @@ static void send_handshake_button_cb(lv_event_t *e)
  * panels above, just for which page is on screen rather than a data value. */
 static void set_active_page(app_page_t page)
 {
-    lv_obj_t *pages[APP_PAGE_COUNT] = { page_home, page_sens, page_log, page_set };
+    lv_obj_t *pages[APP_PAGE_COUNT] = {
+        page_home, page_sens, page_log, page_set, page_projects,
+    };
     for (int i = 0; i < APP_PAGE_COUNT; i++) {
         if (i == (int)page) {
             lv_obj_clear_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_add_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
         }
+    }
+    for (int i = 0; i < NAV_BUTTON_COUNT; i++) {
         lv_obj_set_style_bg_color(nav_buttons[i], i == (int)page ? lv_palette_main(LV_PALETTE_BLUE)
                                                                    : lv_palette_main(LV_PALETTE_GREY), 0);
     }
@@ -1670,7 +1640,7 @@ static void set_active_page(app_page_t page)
      *
      * HOME stays in the top-left corner rather than moving to a "back" slot,
      * so the one button that is always present is always in the same place. */
-    for (int i = 0; i < APP_PAGE_COUNT; i++) {
+    for (int i = 0; i < NAV_BUTTON_COUNT; i++) {
         if (page == APP_PAGE_HOME || i == (int)APP_PAGE_HOME) {
             lv_obj_clear_flag(nav_buttons[i], LV_OBJ_FLAG_HIDDEN);
         } else {
@@ -1723,6 +1693,15 @@ static void set_nav_button_cb(lv_event_t *e)
 {
     (void)e;
     set_active_page(APP_PAGE_SET);
+}
+
+static void projects_nav_button_cb(lv_event_t *e)
+{
+    (void)e;
+    /* The list may have refreshed since this page was last drawn, and it is
+     * only redrawn on a selection change otherwise. */
+    refresh_project_label();
+    set_active_page(APP_PAGE_PROJECTS);
 }
 
 /* A tapped command tile. The command id rides in the event user data rather
@@ -1993,6 +1972,7 @@ void status_deck_ui(lv_obj_t *scr)
     page_home = pages_init[APP_PAGE_HOME];
     page_sens = pages_init[APP_PAGE_SENS];
     page_log = pages_init[APP_PAGE_LOG];
+    page_projects = pages_init[APP_PAGE_PROJECTS];
     page_set = pages_init[APP_PAGE_SET];
 
     /* ---- HOME: nothing but the microphone ---------------------------- */
@@ -2095,7 +2075,69 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_set_style_text_font(set_repo_next_label, &lv_font_montserrat_20, 0);
     lv_obj_center(set_repo_next_label);
 
+    /* Sits below the three panels (which end at y=206) rather than replacing
+     * any of them. SETTINGS is where you go to look at how the workstation is
+     * configured, and which projects it knows about is exactly that. */
+    lv_obj_t *projects_btn = lv_btn_create(page_set);
+    lv_obj_set_size(projects_btn, 304, 28);
+    lv_obj_align(projects_btn, LV_ALIGN_TOP_LEFT, 8, 208);
+    lv_obj_add_event_cb(projects_btn, projects_nav_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *projects_btn_label = lv_label_create(projects_btn);
+    lv_label_set_text(projects_btn_label, "PROJECTS  >");
+    lv_obj_center(projects_btn_label);
+
     refresh_volume_label();
+
+    /* ---- PROJECTS: browse the AI-OS list, and read the cues ----------- */
+
+    /* This page exists because the cue had nowhere honest to live. It was a
+     * toast on the recording overlay, which meant it could only be read while
+     * a capture was running, and it covered the counter to do it. Here it is
+     * just shown - no tap, no timer, no overlap.
+     *
+     * The selection is the same one NOTE uses, so choosing here is choosing
+     * for the next NOTE. That is the point: pick the project while you are
+     * thinking about it, not while you are trying to talk.
+     *
+     *    y  58..126   the selector: < LABEL >
+     *    y 132..206   the cue for whatever is selected
+     */
+    page_title(page_projects, "PROJECTS");
+
+    lv_obj_t *proj_ctrl = page_panel(page_projects, 58, 68);
+
+    lv_obj_t *proj_prev = lv_btn_create(proj_ctrl);
+    lv_obj_set_size(proj_prev, 56, 56);
+    lv_obj_align(proj_prev, LV_ALIGN_LEFT_MID, 6, 0);
+    lv_obj_add_event_cb(proj_prev, project_down_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *proj_prev_label = lv_label_create(proj_prev);
+    lv_label_set_text(proj_prev_label, "<");
+    lv_obj_set_style_text_font(proj_prev_label, &lv_font_montserrat_32, 0);
+    lv_obj_center(proj_prev_label);
+
+    projects_page_label = lv_label_create(proj_ctrl);
+    lv_obj_set_style_text_font(projects_page_label, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(projects_page_label, lv_color_white(), 0);
+    lv_obj_align(projects_page_label, LV_ALIGN_CENTER, 0, 0);
+    lv_label_set_text(projects_page_label, "...");
+
+    lv_obj_t *proj_next = lv_btn_create(proj_ctrl);
+    lv_obj_set_size(proj_next, 56, 56);
+    lv_obj_align(proj_next, LV_ALIGN_RIGHT_MID, -6, 0);
+    lv_obj_add_event_cb(proj_next, project_up_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *proj_next_label = lv_label_create(proj_next);
+    lv_label_set_text(proj_next_label, ">");
+    lv_obj_set_style_text_font(proj_next_label, &lv_font_montserrat_32, 0);
+    lv_obj_center(proj_next_label);
+
+    lv_obj_t *cue_panel = page_panel(page_projects, 132, 74);
+    projects_page_cue = lv_label_create(cue_panel);
+    lv_label_set_long_mode(projects_page_cue, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(projects_page_cue, 284);
+    lv_obj_set_style_text_align(projects_page_cue, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(projects_page_cue, &lv_font_montserrat_14, 0);
+    lv_obj_center(projects_page_cue);
+    lv_label_set_text(projects_page_cue, "");
 
     /* ---- SENS: three stacked trend charts, each a third of the page ----- */
 
@@ -2396,23 +2438,42 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_clear_flag(recording_overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(recording_overlay, LV_OBJ_FLAG_HIDDEN);
 
+    /* The overlay in four bands, none of them overlapping. It used to be
+     * loosely stacked, which was survivable until the panel-styling pass gave
+     * the counter an opaque backing panel - that panel is created after the
+     * selector and the buttons, so it drew straight over them. What follows is
+     * laid out as bands with explicit coordinates for that reason: this is a
+     * 320x240 screen with five things that all have to be visible at once
+     * during a NOTE, and "roughly centered" is not good enough.
+     *
+     *    y   4.. 24   title
+     *    y  28..120   counter panel: dot, timer, progress bar
+     *    y 126..172   the selector slot - project for NOTE, repo for GO
+     *    y 178..232   the action row: CANCEL, and SEND when it applies
+     *
+     * The counter panel is created FIRST so it sits behind everything, which
+     * is what its own comment always claimed and what the ordering did not
+     * actually do. */
+    lv_obj_t *rec_panel = lv_obj_create(recording_overlay);
+    lv_obj_set_size(rec_panel, 304, 92);
+    lv_obj_align(rec_panel, LV_ALIGN_TOP_LEFT, 8, 28);
+    apply_panel_style(rec_panel);
+
     recording_title = lv_label_create(recording_overlay);
     lv_label_set_text(recording_title, "RECORDING");
     lv_obj_set_style_text_font(recording_title, &lv_font_montserrat_20, 0);
-    lv_obj_align(recording_title, LV_ALIGN_TOP_MID, 0, 8);
+    lv_obj_align(recording_title, LV_ALIGN_TOP_MID, 0, 4);
 
-    recording_id_label = lv_label_create(recording_overlay);
-    lv_label_set_text(recording_id_label, "ID:");
-    lv_obj_align(recording_id_label, LV_ALIGN_TOP_MID, 0, 40);
-
-    /* CANCEL, above the counter - discards the recording instead of
-     * sending it (recording_cancel_button_cb -> audio_capture_cancel()).
-     * Red for "this throws it away," in deliberate contrast with SEND's
-     * green below - the two buttons should never look like variants of
-     * the same action. */
+    /* CANCEL - discards the recording instead of sending it
+     * (recording_cancel_button_cb -> audio_capture_cancel()). Red for "this
+     * throws it away," in deliberate contrast with SEND's green beside it -
+     * the two should never look like variants of the same action. Left of
+     * SEND, and it keeps that spot when SEND is hidden rather than sliding to
+     * the middle: the destructive button should not move under your thumb
+     * depending on which command is running. */
     lv_obj_t *cancel_btn = lv_btn_create(recording_overlay);
-    lv_obj_set_size(cancel_btn, 140, 34);
-    lv_obj_align(cancel_btn, LV_ALIGN_TOP_MID, 0, 68);
+    lv_obj_set_size(cancel_btn, 140, 54);
+    lv_obj_align(cancel_btn, LV_ALIGN_TOP_LEFT, 12, 178);
     lv_obj_set_style_bg_color(cancel_btn, lv_palette_main(LV_PALETTE_RED), 0);
     lv_obj_add_event_cb(cancel_btn, recording_cancel_button_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *cancel_label = lv_label_create(cancel_btn);
@@ -2430,7 +2491,7 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_set_style_bg_color(recording_dot, lv_palette_main(LV_PALETTE_RED), 0);
     lv_obj_set_style_border_width(recording_dot, 0, 0);
     lv_obj_clear_flag(recording_dot, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_align(recording_dot, LV_ALIGN_CENTER, -40, 15);
+    lv_obj_align(recording_dot, LV_ALIGN_TOP_LEFT, 30, 46);
 
     /* Project selector, same up/label/down shape as the HOME control so it
      * reads as the same thing in a second place - and it is: both drive
@@ -2442,76 +2503,48 @@ void status_deck_ui(lv_obj_t *scr)
      * bottom from y=164. Hidden unless a NOTE is recording, see
      * render_recording_overlay(). */
     recording_project_ctrl = lv_obj_create(recording_overlay);
-    lv_obj_set_size(recording_project_ctrl, 44, 108);
-    lv_obj_align(recording_project_ctrl, LV_ALIGN_LEFT_MID, 4, 6);
+    lv_obj_set_size(recording_project_ctrl, 304, 46);
+    lv_obj_align(recording_project_ctrl, LV_ALIGN_TOP_LEFT, 8, 126);
     apply_panel_style(recording_project_ctrl);
     lv_obj_add_flag(recording_project_ctrl, LV_OBJ_FLAG_HIDDEN);
 
-    lv_obj_t *rec_project_up = lv_btn_create(recording_project_ctrl);
-    lv_obj_set_size(rec_project_up, 40, 34);
-    lv_obj_align(rec_project_up, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_add_event_cb(rec_project_up, project_up_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *rec_project_up_label = lv_label_create(rec_project_up);
-    lv_label_set_text(rec_project_up_label, "+");
-    lv_obj_set_style_text_font(rec_project_up_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(rec_project_up_label);
+    lv_obj_t *rec_project_prev = lv_btn_create(recording_project_ctrl);
+    lv_obj_set_size(rec_project_prev, 52, 40);
+    lv_obj_align(rec_project_prev, LV_ALIGN_LEFT_MID, 3, 0);
+    lv_obj_add_event_cb(rec_project_prev, project_down_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *rec_project_prev_label = lv_label_create(rec_project_prev);
+    lv_label_set_text(rec_project_prev_label, "<");
+    lv_obj_set_style_text_font(rec_project_prev_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(rec_project_prev_label);
 
     recording_project_label = lv_label_create(recording_project_ctrl);
-    lv_obj_set_style_text_font(recording_project_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(recording_project_label, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(recording_project_label, lv_color_white(), 0);
     lv_obj_align(recording_project_label, LV_ALIGN_CENTER, 0, 0);
     lv_label_set_text(recording_project_label, "...");
-    /* The panel itself takes the tap, not the label: the label is only as wide
-     * as its text, and the +/- buttons already own the top and bottom of the
-     * panel, so the middle band is both the obvious target and a free one. */
-    lv_obj_add_flag(recording_project_ctrl, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(recording_project_ctrl, project_tap_cb, LV_EVENT_CLICKED, NULL);
 
-    lv_obj_t *rec_project_down = lv_btn_create(recording_project_ctrl);
-    lv_obj_set_size(rec_project_down, 40, 34);
-    lv_obj_align(rec_project_down, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_add_event_cb(rec_project_down, project_down_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *rec_project_down_label = lv_label_create(rec_project_down);
-    lv_label_set_text(rec_project_down_label, "-");
-    lv_obj_set_style_text_font(rec_project_down_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(rec_project_down_label);
+    lv_obj_t *rec_project_next = lv_btn_create(recording_project_ctrl);
+    lv_obj_set_size(rec_project_next, 52, 40);
+    lv_obj_align(rec_project_next, LV_ALIGN_RIGHT_MID, -3, 0);
+    lv_obj_add_event_cb(rec_project_next, project_up_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *rec_project_next_label = lv_label_create(rec_project_next);
+    lv_label_set_text(rec_project_next_label, ">");
+    lv_obj_set_style_text_font(rec_project_next_label, &lv_font_montserrat_20, 0);
+    lv_obj_center(rec_project_next_label);
 
-    /* Repository chooser for GO. Deliberately a second, wider control rather
-     * than reusing the narrow left-edge one: GO auto-stops, so its SEND
-     * button is hidden and the whole bottom strip is free. Choosing where an
-     * issue gets filed is the one decision the operator makes during a GO,
-     * so it gets the prominent slot rather than a 44px sliver.
-     *
-     * Only ever visible for GO, so it cannot collide with the left-edge
-     * project selector NOTE uses. */
+    /* Repository chooser for GO, in the same slot and the same shape as the
+     * project selector above. They are never both wanted - a capture is one
+     * command or the other - and making them look identical is honest about
+     * that: one row that says "and this one goes to...". */
     recording_repo_ctrl = lv_obj_create(recording_overlay);
-    lv_obj_set_size(recording_repo_ctrl, 268, 54);
-    lv_obj_align(recording_repo_ctrl, LV_ALIGN_BOTTOM_MID, 0, -6);
+    lv_obj_set_size(recording_repo_ctrl, 304, 46);
+    lv_obj_align(recording_repo_ctrl, LV_ALIGN_TOP_LEFT, 8, 126);
     apply_panel_style(recording_repo_ctrl);
-
-    /* Cue toast. Deliberately on top of everything else on the overlay rather
-     * than tucked into a free corner: there is no 230px band spare here, and a
-     * cue is read for two seconds and dismissed, so briefly covering the
-     * counter costs nothing. Created last so it is above its siblings in the
-     * child order. */
-    recording_cue_panel = lv_obj_create(recording_overlay);
-    lv_obj_set_size(recording_cue_panel, 230, 56);
-    lv_obj_align(recording_cue_panel, LV_ALIGN_CENTER, 12, 0);
-    apply_panel_style(recording_cue_panel);
-    lv_obj_set_style_bg_opa(recording_cue_panel, LV_OPA_COVER, 0);
-    lv_obj_add_flag(recording_cue_panel, LV_OBJ_FLAG_HIDDEN);
-
-    recording_cue_label = lv_label_create(recording_cue_panel);
-    lv_label_set_long_mode(recording_cue_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(recording_cue_label, 210);
-    lv_obj_set_style_text_align(recording_cue_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(recording_cue_label, &lv_font_montserrat_14, 0);
-    lv_obj_center(recording_cue_label);
-    lv_label_set_text(recording_cue_label, "");
     lv_obj_add_flag(recording_repo_ctrl, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *repo_prev = lv_btn_create(recording_repo_ctrl);
-    lv_obj_set_size(repo_prev, 52, 46);
-    lv_obj_align(repo_prev, LV_ALIGN_LEFT_MID, 4, 0);
+    lv_obj_set_size(repo_prev, 52, 40);
+    lv_obj_align(repo_prev, LV_ALIGN_LEFT_MID, 3, 0);
     lv_obj_add_event_cb(repo_prev, recording_repo_prev_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *repo_prev_label = lv_label_create(repo_prev);
     lv_label_set_text(repo_prev_label, "<");
@@ -2525,20 +2558,13 @@ void status_deck_ui(lv_obj_t *scr)
     lv_label_set_text(recording_repo_label, "...");
 
     lv_obj_t *repo_next = lv_btn_create(recording_repo_ctrl);
-    lv_obj_set_size(repo_next, 52, 46);
-    lv_obj_align(repo_next, LV_ALIGN_RIGHT_MID, -4, 0);
+    lv_obj_set_size(repo_next, 52, 40);
+    lv_obj_align(repo_next, LV_ALIGN_RIGHT_MID, -3, 0);
     lv_obj_add_event_cb(repo_next, recording_repo_next_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *repo_next_label = lv_label_create(repo_next);
     lv_label_set_text(repo_next_label, ">");
     lv_obj_set_style_text_font(repo_next_label, &lv_font_montserrat_20, 0);
     lv_obj_center(repo_next_label);
-
-    /* Backs the dot + counter + progress bar as one block. Created before
-     * them so it sits behind; they keep their own coordinates. */
-    lv_obj_t *rec_panel = lv_obj_create(recording_overlay);
-    lv_obj_set_size(rec_panel, 288, 96);
-    lv_obj_align(rec_panel, LV_ALIGN_CENTER, 0, 22);
-    apply_panel_style(rec_panel);
 
     /* Fills the space SEND vacated on an auto-stopping capture, and earns
      * it: on a 15s capture that ends itself, how much time is left is the
@@ -2546,8 +2572,8 @@ void status_deck_ui(lv_obj_t *scr)
      * read and subtract; a bar is glanceable. Hidden on NOTE, where there
      * is no target to fill toward. */
     recording_progress = lv_bar_create(recording_overlay);
-    lv_obj_set_size(recording_progress, 260, 16);
-    lv_obj_align(recording_progress, LV_ALIGN_CENTER, 0, 46);
+    lv_obj_set_size(recording_progress, 260, 14);
+    lv_obj_align(recording_progress, LV_ALIGN_TOP_MID, 0, 94);
     lv_obj_set_style_radius(recording_progress, 8, 0);
     lv_obj_set_style_bg_color(recording_progress, lv_palette_darken(LV_PALETTE_BLUE_GREY, 2), LV_PART_MAIN);
     lv_obj_set_style_bg_color(recording_progress, lv_palette_main(LV_PALETTE_RED), LV_PART_INDICATOR);
@@ -2559,7 +2585,7 @@ void status_deck_ui(lv_obj_t *scr)
     recording_status_label = lv_label_create(recording_overlay);
     lv_label_set_text(recording_status_label, "");
     lv_obj_set_style_text_font(recording_status_label, &lv_font_montserrat_32, 0);
-    lv_obj_align(recording_status_label, LV_ALIGN_CENTER, 10, 8);
+    lv_obj_align(recording_status_label, LV_ALIGN_TOP_MID, 8, 48);
 
     /* SEND, relabeled/recolored from the original STOP - still the same
      * audio_capture_stop() underneath (ending the recording here is also
@@ -2568,8 +2594,8 @@ void status_deck_ui(lv_obj_t *scr)
      * took over the "this is the destructive one" red styling. */
     lv_obj_t *send_btn = lv_btn_create(recording_overlay);
     recording_send_btn = send_btn;
-    lv_obj_set_size(send_btn, 220, 56);
-    lv_obj_align(send_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_set_size(send_btn, 140, 54);
+    lv_obj_align(send_btn, LV_ALIGN_TOP_RIGHT, -12, 178);
     lv_obj_set_style_bg_color(send_btn, lv_palette_main(LV_PALETTE_GREEN), 0);
     lv_obj_add_event_cb(send_btn, recording_stop_button_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *send_label = lv_label_create(send_btn);
@@ -2595,10 +2621,6 @@ void status_deck_ui(lv_obj_t *scr)
     lv_label_set_text(notification_title, "NOTIFICATION");
     lv_obj_set_style_text_font(notification_title, &lv_font_montserrat_20, 0);
     lv_obj_align(notification_title, LV_ALIGN_TOP_MID, 0, 8);
-
-    notification_id_label = lv_label_create(notification_overlay);
-    lv_label_set_text(notification_id_label, "ID:");
-    lv_obj_align(notification_id_label, LV_ALIGN_TOP_MID, 0, 40);
 
     notification_status_label = lv_label_create(notification_overlay);
     lv_label_set_text(notification_status_label, "");
