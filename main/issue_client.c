@@ -20,7 +20,7 @@
 #include "esp_timer.h"
 #include "cJSON.h"
 #include "stream_upload.h"
-#include "repo_selector.h"
+#include "backend_catalog.h"
 #include "issue_client.h"
 
 #if __has_include("backend_config.h")
@@ -85,7 +85,7 @@ bool issue_client_submit_finish(const char *request_id,
         return false;
     }
 
-    const char *repo_id = repo_selector_get_id();
+    const char *repo_id = backend_catalog_repo_id();
     if (repo_id[0] == '\0') {
         /* Nothing selected, or the catalog never loaded. Refusing here is
          * better than letting the backend reject it after transcription has

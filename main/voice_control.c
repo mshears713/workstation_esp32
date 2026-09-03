@@ -54,7 +54,7 @@
 #include "voice_inbox_client.h"
 #include "entry_client.h"
 #include "issue_client.h"
-#include "repo_selector.h"
+#include "backend_catalog.h"
 #include "notification_client.h"
 #include "audio_playback.h"
 #include "voice_control.h"
@@ -524,7 +524,7 @@ static void run_go_command(void)
      * someone speak for 15 seconds and only then saying "no repository" is
      * the wrong order. Happens when the backend has never been reachable
      * since boot, so the catalog never loaded. */
-    if (repo_selector_count() <= 0) {
+    if (backend_catalog_repo_count() <= 0) {
         ESP_LOGW(TAG, "GO refused: no repository catalog loaded");
         notify(VOICE_STATE_GRAPH_ACTIVE, "GO - NO REPO LIST");
         hold_result_draining(RESULT_DISPLAY_MS);

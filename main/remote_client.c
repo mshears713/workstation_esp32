@@ -249,7 +249,7 @@ static void poll_task(void *arg)
              * trying ~7 times a second through the whole of a slow DHCP -
              * measured at ~150 failed connections over one 23s lease wait -
              * and CONFIG_LWIP_MAX_SOCKETS is 10, so it starved anything else
-             * that wanted one. repo_selector's first catalog fetch failed
+             * that wanted one. backend_catalog's first catalog fetch failed
              * with "Failed to create socket" because of exactly this. */
             s_backend_reachable = false;
             vTaskDelay(pdMS_TO_TICKS(REMOTE_POLL_OFFLINE_MS));

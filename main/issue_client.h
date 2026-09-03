@@ -54,7 +54,7 @@ bool issue_client_submit_chunk(const char *request_id, const uint8_t *pcm, size_
  * transcribe and file, and stores the resulting issue number where
  * issue_client_get_last_issue() can read it.
  *
- * The repository comes from repo_selector_get_id() at call time rather than
+ * The repository comes from backend_catalog_repo_id() at call time rather than
  * being passed in, so this keeps audio_note_finish_fn_t's signature and can
  * be handed to audio_capture_start_note() unchanged.
  */

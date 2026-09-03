@@ -6,24 +6,30 @@
 
 /**
  * @file
- * @brief Current "which project is this for" selection - see
- *        project_selector.c.
- * @details App-agnostic like audio_playback.h/notification_client.h: knows
- *          nothing about LVGL. status_deck_ui.c owns the on-screen
- *          up/down selector - one of the four values shown at a time, not
- *          four separate buttons as this said previously - and calls
- *          project_selector_set() when it changes. It appears both on HOME
- *          and on the recording overlay, so a project can be chosen either
- *          before starting or while a NOTE is running.
+ * @brief The operator's "which project is this for" hint, as sent to the
+ *        backend - see project_selector.c.
+ * @details Mission 19 moved the list itself into backend_catalog.h, which
+ *          fetches it from the AI-OS Projects database. What used to be a
+ *          four-value enum compiled into the firmware (NONE/VAN1/VAN2/
+ *          GENERAL) is now whatever is Active or Testing in the AI-OS, and
+ *          changing it needs no flash.
  *
- *          entry_client.c (GO) and voice_inbox_client.c (NOTE/SEND) both
- *          call project_selector_get_hint() when building their finish
- *          fields; it returns "none" when nothing is selected, so the
- *          field is always present and the backend never has to guess
- *          between "not chosen" and "not sent".
+ *          What survives here is the one thing the capture clients actually
+ *          want: the hint string. entry_client.c (GO) and
+ *          voice_inbox_client.c (NOTE/SEND) call project_selector_get_hint()
+ *          when building their finish fields, and this file exists so that
+ *          neither has to know where the list came from or care that it
+ *          changed.
  *
- *          Session-only, like the volume control - resets to the default
- *          on reboot, not persisted to NVS.
+ *          The hint is advisory, not routing. The note lands in the Voice
+ *          Inbox either way; the backend resolves the id to a Notion page and
+ *          sets the Related Project relation so the downstream agent knows
+ *          what the operator had in mind. "none" is a normal answer, not a
+ *          failure - see the backend's README.
+ *
+ *          The selection itself lives in backend_catalog.c and, like the
+ *          volume control, is session-only: it resets at boot rather than
+ *          being persisted.
  */
 #pragma once
 
@@ -31,23 +37,11 @@
 extern "C" {
 #endif
 
-typedef enum {
-    PROJECT_SELECTION_NONE = 0, /* default: not part of the van-build project */
-    PROJECT_SELECTION_VAN1,
-    PROJECT_SELECTION_VAN2,
-    PROJECT_SELECTION_GENERAL,
-} project_selection_t;
-
-/** Sets the current selection. Called from the LVGL task (button taps). */
-void project_selector_set(project_selection_t selection);
-
-/** Current selection - defaults to PROJECT_SELECTION_NONE at boot. */
-project_selection_t project_selector_get(void);
-
 /**
- * The current selection as the short lowercase string sent to the backend's
- * /api/v1/entries `project_hint` form field ("none"/"van1"/"van2"/
- * "general") - see entry_client.c.
+ * The currently selected project's catalog id, or the literal "none" when
+ * nothing is selectable or nothing has been chosen. Never NULL, and always
+ * present in the request, so the backend never has to guess between "not
+ * chosen" and "not sent".
  */
 const char *project_selector_get_hint(void);
 

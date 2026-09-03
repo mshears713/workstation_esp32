@@ -18,7 +18,6 @@ item rather than discovering them by grep.**
 | Design-review graph | backend `app/graph/`, `app/api/runner.py`, `app/api/store.py`, `app/fixed_proposal.py`, firmware `main/graph_client.c` | GO's original one-shot trigger, before it recorded anything. Last run 2026-07-29. |
 | Single-shot multipart upload | firmware `main/multipart_upload.c` | Replaced by chunked streaming (`stream_upload.c`). Still referenced for its `multipart_text_field_t` typedef, so it cannot simply be deleted. |
 | Manual REC capture | firmware `audio_capture_start()` | The REC button was retired; voice commands are the only capture path now. |
-| AI-OS project list | firmware `main/project_selector.h` | Still compiled in, unlike the repository list which comes from the backend. Changing it needs a flash - the inconsistency worth closing next. |
 | Handshake | backend `/api/v1/handshake`, firmware `main/handshake_client.c` | Fires only from a manual SND button press on the LOG page. Not a health check — it ships accelerometer samples. Backend reachability is `backend_health.c` against `/health`. |
 
 **One trap in particular:** `app/graph/model.py` and `app/graph/structured.py`
@@ -28,7 +27,12 @@ The `app/graph/` package cannot be deleted wholesale.
 
 ## The console today
 
-Four pages, navigated by a button in each corner of the screen.
+Four pages. HOME is the hub: it shows a button in each corner, and every
+other page shows only HOME. Four buttons on every page crowded a 320x240
+panel, and three of the four were always wrong for where you already were -
+so from HOME you pick a destination, and from a destination the only move is
+back. Each sub-page carries its own name beside the HOME button, which is what
+now says where you are.
 
 | Page | What it shows |
 |---|---|
@@ -57,6 +61,25 @@ identical path.
 A bounded capture shows `00:07 of 15s` with a countdown bar and no SEND
 button - there is nothing to end early on a recording that ends itself.
 NOTE shows the SEND button and a project selector instead.
+
+**Where the project list comes from.** Both the project list and the repository
+list are fetched from the backend (`main/backend_catalog.c`), which merges its
+own `config/projects.json` with every AI-OS project whose Status is Active or
+Testing. Starting a project in the AI-OS makes it selectable here with no
+flash. The device only ever holds short ids and labels - never an `owner/name`
+slug, never a Notion page id, never a token - and sends the id back for the
+backend to resolve against its own allowlist.
+
+The list is re-fetched every five minutes rather than once at boot, and cached
+to NVS so a workstation that comes up before the backend does still offers the
+list it last saw. A refresh is skipped while a capture is in flight, and the
+current selection is re-found by id rather than by position, so neither can
+quietly change which project a note is about.
+
+**Tapping the project selector shows its Cue** - the AI-OS's own "2-6 word
+memory hook" for that project - for a couple of seconds. Twelve characters of
+label is not enough to be sure you picked the right one when several start
+with "VAN".
 
 GO reports the **GitHub issue number** rather than "sent", because its
 finish call waits for the issue to exist. Issue numbers are per repository,

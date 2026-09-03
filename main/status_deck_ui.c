@@ -167,11 +167,12 @@
 #include "voice_control.h"
 #include "voice_listening_widget.h"
 #include "backend_health.h"
-#include "repo_selector.h"
+#include "backend_catalog.h"
 #include "notification_client.h"
 #include "remote_client.h"
 #include "audio_playback.h"
 #include "project_selector.h"
+#include "backend_catalog.h"
 /* Mission 19: lv_sysmon's public API (lv_sysmon_show/hide_performance) has
  * no accessor for the FPS/CPU label object itself, only show/hide - moving
  * it into the LOG page's button row (see status_deck_ui()) needs the actual
@@ -764,6 +765,10 @@ static lv_obj_t *recording_repo_ctrl;      /* wide repository chooser along the 
 static lv_obj_t *recording_repo_label;
 static lv_obj_t *recording_project_ctrl;   /* project selector on the recording overlay - NOTE only */
 static lv_obj_t *recording_project_label;
+/* The cue toast on the recording overlay - see project_tap_cb(). */
+static lv_obj_t *recording_cue_panel;
+static lv_obj_t *recording_cue_label;
+static lv_timer_t *recording_cue_timer;
 static lv_obj_t *recording_id_label;
 static lv_obj_t *recording_dot;
 static lv_obj_t *recording_status_label;
@@ -888,7 +893,7 @@ static void render_settings_panel(void)
     lv_label_set_text(settings_api_label, buf);
 
     if (settings_repo_label) {
-        lv_label_set_text(settings_repo_label, repo_selector_get_label());
+        lv_label_set_text(settings_repo_label, backend_catalog_repo_label());
     }
 }
 
@@ -1173,6 +1178,27 @@ static lv_obj_t *page_panel(lv_obj_t *page, int y, int h)
     return panel;
 }
 
+/* A sub-page's name, sitting in the band beside the HOME button.
+ *
+ * It earns its place because of what the nav change took away: with only HOME
+ * showing on a sub-page, nothing else says which page you are on - the
+ * highlighted tab that used to answer that is gone with the other three
+ * buttons. SETTINGS already had a centred title of its own; this makes it the
+ * rule rather than the exception, and puts it where the corner button leaves a
+ * gap instead of competing with the content below.
+ *
+ * x=104 clears the 96px-wide button plus a margin; y=12 centers a 32px line
+ * against the button's own y 2..54. Content on every page starts at y=58,
+ * below both. */
+static void page_title(lv_obj_t *page, const char *text)
+{
+    lv_obj_t *label = lv_label_create(page);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_color(label, lv_palette_main(LV_PALETTE_BLUE), 0);
+    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 104, 12);
+}
+
 static void refresh_project_label(void);
 
 static void render_recording_overlay(void)
@@ -1231,7 +1257,7 @@ static void render_recording_overlay(void)
 
     if (vst.state == VOICE_STATE_GRAPH_ACTIVE) {
         lv_obj_clear_flag(recording_repo_ctrl, LV_OBJ_FLAG_HIDDEN);
-        lv_label_set_text(recording_repo_label, repo_selector_get_label());
+        lv_label_set_text(recording_repo_label, backend_catalog_repo_label());
     } else {
         lv_obj_add_flag(recording_repo_ctrl, LV_OBJ_FLAG_HIDDEN);
     }
@@ -1503,73 +1529,91 @@ static void volume_down_button_cb(lv_event_t *e)
     refresh_volume_label();
 }
 
-/* Project selector (Mission 20 side control) - see project_selector.h.
- * PROJECT_OPTIONS fixes both the cycle order and each option's on-screen
- * text in one place, so project_up_button_cb/project_down_button_cb and
- * refresh_project_label() never have to be kept in sync by hand. */
-typedef struct {
-    project_selection_t value;
-    const char *text;
-} project_option_t;
-
-static const project_option_t PROJECT_OPTIONS[] = {
-    { PROJECT_SELECTION_VAN1, "VAN1" },
-    { PROJECT_SELECTION_VAN2, "VAN2" },
-    { PROJECT_SELECTION_GENERAL, "GEN" },
-    { PROJECT_SELECTION_NONE, "NONE" },
-};
-#define PROJECT_OPTION_COUNT (sizeof(PROJECT_OPTIONS) / sizeof(PROJECT_OPTIONS[0]))
-
-static int project_option_index(project_selection_t sel)
-{
-    for (size_t i = 0; i < PROJECT_OPTION_COUNT; i++) {
-        if (PROJECT_OPTIONS[i].value == sel) {
-            return (int)i;
-        }
-    }
-    return 0;
-}
-
-/* Two labels now: the HOME control and the one on the recording overlay.
- * Both are driven from project_selector_get(), so whichever is tapped, the
- * other agrees - there is one selection, shown in two places, never two
- * selections to reconcile. */
+/* Project selector (Mission 20 side control), now driven by the catalog the
+ * backend fetches from the AI-OS rather than a compiled-in list of four - see
+ * backend_catalog.h. The options, their order and their labels all come from
+ * Notion now, so there is nothing left here to keep in sync by hand.
+ *
+ * Two labels: the HOME control and the one on the recording overlay. Both are
+ * driven from the same selection, so whichever is tapped, the other agrees -
+ * there is one selection, shown in two places, never two to reconcile. (The
+ * HOME one is currently unbuilt; the guard is what makes that harmless.) */
 static void refresh_project_label(void)
 {
-    int idx = project_option_index(project_selector_get());
+    const char *text = backend_catalog_project_label();
     if (project_label) {
-        lv_label_set_text(project_label, PROJECT_OPTIONS[idx].text);
+        lv_label_set_text(project_label, text);
     }
     if (recording_project_label) {
-        lv_label_set_text(recording_project_label, PROJECT_OPTIONS[idx].text);
+        lv_label_set_text(recording_project_label, text);
     }
+}
+
+/* The cue toast. A 12-character label is not enough to be sure you picked the
+ * right project - "VAN FLIP" and "VAN DEAL" are one glance apart - so tapping
+ * the selector shows the AI-OS's own Cue for it, the "2-6 word memory hook"
+ * that database already maintains for exactly this purpose.
+ *
+ * Transient rather than always-on: the overlay is busy during a capture and
+ * the cue is a confirmation, not a status. It hides itself after
+ * CUE_VISIBLE_MS, or on the next tap. */
+#define CUE_VISIBLE_MS 2500
+
+static void hide_project_cue(lv_timer_t *timer)
+{
+    if (recording_cue_panel) {
+        lv_obj_add_flag(recording_cue_panel, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (timer) {
+        lv_timer_delete(timer);
+    }
+    recording_cue_timer = NULL;
+}
+
+static void project_tap_cb(lv_event_t *e)
+{
+    (void)e;
+    if (!recording_cue_panel || !recording_cue_label) {
+        return;
+    }
+    /* One timer at a time: tapping again should restart the dwell, not stack
+     * up timers that each hide a panel the operator is still reading. */
+    if (recording_cue_timer) {
+        lv_timer_delete(recording_cue_timer);
+        recording_cue_timer = NULL;
+    }
+
+    const char *cue = backend_catalog_project_cue();
+    /* Say which, honestly. "No cue set" is a fact about the AI-OS page worth
+     * knowing; blanking the panel would just look broken. */
+    lv_label_set_text(recording_cue_label, (cue && cue[0] != '\0') ? cue : "no cue set");
+    lv_obj_clear_flag(recording_cue_panel, LV_OBJ_FLAG_HIDDEN);
+    recording_cue_timer = lv_timer_create(hide_project_cue, CUE_VISIBLE_MS, NULL);
 }
 
 static void recording_repo_next_cb(lv_event_t *e)
 {
-    repo_selector_next();
-    lv_label_set_text(recording_repo_label, repo_selector_get_label());
+    backend_catalog_repo_next();
+    lv_label_set_text(recording_repo_label, backend_catalog_repo_label());
 }
 
 static void recording_repo_prev_cb(lv_event_t *e)
 {
-    repo_selector_prev();
-    lv_label_set_text(recording_repo_label, repo_selector_get_label());
+    backend_catalog_repo_prev();
+    lv_label_set_text(recording_repo_label, backend_catalog_repo_label());
 }
 
 static void project_up_button_cb(lv_event_t *e)
 {
-    int idx = project_option_index(project_selector_get());
-    idx = (idx + 1) % (int)PROJECT_OPTION_COUNT;
-    project_selector_set(PROJECT_OPTIONS[idx].value);
+    (void)e;
+    backend_catalog_project_next();
     refresh_project_label();
 }
 
 static void project_down_button_cb(lv_event_t *e)
 {
-    int idx = project_option_index(project_selector_get());
-    idx = (idx - 1 + (int)PROJECT_OPTION_COUNT) % (int)PROJECT_OPTION_COUNT;
-    project_selector_set(PROJECT_OPTIONS[idx].value);
+    (void)e;
+    backend_catalog_project_prev();
     refresh_project_label();
 }
 
@@ -1614,6 +1658,24 @@ static void set_active_page(app_page_t page)
         }
         lv_obj_set_style_bg_color(nav_buttons[i], i == (int)page ? lv_palette_main(LV_PALETTE_BLUE)
                                                                    : lv_palette_main(LV_PALETTE_GREY), 0);
+    }
+
+    /* Nav visibility: all four corners on HOME, HOME alone everywhere else.
+     * Four buttons on every page was too much furniture - on a 320x240 panel
+     * they crowd the content the page exists to show, and three of the four
+     * are always wrong for where you already are. So HOME is the hub: from it
+     * you pick a destination, and from a destination the only move is back.
+     * That costs one extra tap to go SENS -> LOG, which is rare, and buys the
+     * whole screen back on the pages that actually need it.
+     *
+     * HOME stays in the top-left corner rather than moving to a "back" slot,
+     * so the one button that is always present is always in the same place. */
+    for (int i = 0; i < APP_PAGE_COUNT; i++) {
+        if (page == APP_PAGE_HOME || i == (int)APP_PAGE_HOME) {
+            lv_obj_clear_flag(nav_buttons[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(nav_buttons[i], LV_OBJ_FLAG_HIDDEN);
+        }
     }
 
     /* Mission 15: the LVGL-builtin FPS/CPU readout (CONFIG_LV_USE_PERF_
@@ -1950,6 +2012,8 @@ void status_deck_ui(lv_obj_t *scr)
 
     /* ---- SETTINGS: the things HOME used to carry -------------------- */
 
+    page_title(page_set, "SETTINGS");
+
     /* Took over the nav slot TALK vacated. Everything here was previously
      * competing with the microphone for space on HOME: uptime, Wi-Fi,
      * volume, and the selector that used to show project names.
@@ -1958,40 +2022,34 @@ void status_deck_ui(lv_obj_t *scr)
      * scroller showed the AI-OS project list (VAN1/VAN2/GEN) which was
      * easy to mistake for the GitHub repositories - they are different
      * lists for different commands. This one shows the actual repositories,
-     * fetched from the backend (repo_selector.h), so what is on screen is
+     * fetched from the backend (backend_catalog.h), so what is on screen is
      * what a GO capture would file against. The project selector now lives
      * only on the NOTE recording screen, where it is actually used. */
-    page_panel(page_set, 46, 40);    /* status:  uptime / API / Wi-Fi */
-    page_panel(page_set, 92, 48);    /* volume */
-    page_panel(page_set, 146, 48);   /* repository GO files to */
-
-    lv_obj_t *set_title = lv_label_create(page_set);
-    lv_label_set_text(set_title, "SETTINGS");
-    lv_obj_set_style_text_font(set_title, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(set_title, lv_palette_main(LV_PALETTE_BLUE), 0);
-    lv_obj_align(set_title, LV_ALIGN_TOP_MID, 0, 8);
+    page_panel(page_set, 58, 40);    /* status:  uptime / API / Wi-Fi */
+    page_panel(page_set, 104, 48);    /* volume */
+    page_panel(page_set, 158, 48);   /* repository GO files to */
 
     telemetry_label = lv_label_create(page_set);
-    lv_obj_align(telemetry_label, LV_ALIGN_TOP_LEFT, 14, 58);
+    lv_obj_align(telemetry_label, LV_ALIGN_TOP_LEFT, 14, 70);
 
     conn_label = lv_label_create(page_set);
-    lv_obj_align(conn_label, LV_ALIGN_TOP_RIGHT, -14, 58);
+    lv_obj_align(conn_label, LV_ALIGN_TOP_RIGHT, -14, 70);
     lv_label_set_text(conn_label, "WIFI: OFF");
 
     /* The widget on HOME carries backend reachability as motion and colour,
      * which is right for a glance across a room but says nothing about
      * latency. Spelling it out here is what a settings page is for. */
     settings_api_label = lv_label_create(page_set);
-    lv_obj_align(settings_api_label, LV_ALIGN_TOP_MID, 0, 58);
+    lv_obj_align(settings_api_label, LV_ALIGN_TOP_MID, 0, 70);
     lv_label_set_text(settings_api_label, "API: ?");
 
     lv_obj_t *vol_caption = lv_label_create(page_set);
     lv_label_set_text(vol_caption, "VOLUME");
-    lv_obj_align(vol_caption, LV_ALIGN_TOP_LEFT, 14, 108);
+    lv_obj_align(vol_caption, LV_ALIGN_TOP_LEFT, 14, 120);
 
     lv_obj_t *vol_down = lv_btn_create(page_set);
     lv_obj_set_size(vol_down, 46, 34);
-    lv_obj_align(vol_down, LV_ALIGN_TOP_LEFT, 130, 99);
+    lv_obj_align(vol_down, LV_ALIGN_TOP_LEFT, 130, 111);
     lv_obj_add_event_cb(vol_down, volume_down_button_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *vol_down_label = lv_label_create(vol_down);
     lv_label_set_text(vol_down_label, "-");
@@ -2000,11 +2058,11 @@ void status_deck_ui(lv_obj_t *scr)
 
     volume_label = lv_label_create(page_set);
     lv_obj_set_style_text_font(volume_label, &lv_font_montserrat_20, 0);
-    lv_obj_align(volume_label, LV_ALIGN_TOP_LEFT, 192, 102);
+    lv_obj_align(volume_label, LV_ALIGN_TOP_LEFT, 192, 114);
 
     lv_obj_t *vol_up = lv_btn_create(page_set);
     lv_obj_set_size(vol_up, 46, 34);
-    lv_obj_align(vol_up, LV_ALIGN_TOP_RIGHT, -14, 99);
+    lv_obj_align(vol_up, LV_ALIGN_TOP_RIGHT, -14, 111);
     lv_obj_add_event_cb(vol_up, volume_up_button_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *vol_up_label = lv_label_create(vol_up);
     lv_label_set_text(vol_up_label, "+");
@@ -2013,11 +2071,11 @@ void status_deck_ui(lv_obj_t *scr)
 
     lv_obj_t *repo_caption = lv_label_create(page_set);
     lv_label_set_text(repo_caption, "GO FILES TO");
-    lv_obj_align(repo_caption, LV_ALIGN_TOP_LEFT, 14, 162);
+    lv_obj_align(repo_caption, LV_ALIGN_TOP_LEFT, 14, 174);
 
     lv_obj_t *set_repo_prev = lv_btn_create(page_set);
     lv_obj_set_size(set_repo_prev, 46, 34);
-    lv_obj_align(set_repo_prev, LV_ALIGN_TOP_LEFT, 130, 153);
+    lv_obj_align(set_repo_prev, LV_ALIGN_TOP_LEFT, 130, 165);
     lv_obj_add_event_cb(set_repo_prev, recording_repo_prev_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *set_repo_prev_label = lv_label_create(set_repo_prev);
     lv_label_set_text(set_repo_prev_label, "<");
@@ -2025,12 +2083,12 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_center(set_repo_prev_label);
 
     settings_repo_label = lv_label_create(page_set);
-    lv_obj_align(settings_repo_label, LV_ALIGN_TOP_LEFT, 186, 162);
+    lv_obj_align(settings_repo_label, LV_ALIGN_TOP_LEFT, 186, 174);
     lv_label_set_text(settings_repo_label, "...");
 
     lv_obj_t *set_repo_next = lv_btn_create(page_set);
     lv_obj_set_size(set_repo_next, 46, 34);
-    lv_obj_align(set_repo_next, LV_ALIGN_TOP_RIGHT, -14, 153);
+    lv_obj_align(set_repo_next, LV_ALIGN_TOP_RIGHT, -14, 165);
     lv_obj_add_event_cb(set_repo_next, recording_repo_next_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *set_repo_next_label = lv_label_create(set_repo_next);
     lv_label_set_text(set_repo_next_label, ">");
@@ -2041,7 +2099,9 @@ void status_deck_ui(lv_obj_t *scr)
 
     /* ---- SENS: three stacked trend charts, each a third of the page ----- */
 
-    page_panel(page_sens, 40, 150);
+    page_title(page_sens, "SENSORS");
+
+    page_panel(page_sens, 58, 150);
 
     /* Band layout: 144 / 3 = 48px each, inside y=48..192 to clear the
      * corner nav buttons. Same
@@ -2053,11 +2113,11 @@ void status_deck_ui(lv_obj_t *scr)
      * chart alone spanning the full 304px width. */
     lv_obj_t *accel_caption = lv_label_create(page_sens);
     lv_label_set_text(accel_caption, "ACCEL (G)  0.50 - 1.50");
-    lv_obj_align(accel_caption, LV_ALIGN_TOP_MID, 0, 46);
+    lv_obj_align(accel_caption, LV_ALIGN_TOP_MID, 0, 64);
 
     accel_value_label = lv_label_create(page_sens);
     lv_label_set_text(accel_value_label, "--");
-    lv_obj_align(accel_value_label, LV_ALIGN_TOP_LEFT, 8, 72);
+    lv_obj_align(accel_value_label, LV_ALIGN_TOP_LEFT, 8, 90);
 
     /* Acceleration-magnitude trend line, zoomed to 0.50-1.50g (was a fixed
      * 0.00-4.00g). At rest the board reads ~1.00g regardless of
@@ -2070,7 +2130,7 @@ void status_deck_ui(lv_obj_t *scr)
      * value that actually matters. */
     chart = lv_chart_create(page_sens);
     lv_obj_set_size(chart, 250, 32);
-    lv_obj_align(chart, LV_ALIGN_TOP_LEFT, 62, 60);
+    lv_obj_align(chart, LV_ALIGN_TOP_LEFT, 62, 78);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(chart, SENSOR_HISTORY_LEN);
     lv_chart_set_update_mode(chart, LV_CHART_UPDATE_MODE_SHIFT);
@@ -2085,15 +2145,15 @@ void status_deck_ui(lv_obj_t *scr)
      * mislabeled) to F before pushing it here or into temp_value_label. */
     lv_obj_t *temp_caption = lv_label_create(page_sens);
     lv_label_set_text(temp_caption, "TEMP (F)  60 - 90");
-    lv_obj_align(temp_caption, LV_ALIGN_TOP_MID, 0, 93);
+    lv_obj_align(temp_caption, LV_ALIGN_TOP_MID, 0, 111);
 
     temp_value_label = lv_label_create(page_sens);
     lv_label_set_text(temp_value_label, "--");
-    lv_obj_align(temp_value_label, LV_ALIGN_TOP_LEFT, 8, 119);
+    lv_obj_align(temp_value_label, LV_ALIGN_TOP_LEFT, 8, 137);
 
     temp_chart = lv_chart_create(page_sens);
     lv_obj_set_size(temp_chart, 250, 32);
-    lv_obj_align(temp_chart, LV_ALIGN_TOP_LEFT, 62, 107);
+    lv_obj_align(temp_chart, LV_ALIGN_TOP_LEFT, 62, 125);
     lv_chart_set_type(temp_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(temp_chart, HUMITURE_HISTORY_LEN);
     lv_chart_set_update_mode(temp_chart, LV_CHART_UPDATE_MODE_SHIFT);
@@ -2102,15 +2162,15 @@ void status_deck_ui(lv_obj_t *scr)
 
     lv_obj_t *humi_caption = lv_label_create(page_sens);
     lv_label_set_text(humi_caption, "HUMIDITY (%)  0 - 100");
-    lv_obj_align(humi_caption, LV_ALIGN_TOP_MID, 0, 140);
+    lv_obj_align(humi_caption, LV_ALIGN_TOP_MID, 0, 158);
 
     humi_value_label = lv_label_create(page_sens);
     lv_label_set_text(humi_value_label, "--");
-    lv_obj_align(humi_value_label, LV_ALIGN_TOP_LEFT, 8, 166);
+    lv_obj_align(humi_value_label, LV_ALIGN_TOP_LEFT, 8, 184);
 
     humi_chart = lv_chart_create(page_sens);
     lv_obj_set_size(humi_chart, 250, 32);
-    lv_obj_align(humi_chart, LV_ALIGN_TOP_LEFT, 62, 154);
+    lv_obj_align(humi_chart, LV_ALIGN_TOP_LEFT, 62, 172);
     lv_chart_set_type(humi_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(humi_chart, HUMITURE_HISTORY_LEN);
     lv_chart_set_update_mode(humi_chart, LV_CHART_UPDATE_MODE_SHIFT);
@@ -2118,6 +2178,8 @@ void status_deck_ui(lv_obj_t *scr)
     humi_series = lv_chart_add_series(humi_chart, lv_palette_main(LV_PALETTE_CYAN), LV_CHART_AXIS_PRIMARY_Y);
 
     /* ---- LOG: Black Box panel (as tall as the page allows) + NET/SND/CLR */
+
+    page_title(page_log, "LOG");
 
     /* No "EVENT LOG" title label inside the panel (Mission 05 had one) -
      * the panel's content is self-evident without it. Shows all
@@ -2127,7 +2189,7 @@ void status_deck_ui(lv_obj_t *scr)
      * EVENT_DISPLAY_LINES's comment). */
     lv_obj_t *log_panel = lv_obj_create(page_log);
     lv_obj_set_size(log_panel, 304, 84);
-    lv_obj_align(log_panel, LV_ALIGN_TOP_MID, 0, 46);
+    lv_obj_align(log_panel, LV_ALIGN_TOP_MID, 0, 58);
     apply_panel_style(log_panel);
     lv_obj_set_style_pad_all(log_panel, 6, 0);
 
@@ -2142,7 +2204,7 @@ void status_deck_ui(lv_obj_t *scr)
      * label reparented in below. */
     lv_obj_t *log_btn_row = lv_obj_create(page_log);
     lv_obj_set_size(log_btn_row, 304, 44);
-    lv_obj_align(log_btn_row, LV_ALIGN_TOP_MID, 0, 142);
+    lv_obj_align(log_btn_row, LV_ALIGN_TOP_MID, 0, 154);
     lv_obj_set_style_pad_all(log_btn_row, 2, 0);
     lv_obj_set_style_pad_column(log_btn_row, 5, 0);
     lv_obj_clear_flag(log_btn_row, LV_OBJ_FLAG_SCROLLABLE);
@@ -2372,7 +2434,7 @@ void status_deck_ui(lv_obj_t *scr)
 
     /* Project selector, same up/label/down shape as the HOME control so it
      * reads as the same thing in a second place - and it is: both drive
-     * project_selector_set(), there is only ever one selection.
+     * the same catalog selection, there is only ever one selection.
      *
      * Sits at the overlay's left edge (x 6..44), which is the only region
      * clear of everything else here: CANCEL spans x 90..230, the REC dot
@@ -2397,7 +2459,12 @@ void status_deck_ui(lv_obj_t *scr)
     recording_project_label = lv_label_create(recording_project_ctrl);
     lv_obj_set_style_text_font(recording_project_label, &lv_font_montserrat_14, 0);
     lv_obj_align(recording_project_label, LV_ALIGN_CENTER, 0, 0);
-    lv_label_set_text(recording_project_label, "NONE");
+    lv_label_set_text(recording_project_label, "...");
+    /* The panel itself takes the tap, not the label: the label is only as wide
+     * as its text, and the +/- buttons already own the top and bottom of the
+     * panel, so the middle band is both the obvious target and a free one. */
+    lv_obj_add_flag(recording_project_ctrl, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(recording_project_ctrl, project_tap_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *rec_project_down = lv_btn_create(recording_project_ctrl);
     lv_obj_set_size(rec_project_down, 40, 34);
@@ -2420,6 +2487,26 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_set_size(recording_repo_ctrl, 268, 54);
     lv_obj_align(recording_repo_ctrl, LV_ALIGN_BOTTOM_MID, 0, -6);
     apply_panel_style(recording_repo_ctrl);
+
+    /* Cue toast. Deliberately on top of everything else on the overlay rather
+     * than tucked into a free corner: there is no 230px band spare here, and a
+     * cue is read for two seconds and dismissed, so briefly covering the
+     * counter costs nothing. Created last so it is above its siblings in the
+     * child order. */
+    recording_cue_panel = lv_obj_create(recording_overlay);
+    lv_obj_set_size(recording_cue_panel, 230, 56);
+    lv_obj_align(recording_cue_panel, LV_ALIGN_CENTER, 12, 0);
+    apply_panel_style(recording_cue_panel);
+    lv_obj_set_style_bg_opa(recording_cue_panel, LV_OPA_COVER, 0);
+    lv_obj_add_flag(recording_cue_panel, LV_OBJ_FLAG_HIDDEN);
+
+    recording_cue_label = lv_label_create(recording_cue_panel);
+    lv_label_set_long_mode(recording_cue_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(recording_cue_label, 210);
+    lv_obj_set_style_text_align(recording_cue_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(recording_cue_label, &lv_font_montserrat_14, 0);
+    lv_obj_center(recording_cue_label);
+    lv_label_set_text(recording_cue_label, "");
     lv_obj_add_flag(recording_repo_ctrl, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *repo_prev = lv_btn_create(recording_repo_ctrl);
@@ -2572,7 +2659,7 @@ void status_deck_ui(lv_obj_t *scr)
     backend_health_init();
     /* Also after wifi_mgr_init - it waits for ONLINE before its first fetch,
      * and stops once the catalog loads. */
-    repo_selector_init();
+    backend_catalog_init();
 
     render_command_overlay();
     render_recording_overlay();
