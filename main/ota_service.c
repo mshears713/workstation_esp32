@@ -553,6 +553,21 @@ static void ota_task(void *arg)
 {
     (void)arg;
 
+    /* This task is created early in app_main, before the display and the UI,
+     * because 6KB of contiguous internal RAM is easy to find then and very
+     * hard to find afterwards - the first attempt created it last and it
+     * failed outright on a boot where the largest free block had fallen to
+     * 7.6KB, which left a freshly installed image with nothing to validate
+     * it and a rollback on the next reset.
+     *
+     * The cost of starting early is that Wi-Fi and the backend poller do not
+     * exist yet; status_deck_ui() starts both. So wait for the signal that
+     * says they do. The health gate's clock starts here rather than at boot,
+     * which is also the fairer place for it to start. */
+    while (!s_ui_ready) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
     /* Probation first. Nothing else matters until we know whether this image
      * is staying. */
     if (firmware_is_pending_verify()) {

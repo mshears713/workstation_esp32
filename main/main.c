@@ -62,6 +62,18 @@ void app_main(void)
      * cheap way to tell "it installed and came back" from "it never left". */
     firmware_identity_log();
 
+    /* Before the display, deliberately. The updater needs 6KB of contiguous
+     * internal RAM for its stack, and internal RAM is the scarce resource on
+     * this board - once LVGL and the audio pipeline have taken their share
+     * the largest free block is around 7.6KB and the allocation can fail
+     * outright. It waits for ota_service_report_ui_ready() below before
+     * touching anything the UI starts. */
+    esp_err_t ota_err = ota_service_start();
+    if (ota_err != ESP_OK) {
+        ESP_LOGE("workstation", "OTA updater did not start: %s - USB updates only this boot",
+                 esp_err_to_name(ota_err));
+    }
+
     bsp_display_start();
 
     ESP_LOGI("workstation", "status deck starting (%s)", firmware_identity_summary());
@@ -71,19 +83,8 @@ void app_main(void)
     bsp_display_unlock();
     bsp_display_backlight_on();
 
-    /* The UI is on screen and status_deck_ui() has started Wi-Fi and the
-     * backend health poller. That is the health gate's definition of "this
-     * image got far enough to be worth keeping". */
+    /* Releases the updater, which has been waiting for exactly this: the UI
+     * is up and status_deck_ui() has started Wi-Fi and the backend poller.
+     * If this image arrived over the air, its probation clock starts now. */
     ota_service_report_ui_ready();
-
-    /* Not ESP_ERROR_CHECK. If the updater cannot start - it needs a few KB of
-     * internal RAM for its stack, and internal RAM is the scarce resource on
-     * this board - that is a device which cannot be updated wirelessly, not a
-     * device which should refuse to boot. An earlier version of this line did
-     * abort here, and turned a tight heap into a boot loop. */
-    esp_err_t ota_err = ota_service_start();
-    if (ota_err != ESP_OK) {
-        ESP_LOGE("workstation", "OTA updater did not start: %s - USB updates only this boot",
-                 esp_err_to_name(ota_err));
-    }
 }
