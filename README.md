@@ -1,6 +1,6 @@
-# Operation Homebound — Workstation Console
+﻿# Operation Homebound â€” Workstation Console
 
-## Dormant functionality — read this before any large change
+## Dormant functionality â€” read this before any large change
 
 Several complete, working features are kept in the tree with **no caller**.
 They were deliberately parked, not abandoned, and they are easy to delete by
@@ -13,17 +13,42 @@ item rather than discovering them by grep.**
 
 | What | Where | Why it is dormant |
 |---|---|---|
-| Van build log / entry pipeline | backend `app/entries/`, `app/api/entries_*`, firmware `main/entry_client.c` | GO used to record into it. GO became GitHub-issue capture (#8), so nothing calls it. The pipeline itself still works: transcribe → entry architect graph → Notion Sources + Van Build Log → semantic verifier. |
-| Local LangGraph notes route | backend `app/api/notes_*`, `app/voice/graph.py`, firmware `main/note_client.c` | SEND used this before moving to the Voice Inbox (#3). Writes nothing to Notion — results stay on disk as JSON. |
+| Van build log / entry pipeline | backend `app/entries/`, `app/api/entries_*`, firmware `main/entry_client.c` | GO used to record into it. GO became GitHub-issue capture (#8), so nothing calls it. The pipeline itself still works: transcribe â†’ entry architect graph â†’ Notion Sources + Van Build Log â†’ semantic verifier. |
+| Local LangGraph notes route | backend `app/api/notes_*`, `app/voice/graph.py`, firmware `main/note_client.c` | SEND used this before moving to the Voice Inbox (#3). Writes nothing to Notion â€” results stay on disk as JSON. |
 | Design-review graph | backend `app/graph/`, `app/api/runner.py`, `app/api/store.py`, `app/fixed_proposal.py`, firmware `main/graph_client.c` | GO's original one-shot trigger, before it recorded anything. Last run 2026-07-29. |
 | Single-shot multipart upload | firmware `main/multipart_upload.c` | Replaced by chunked streaming (`stream_upload.c`). Still referenced for its `multipart_text_field_t` typedef, so it cannot simply be deleted. |
 | Manual REC capture | firmware `audio_capture_start()` | The REC button was retired; voice commands are the only capture path now. |
-| Handshake | backend `/api/v1/handshake`, firmware `main/handshake_client.c` | Fires only from a manual SND button press on the LOG page. Not a health check — it ships accelerometer samples. Backend reachability is `backend_health.c` against `/health`. |
+| Handshake | backend `/api/v1/handshake`, firmware `main/handshake_client.c` | Fires only from a manual SND button press on the LOG page. Not a health check â€” it ships accelerometer samples. Backend reachability is `backend_health.c` against `/health`. |
 
 **One trap in particular:** `app/graph/model.py` and `app/graph/structured.py`
-live inside the dormant design-review package but are **live** — imported by
+live inside the dormant design-review package but are **live** â€” imported by
 `app/voice/graph.py`, `app/entries/graph.py` and `app/voice/audio_reliability.py`.
 The `app/graph/` package cannot be deleted wholesale.
+
+## How firmware gets on the device
+
+Firmware is built and deployed from **CLAWBOX** (Ubuntu, 192.168.1.71) over
+Wi-Fi. USB is now a recovery path, not the normal route.
+
+```
+cd /opt/workstation/repo && git pull
+workstation build && workstation publish && workstation deploy latest
+```
+
+Build, publish and deploy are separate on purpose: a commit never reaches the
+hardware until someone runs `deploy`. The device polls CLAWBOX once a
+minute, downloads into the inactive OTA slot, checks the image against a
+published SHA-256, and only marks it valid after it boots and passes a health
+check - otherwise it rolls back on its own.
+
+The backend the device talks to is a **separate repository**
+(`mshears713/workstation-backend`), running on CLAWBOX as
+`workstation-backend.service`. The `backend/` directory here is the old
+single-file version; see `backend/README.md`.
+
+**Full reference: [doc/OTA.md](doc/OTA.md)** - partition layout, the health
+gate, what is and is not cryptographically protected, what still needs a USB
+cable, and where everything lives on CLAWBOX.
 
 ## The console today
 
@@ -56,7 +81,7 @@ identical path.
 | **SEND** | 15 s | itself | Notion Voice Inbox |
 | **NOTE** | up to 20 min | STOP | Notion Voice Inbox, with a project |
 | **GO** | 15 s | itself | a GitHub issue on the selected repository |
-| **YES** | — | — | answers a pending spoken notification |
+| **YES** | â€” | â€” | answers a pending spoken notification |
 
 A bounded capture shows `00:07 of 15s` with a countdown bar and no SEND
 button - there is nothing to end early on a recording that ends itself.
@@ -92,10 +117,10 @@ always reflects the newest mission, not a growing pile of sibling folders.
 Each mission's pre-next-mission source snapshot is kept under `archive/`
 instead:
 
-- `archive/mission_09/` — the Earthside Handshake source as it stood right
+- `archive/mission_09/` â€” the Earthside Handshake source as it stood right
   before Mission 10 (Capture the Transmission) was added. (Wi-Fi credentials
   are never archived - see `.gitignore`.)
-- `archive/mission_10/` — the Capture the Transmission source (including
+- `archive/mission_10/` â€” the Capture the Transmission source (including
   `backend/`) as it stood right before Mission 11 (Computer Is Listening)
   was added.
 
@@ -109,23 +134,23 @@ last command, link status and diag status. Touch buttons drive a single
 `app_state_t`, and a compact on-screen event log shows the last few command
 events.
 
-- **Mission 06 — Live Data Deck:** real acceleration magnitude from the
+- **Mission 06 â€” Live Data Deck:** real acceleration magnitude from the
   onboard ICM42670 IMU, shown with an explicit current/stale/error status
   and a trend chart.
-- **Mission 07 — Black Box Recorder:** bounded structured event history,
+- **Mission 07 â€” Black Box Recorder:** bounded structured event history,
   reset-reason and boot-count capture, and a small set of NVS-persisted
   evidence that survives a reboot.
-- **Mission 08 — Connection Deck:** a Wi-Fi station lifecycle
+- **Mission 08 â€” Connection Deck:** a Wi-Fi station lifecycle
   (`main/wifi_manager.c`) with explicit DISCONNECTED / CONNECTING / ONLINE /
   RETRY_WAIT states, bounded retry backoff, a manual NET reconnect button,
   and network transitions fed into the Black Box.
-- **Mission 09 — Earthside Handshake:** an operator-triggered backend
+- **Mission 09 â€” Earthside Handshake:** an operator-triggered backend
   request (`main/handshake_client.c` + `backend/main.py`). The SND button
   sends a small JSON event to a local FastAPI service, which returns a
   server-generated `event_id`; request state (SENDING / ACCEPTED / TIMEOUT /
   NETWORK_ERROR / SERVER_ERROR / BAD_RESPONSE) is tracked separately from
   Wi-Fi state and fed into the Black Box.
-- **Mission 10 — Capture the Transmission:** bounded microphone capture
+- **Mission 10 â€” Capture the Transmission:** bounded microphone capture
   (`main/audio_capture.c`) against the verified esp-box-3 BSP mic path
   (ES7210 ADC over I2S, `bsp_audio_codec_microphone_init()` +
   `esp_codec_dev`). The REC button starts one 4.0s mono 16-bit/16kHz
@@ -137,7 +162,7 @@ events.
   below) - this mission does **not** add wake-word, transcription, or
   OpenAI calls, just microphone bring-up and getting the audio off the
   device as a playable WAV.
-- **Mission 11 — Computer Is Listening:** local, offline wake word and
+- **Mission 11 â€” Computer Is Listening:** local, offline wake word and
   command recognition (`main/voice_control.c`) using the official Espressif
   ESP-SR AFE/WakeNet9/MultiNet7 pipeline. Saying **"computer"** opens a short
   command window; saying **"capture," "go," "listen," or "okay"** within it

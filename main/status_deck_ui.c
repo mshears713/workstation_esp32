@@ -1,4 +1,4 @@
-/*
+﻿/*
  * SPDX-FileCopyrightText: 2021-2025 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: CC0-1.0
@@ -6,7 +6,7 @@
 
 /**
  * @file
- * @brief Mission 05/06/07/08/09/10 — Status Deck + Live Data Deck + Black
+ * @brief Mission 05/06/07/08/09/10 â€” Status Deck + Live Data Deck + Black
  *        Box Recorder + Connection Deck + Earthside Handshake + Capture
  *        the Transmission
  * @details Command-and-telemetry deck: touch controls drive a single
@@ -170,6 +170,9 @@
 #include "backend_catalog.h"
 #include "notification_client.h"
 #include "remote_client.h"
+#include "firmware_identity.h"
+#include "ota_service.h"
+#include "device_config.h"
 #include "audio_playback.h"
 #include "project_selector.h"
 #include "backend_catalog.h"
@@ -737,6 +740,11 @@ typedef enum {
      * there are only four corners, and browsing projects is something you do
      * occasionally, not something you need one tap away from anywhere. */
     APP_PAGE_PROJECTS,
+    /* Firmware identity and wireless-update state. Same reasoning as
+     * PROJECTS: reached from a button on SETTINGS, not from a corner of its
+     * own. You look at this page when you are deploying, or working out why
+     * a deployment did not land - rare, deliberate, and not worth a corner. */
+    APP_PAGE_FIRMWARE,
     APP_PAGE_COUNT,
 } app_page_t;
 
@@ -745,6 +753,16 @@ static lv_obj_t *page_sens;
 static lv_obj_t *page_log;
 static lv_obj_t *page_set;          /* SETTINGS - replaced TALK in the nav */
 static lv_obj_t *page_projects;     /* PROJECTS - reached from SETTINGS */
+static lv_obj_t *page_firmware;     /* FIRMWARE - reached from SETTINGS */
+
+/* FIRMWARE page labels. Refreshed once a second while the page is visible,
+ * from firmware_identity.h and ota_service.h - both of which are explicitly
+ * safe to read from any task, this one included. */
+static lv_obj_t *fw_version_label;
+static lv_obj_t *fw_build_label;
+static lv_obj_t *fw_backend_label;
+static lv_obj_t *fw_slot_label;
+static lv_obj_t *fw_ota_label;
 /* SETTINGS reuses telemetry_label / conn_label / volume_label - the same
  * objects HOME used to own, just reparented to this page. Only the two
  * genuinely new rows need their own handles. */
@@ -1206,6 +1224,7 @@ static void page_title(lv_obj_t *page, const char *text)
 }
 
 static void refresh_project_label(void);
+static void refresh_firmware_page(void);
 
 static void render_recording_overlay(void)
 {
@@ -1616,7 +1635,7 @@ static void send_handshake_button_cb(lv_event_t *e)
 static void set_active_page(app_page_t page)
 {
     lv_obj_t *pages[APP_PAGE_COUNT] = {
-        page_home, page_sens, page_log, page_set, page_projects,
+        page_home, page_sens, page_log, page_set, page_projects, page_firmware,
     };
     for (int i = 0; i < APP_PAGE_COUNT; i++) {
         if (i == (int)page) {
@@ -1704,6 +1723,23 @@ static void projects_nav_button_cb(lv_event_t *e)
     set_active_page(APP_PAGE_PROJECTS);
 }
 
+static void firmware_nav_button_cb(lv_event_t *e)
+{
+    (void)e;
+    refresh_firmware_page();
+    set_active_page(APP_PAGE_FIRMWARE);
+}
+
+/* Asks the updater to fetch CLAWBOX's manifest now rather than waiting for
+ * the next poll. It does NOT force an install - the device still installs
+ * only the version CLAWBOX has named as desired, so this button is "look
+ * again", not "update me". */
+static void firmware_check_button_cb(lv_event_t *e)
+{
+    (void)e;
+    ota_service_request_check();
+}
+
 /* A tapped command tile. The command id rides in the event user data rather
  * than being looked up from the button, so the grid can be reordered without
  * this needing to know. */
@@ -1754,8 +1790,50 @@ static void notification_stop_button_cb(lv_event_t *e)
  * make room for the WIFI/HS status grid; still available via ESP_LOGI if
  * ever needed for debugging. */
 
+static void refresh_firmware_page(void)
+{
+    if (fw_version_label == NULL) {
+        return;   /* page not built yet */
+    }
+
+    char buf[96];
+    lv_label_set_text(fw_version_label, firmware_version());
+
+    snprintf(buf, sizeof(buf), "built %s", firmware_built_at());
+    lv_label_set_text(fw_build_label, buf);
+
+    /* Which backend this device is actually talking to. Worth a line of its
+     * own: it is now a runtime value, so "what is it configured for" is a
+     * real question with a real answer rather than something you read off
+     * the source you think you flashed. */
+    snprintf(buf, sizeof(buf), "api %s", device_config_backend_base_url());
+    lv_label_set_text(fw_backend_label, buf);
+
+    snprintf(buf, sizeof(buf), "SLOT %s   %s",
+             firmware_running_partition_label(),
+             firmware_is_pending_verify() ? "ON PROBATION" : "CONFIRMED");
+    lv_label_set_text(fw_slot_label, buf);
+
+    ota_status_t o;
+    ota_service_get_status(&o);
+    if (o.state == OTA_STATE_DOWNLOADING) {
+        snprintf(buf, sizeof(buf), "OTA: downloading %d%%", o.progress_pct);
+    } else if (o.message[0] != '\0') {
+        snprintf(buf, sizeof(buf), "OTA: %s", o.message);
+    } else {
+        snprintf(buf, sizeof(buf), "OTA: %s", ota_service_state_label(o.state));
+    }
+    lv_label_set_text(fw_ota_label, buf);
+}
+
 static void telemetry_timer_cb(lv_timer_t *t)
 {
+    /* Only while it is on screen - this runs every second regardless of page,
+     * and redrawing five hidden labels is work nobody sees. */
+    if (page_firmware != NULL && !lv_obj_has_flag(page_firmware, LV_OBJ_FLAG_HIDDEN)) {
+        refresh_firmware_page();
+    }
+
     uint32_t uptime_s = (uint32_t)(esp_timer_get_time() / 1000000ULL);
 
     char buf[16];
@@ -1973,6 +2051,7 @@ void status_deck_ui(lv_obj_t *scr)
     page_sens = pages_init[APP_PAGE_SENS];
     page_log = pages_init[APP_PAGE_LOG];
     page_projects = pages_init[APP_PAGE_PROJECTS];
+    page_firmware = pages_init[APP_PAGE_FIRMWARE];
     page_set = pages_init[APP_PAGE_SET];
 
     /* ---- HOME: nothing but the microphone ---------------------------- */
@@ -2079,12 +2158,23 @@ void status_deck_ui(lv_obj_t *scr)
      * any of them. SETTINGS is where you go to look at how the workstation is
      * configured, and which projects it knows about is exactly that. */
     lv_obj_t *projects_btn = lv_btn_create(page_set);
-    lv_obj_set_size(projects_btn, 304, 28);
+    lv_obj_set_size(projects_btn, 148, 28);
     lv_obj_align(projects_btn, LV_ALIGN_TOP_LEFT, 8, 208);
     lv_obj_add_event_cb(projects_btn, projects_nav_button_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *projects_btn_label = lv_label_create(projects_btn);
-    lv_label_set_text(projects_btn_label, "PROJECTS  >");
+    lv_label_set_text(projects_btn_label, "PROJECTS >");
     lv_obj_center(projects_btn_label);
+
+    /* Shares the row PROJECTS used to have to itself. Firmware identity
+     * belongs next to it for the same reason: both answer "what is this
+     * workstation set up to do right now", which is what SETTINGS is for. */
+    lv_obj_t *firmware_btn = lv_btn_create(page_set);
+    lv_obj_set_size(firmware_btn, 148, 28);
+    lv_obj_align(firmware_btn, LV_ALIGN_TOP_RIGHT, -8, 208);
+    lv_obj_add_event_cb(firmware_btn, firmware_nav_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *firmware_btn_label = lv_label_create(firmware_btn);
+    lv_label_set_text(firmware_btn_label, "FIRMWARE >");
+    lv_obj_center(firmware_btn_label);
 
     refresh_volume_label();
 
@@ -2138,6 +2228,48 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_set_style_text_font(projects_page_cue, &lv_font_montserrat_14, 0);
     lv_obj_center(projects_page_cue);
     lv_label_set_text(projects_page_cue, "");
+
+    /* ---- FIRMWARE: what is running, and what the updater is doing ------ */
+
+    page_title(page_firmware, "FIRMWARE");
+
+    page_panel(page_firmware, 58, 70);    /* identity: version, build, backend */
+    page_panel(page_firmware, 134, 40);   /* which slot, and is it confirmed   */
+    page_panel(page_firmware, 180, 24);   /* what the updater is doing         */
+
+    fw_version_label = lv_label_create(page_firmware);
+    lv_obj_set_style_text_font(fw_version_label, &lv_font_montserrat_20, 0);
+    lv_obj_align(fw_version_label, LV_ALIGN_TOP_LEFT, 14, 64);
+    lv_label_set_text(fw_version_label, "...");
+
+    fw_build_label = lv_label_create(page_firmware);
+    lv_obj_set_style_text_font(fw_build_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(fw_build_label, LV_ALIGN_TOP_LEFT, 14, 94);
+    lv_label_set_text(fw_build_label, "");
+
+    fw_backend_label = lv_label_create(page_firmware);
+    lv_obj_set_style_text_font(fw_backend_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(fw_backend_label, LV_ALIGN_TOP_LEFT, 14, 110);
+    lv_label_set_text(fw_backend_label, "");
+
+    fw_slot_label = lv_label_create(page_firmware);
+    lv_obj_align(fw_slot_label, LV_ALIGN_TOP_LEFT, 14, 146);
+    lv_label_set_text(fw_slot_label, "");
+
+    fw_ota_label = lv_label_create(page_firmware);
+    lv_obj_set_style_text_font(fw_ota_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(fw_ota_label, LV_ALIGN_TOP_LEFT, 14, 184);
+    lv_label_set_text(fw_ota_label, "");
+
+    lv_obj_t *fw_check_btn = lv_btn_create(page_firmware);
+    lv_obj_set_size(fw_check_btn, 304, 28);
+    lv_obj_align(fw_check_btn, LV_ALIGN_TOP_LEFT, 8, 208);
+    lv_obj_add_event_cb(fw_check_btn, firmware_check_button_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *fw_check_lbl = lv_label_create(fw_check_btn);
+    lv_label_set_text(fw_check_lbl, "CHECK CLAWBOX NOW");
+    lv_obj_center(fw_check_lbl);
+
+    refresh_firmware_page();
 
     /* ---- SENS: three stacked trend charts, each a third of the page ----- */
 

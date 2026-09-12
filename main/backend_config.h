@@ -1,4 +1,4 @@
-/*
+﻿/*
  * SPDX-FileCopyrightText: 2021-2025 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: CC0-1.0
@@ -8,24 +8,27 @@
  * @file
  * @brief Backend address + endpoint paths - the one place to change any of
  *        this device's backend targets.
- * @details BACKEND_BASE_URL: update if the ESP32 needs to reach the backend
- *          at a different address - nothing else in handshake_client.c/
- *          audio_capture.c/note_client.c/graph_client.c needs to change.
+ * @details BACKEND_BASE_URL is no longer a literal. It expands to a call
+ *          into device_config.h, which reads the address from NVS at boot
+ *          and falls back to a compiled default. The address of the backend
+ *          is now operational state the device carries, not a build-time
+ *          constant, so relocating the server - which is exactly what this
+ *          migration did, from a laptop onto CLAWBOX - no longer requires a
+ *          USB reflash. See device_config.h for the precedence rules and for
+ *          why a change takes effect on the next boot rather than instantly.
  *
- *          Must be your development laptop's LAN IP (e.g. 192.168.x.x),
- *          never 127.0.0.1 or "localhost" - those resolve to the ESP32
- *          itself, not your laptop. Run `ipconfig` (Windows) and use the
- *          IPv4 address of your Wi-Fi adapter - the same network the
- *          ESP32 joins via main/wifi_credentials.h. Update this whenever
- *          that address changes (new DHCP lease, different network).
+ *          Every client below still writes `BACKEND_BASE_URL` exactly as it
+ *          did before; only the definition moved. The one thing that is no
+ *          longer legal is string-literal concatenation ("x" BACKEND_BASE_URL
+ *          "y"), which nothing here does.
  *
- *          Plain HTTP, no TLS - acceptable for this local learning mission
- *          only. Do not reuse this pattern for anything beyond the LAN.
- *
- *          Not git-ignored (unlike wifi_credentials.h): a LAN IP isn't a
- *          credential, and keeping it a normal tracked file is what makes
- *          it "change in one place" rather than "regenerate a local-only
- *          file after every clone."
+ *          Plain HTTP, no TLS, on a trusted LAN. That is unchanged by this
+ *          migration and is a deliberate scope boundary: firmware images are
+ *          fetched over a separate, certificate-pinned HTTPS channel (see
+ *          device_config_ota_base_url() and ota_service.c), because
+ *          installing code warrants a guarantee that fetching a notification
+ *          does not. Application traffic here is still readable by anything
+ *          on the same network.
  *
  *          NOTE_UPLOAD_PATH: where a voice-triggered SEND recording gets
  *          POSTed once it finishes - see note_client.c. multipart/form-data:
@@ -90,7 +93,12 @@
  */
 #pragma once
 
-#define BACKEND_BASE_URL "http://192.168.1.65:8000"
+#include "device_config.h"
+
+/* Resolves at run time to the NVS-stored address, or to
+ * DEVICE_CONFIG_DEFAULT_BACKEND_URL when nothing is stored. Expands to a
+ * `const char *`: valid as a "%s" argument, not as part of a literal. */
+#define BACKEND_BASE_URL (device_config_backend_base_url())
 
 /* Chunk uploads run while the recording is still in progress and must fit,
  * retries included, inside audio_capture.c's one spare buffer of slack

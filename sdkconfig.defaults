@@ -1,18 +1,30 @@
-# This file was generated using idf.py save-defconfig. It can be edited manually.
+﻿# This file was generated using idf.py save-defconfig. It can be edited manually.
 # Espressif IoT Development Framework (ESP-IDF) Project Minimal Configuration
 #
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_BSP_SELECT_ESP_BOX_3=y
 
-CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_CODEC_I2C_BACKWARD_COMPATIBLE=n
 
-# Mission 08: the default 1M single-app partition (partitions_singleapp.csv)
-# is too small once esp_wifi/esp_netif/lwip are linked in (~1.2MB binary).
-# Switches to ESP-IDF's built-in 1500K single-app table - still comfortably
-# inside the 4MB flash above, no custom partitions.csv needed.
-CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+# Custom dual-slot OTA table. The built-in single-app tables have no otadata
+# and no second app slot, so a wireless update has nowhere to be written and
+# nothing to fall back to. partitions.csv documents the sizing; the short
+# version is 5504K per slot on the 16MB flash above, with the ESP-SR model
+# partition kept separate and nvs left at its original offset so the Black
+# Box survives the migration.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Rollback protection. A freshly installed image boots in PENDING_VERIFY and
+# is on probation: ota_service.c runs a bounded health check (NVS, UI, Wi-Fi,
+# one successful backend call) and only then calls
+# esp_ota_mark_app_valid_cancel_rollback(). An image that crashes or fails
+# that check before marking itself valid is abandoned on the next reset and
+# the bootloader returns to the previous slot. Without this the first bad
+# wireless build would mean a drive home and a USB cable.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
 ## LVGL9 ##
 CONFIG_LV_CONF_SKIP=y

@@ -1,17 +1,59 @@
-# Espressif ESP32 Partition Table
-# Name,     Type, SubType, Offset,   Size, Flags
-# Mission 11: switched from the default single-app-large table to a custom
-# one so a "model" partition can hold the WakeNet9 (computer) + MultiNet7
-# (English) models ESP-SR flashes at build time - see the Model Selection
-# and Loading doc (idf.py flash writes this partition automatically from
-# whatever WakeNet/MultiNet models are enabled in sdkconfig). Sized to match
-# Espressif's own combined wake-word + English-command example
-# (esp-skainet/examples/en_speech_commands_recognition/partitions.csv), which
-# needs the same model mix. nvs keeps its existing 24K size so the Mission 07
-# Black Box's persisted NVS layout (boot_count/last_fault/last_cmd) is
-# unaffected; factory grows to 3200K, well past Mission 10's app image size,
-# to leave headroom for the AFE/WakeNet/MultiNet code this mission links in.
-nvs,      data, nvs,     ,        0x6000,
-phy_init, data, phy,     ,        0x1000,
-factory,  app,  factory, 0x010000, 3200K,
-model,    data, spiffs,  ,        5168K,
+# Espressif ESP32 Partition Table - WORKSTATION (ESP32-S3-BOX-3, 16MB flash)
+#
+# Dual-slot OTA layout. Replaces the single factory-app table that preceded
+# it; that table was written when firmware only ever arrived over USB, and it
+# had no otadata, no second app slot, and therefore no way to install or undo
+# a wireless update.
+#
+# Sizing comes from measurement, not from round numbers:
+#   - flash is 16MB, read off the chip (GigaDevice c8/6018, esptool flash_id)
+#     and matching CONFIG_ESPTOOLPY_FLASHSIZE_16MB
+#   - the application at the time of the migration was 2,618,736 bytes
+#   - srmodels.bin (WakeNet9 "computer" + MultiNet7 English) was 3,052,127
+#     bytes, inside a model partition historically sized 5168K
+#
+# Each OTA slot is 5504K (0x560000) - 2.1x the application as it stands, so
+# ESP-SR and LVGL have somewhere to grow without another flash-layout change.
+#
+# NO FACTORY PARTITION, on purpose. Keeping one would mean three app-sized
+# regions in the space two fit comfortably: 16MB minus the 5248K the speech
+# models need leaves about 10.6MB for applications, which is 3.5MB per slot
+# across three slots - barely above today's 2.5MB image, and shrinking. With
+# two slots the previous known-good firmware IS the recovery image, the
+# bootloader falls back to it automatically when a new image fails its health
+# check (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE), and USB recovery remains
+# available for the cases a factory app would not have survived anyway
+# (a corrupt bootloader, a bad partition table). See doc/OTA.md.
+#
+# nvs KEEPS ITS ORIGINAL OFFSET (0x9000) AND SIZE (0x6000). This is the one
+# line in the table that must not move: the Mission 07 Black Box
+# (boot_count/last_fault/last_cmd) and the runtime backend address written by
+# device_config.c both live there, and relocating the partition would discard
+# both. Everything after it moved; nothing before it did.
+#
+# The model partition changed offset (0x330000 -> 0xAE0000) but not its role.
+# ESP-SR models are flashed over USB by `idf.py flash`, are not part of an
+# application OTA, and are versioned by the build that generated them. Model
+# updates remain a USB operation - see doc/OTA.md, "What still needs USB".
+#
+# Layout, with no gaps except the 56K of alignment padding before ota_0
+# (app partitions must start on a 64K boundary; otadata ends at 0x12000):
+#
+#   0x000000  bootloader        (before the table, 32K available)
+#   0x008000  partition table
+#   0x009000  nvs           24K
+#   0x00F000  phy_init       4K
+#   0x010000  otadata        8K
+#   0x012000  -- 56K alignment padding --
+#   0x020000  ota_0       5504K
+#   0x580000  ota_1       5504K
+#   0xAE0000  model       5248K
+#   0x1000000 end of flash (exactly)
+#
+# Name,     Type, SubType, Offset,    Size,     Flags
+nvs,        data, nvs,     0x9000,    0x6000,
+phy_init,   data, phy,     0xF000,    0x1000,
+otadata,    data, ota,     0x10000,   0x2000,
+ota_0,      app,  ota_0,   0x20000,   0x560000,
+ota_1,      app,  ota_1,   0x580000,  0x560000,
+model,      data, spiffs,  0xAE0000,  0x520000,
