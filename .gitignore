@@ -6,3 +6,8 @@ main/wifi_credentials.h
 captures/*.wav
 __pycache__/
 .cockpit32/
+
+# Private keys never belong here. The OTA certificate in main/certs is public
+# and is committed on purpose; its key lives only on CLAWBOX.
+*.key
+*.pem.key

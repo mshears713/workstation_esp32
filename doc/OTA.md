@@ -356,6 +356,32 @@ fit in the largest free block.
 If a future change makes internal RAM tighter still, the OTA task may fail to
 start. That is logged and survivable - the device boots and works, it just
 cannot update itself until a USB flash frees something up.
+## 9c. Two failures worth knowing about
+
+Both were found by running the thing, not by reading it, and both are the
+same underlying fact: internal RAM is the constraint on this board.
+
+**The hardware AES accelerator runs out of DMA memory on a long download.**
+The first real wireless install died 593KB into a 2.6MB image with
+`esp-aes: Failed to allocate memory`. The accelerator wants a DMA-capable
+internal buffer for every record it decrypts; a short API call survives that,
+a multi-megabyte TLS transfer does not. `CONFIG_MBEDTLS_HARDWARE_AES` is
+therefore off. Software AES costs a second or two of CPU across the whole
+image and asks for no DMA memory.
+
+**The OTA task must be created before the UI.** It needs 6KB of contiguous
+internal RAM. At the top of `app_main` that is easy; after LVGL, the audio
+pipeline and the voice models have taken their share the largest free block
+is about 7.6KB and `xTaskCreate` can simply fail. It did, on an image that
+had just arrived over the air — which meant no health gate ran, the image
+stayed `PENDING_VERIFY`, and the next reset rolled it back.
+
+That was the rollback mechanism working exactly as intended, and it is a
+useful thing to have seen happen for real. But it is also why
+`ota_service_start()` is called early in `app_main` and the task then waits
+on `ota_service_report_ui_ready()` before touching Wi-Fi or the backend
+poller. **Anything added to `app_main` before that call is competing for the
+memory the updater needs.**
 ## 10. Firmware identity
 
 Set in the top-level `CMakeLists.txt`:

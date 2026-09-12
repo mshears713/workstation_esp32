@@ -1,0 +1,343 @@
+#!/usr/bin/env python3
+"""workstation - build, publish and deploy WORKSTATION firmware from CLAWBOX.
+
+The whole point of this script is that BUILD, PUBLISH and DEPLOY are three
+separate verbs. Building produces a binary. Publishing makes that binary
+downloadable and records what it is. Deploying is the only step that changes
+what the device will install, and nothing does it implicitly - no git hook,
+no build side effect. A commit never reaches the hardware unless a person or
+an agent says `workstation deploy`.
+
+The device polls /api/v1/firmware/desired once a minute over HTTPS. When the
+version named there differs from what it is running, it downloads the image,
+checks it against the published SHA-256, writes the inactive OTA slot and
+reboots. See doc/OTA.md in the firmware repo.
+
+Deliberately narrow: there is no command here that writes to arbitrary flash,
+picks a partition, or pushes to the device. The device pulls, and it only
+pulls what it has been told is desired.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path("/opt/workstation")
+REPO = ROOT / "repo"
+IDF = ROOT / "esp-idf"
+IDF_TOOLS = ROOT / ".espressif"
+ART = ROOT / "artifacts"
+BINS = ART / "bin"
+MANIFESTS = ART / "manifests"
+DESIRED = ART / "desired.json"
+ACCESS_LOG = Path("/var/log/nginx/workstation-ota-access.log")
+
+BUILD_DIR = REPO / "build"
+APP_BIN = BUILD_DIR / "status_deck.bin"
+
+
+def run(cmd, **kw):
+    return subprocess.run(cmd, shell=isinstance(cmd, str), **kw)
+
+
+def out(cmd, cwd=None):
+    """Command stdout as a stripped string, or '' if it fails."""
+    try:
+        r = subprocess.run(cmd, shell=isinstance(cmd, str), cwd=cwd,
+                           capture_output=True, text=True, check=True)
+        return r.stdout.strip()
+    except Exception:
+        return ""
+
+
+def repo_sha():
+    return out(["git", "rev-parse", "--short=7", "HEAD"], cwd=REPO) or "nogit"
+
+
+def repo_dirty():
+    return bool(out(["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO))
+
+
+def repo_version():
+    """The version the repo would build as - mirrors the logic in CMakeLists.txt.
+
+    Kept in sync by hand with the top-level CMakeLists.txt. If they ever
+    disagree, `publish` catches it: it reads the version out of the compiled
+    image rather than trusting this, and this is only used for reporting
+    before a build has happened."""
+    cmake = (REPO / "CMakeLists.txt").read_text(errors="replace")
+    m = re.search(r'set\(WORKSTATION_VERSION\s+"([^"]+)"\)', cmake)
+    base = m.group(1) if m else "0.0.0"
+    sha = repo_sha()
+    if repo_dirty():
+        sha += "-dirty"
+    return f"{base}+{sha}"
+
+
+def image_version(path: Path):
+    """Read the version string out of a compiled app image.
+
+    esp_app_desc_t sits at a fixed offset: the image header is 24 bytes, the
+    first segment header 8, and the app description begins there with a magic
+    word of 0xABCD5432. Reading it back from the binary - rather than
+    recomputing what we think we asked for - is the only way to be certain the
+    manifest describes the artifact."""
+    data = path.read_bytes()[:256]
+    magic = int.from_bytes(data[32:36], "little")
+    if magic != 0xABCD5432:
+        raise SystemExit(f"{path}: not an ESP-IDF app image (desc magic {magic:#x})")
+    version = data[48:80].split(b"\x00")[0].decode("utf-8", "replace")
+    project = data[80:112].split(b"\x00")[0].decode("utf-8", "replace")
+    return version, project
+
+
+def sha256_of(path: Path):
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def idf_env():
+    env = dict(os.environ)
+    env["IDF_TOOLS_PATH"] = str(IDF_TOOLS)
+    env["IDF_PATH"] = str(IDF)
+    return env
+
+
+# ---------------------------------------------------------------- commands
+
+def cmd_build(args):
+    if not REPO.exists():
+        raise SystemExit(f"{REPO} does not exist - clone the firmware repo there first")
+    script = (
+        f'set -e; export IDF_TOOLS_PATH="{IDF_TOOLS}"; '
+        f'. "{IDF}/export.sh" >/dev/null 2>&1; '
+        f'cd "{REPO}"; idf.py build'
+    )
+    print(f"building {repo_version()} in {REPO}", flush=True)
+    r = run(["bash", "-lc", script], env=idf_env())
+    if r.returncode != 0:
+        raise SystemExit(f"build failed (exit {r.returncode})")
+    v, _ = image_version(APP_BIN)
+    print(f"built {v}  ({APP_BIN.stat().st_size} bytes)")
+
+
+def cmd_publish(args):
+    if not APP_BIN.exists():
+        raise SystemExit(f"{APP_BIN} not found - run `workstation build` first")
+    version, project = image_version(APP_BIN)
+    if "dirty" in version and not args.allow_dirty:
+        raise SystemExit(
+            f"refusing to publish {version}: built from a modified working tree.\n"
+            "Commit first, or pass --allow-dirty if you know this is a throwaway."
+        )
+
+    BINS.mkdir(parents=True, exist_ok=True)
+    MANIFESTS.mkdir(parents=True, exist_ok=True)
+
+    safe = version.replace("+", "_")
+    dest = BINS / f"{project}-{safe}.bin"
+    shutil.copy2(APP_BIN, dest)
+
+    digest = sha256_of(dest)
+    manifest = {
+        "version": version,
+        "git_sha": version.split("+", 1)[1] if "+" in version else "unknown",
+        "size": dest.stat().st_size,
+        "sha256": digest,
+        "url": f"/firmware/{dest.name}",
+        "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "idf_version": out(["git", "describe", "--tags"], cwd=IDF) or "v5.5.3",
+        "partition_schema": 2,
+        "build_host": os.uname().nodename,
+    }
+    mpath = MANIFESTS / f"{safe}.json"
+    mpath.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    print(f"published {version}")
+    print(f"  image    {dest}")
+    print(f"  sha256   {digest}")
+    print(f"  manifest {mpath}")
+    print(f"\nNot deployed. `workstation deploy {version}` when you want the device to take it.")
+
+
+def load_manifests():
+    if not MANIFESTS.exists():
+        return []
+    items = []
+    for p in sorted(MANIFESTS.glob("*.json")):
+        try:
+            items.append(json.loads(p.read_text()))
+        except Exception:
+            pass
+    items.sort(key=lambda m: m.get("built_at", ""))
+    return items
+
+
+def cmd_list(args):
+    items = load_manifests()
+    if not items:
+        print("nothing published yet")
+        return
+    desired = current_desired()
+    dv = desired.get("version") if desired else None
+    for m in items:
+        mark = " <- desired" if m["version"] == dv else ""
+        print(f"{m['built_at']}  {m['version']:<24} {m['size']:>9} bytes  {m['sha256'][:12]}{mark}")
+
+
+def current_desired():
+    if DESIRED.exists():
+        try:
+            return json.loads(DESIRED.read_text())
+        except Exception:
+            return None
+    return None
+
+
+def cmd_deploy(args):
+    items = load_manifests()
+    if not items:
+        raise SystemExit("nothing published - run `workstation publish` first")
+
+    if args.version in ("latest", "-"):
+        chosen = items[-1]
+    else:
+        matches = [m for m in items if m["version"] == args.version
+                   or m.get("git_sha") == args.version
+                   or m.get("git_sha", "").startswith(args.version)]
+        if not matches:
+            raise SystemExit(f"no published build matches '{args.version}' - see `workstation list`")
+        if len(matches) > 1:
+            raise SystemExit(f"'{args.version}' matches {len(matches)} builds - name the full version")
+        chosen = matches[0]
+
+    binpath = BINS / Path(chosen["url"]).name
+    if not binpath.exists():
+        raise SystemExit(f"manifest names {binpath}, which is missing")
+    actual = sha256_of(binpath)
+    if actual != chosen["sha256"]:
+        # The artifact changed after it was published. Refuse: the device would
+        # download it, find the same mismatch, and reject it anyway.
+        raise SystemExit(f"{binpath} no longer matches its manifest hash - republish it")
+
+    DESIRED.write_text(json.dumps(chosen, indent=2) + "\n")
+    os.chmod(DESIRED, 0o644)
+    print(f"desired version is now {chosen['version']}")
+    print("the device picks this up within ~60s and installs it over Wi-Fi")
+
+
+def last_checkins(n=5):
+    """Device check-ins, read out of nginx's access log.
+
+    The device appends its own state to the manifest request, so the log line
+    is also the device's status report - no extra endpoint, no state to keep
+    in sync. Reading a log is not elegant; it is, however, evidence."""
+    if not ACCESS_LOG.exists():
+        return []
+    rows = []
+    try:
+        lines = ACCESS_LOG.read_text(errors="replace").splitlines()
+    except PermissionError:
+        return []
+    for line in lines:
+        if "/api/v1/firmware/desired" not in line:
+            continue
+        m = re.search(r"current=([^&\s\"]*)", line)
+        s = re.search(r"slot=([^&\s\"]*)", line)
+        st = re.search(r"state=([^&\s\"]*)", line)
+        ip = line.split(" ", 1)[0]
+        ts = re.search(r"\[([^\]]+)\]", line)
+        rows.append({
+            "when": ts.group(1) if ts else "?",
+            "ip": ip,
+            "version": (m.group(1).replace("%2B", "+") if m else "?"),
+            "slot": s.group(1) if s else "?",
+            "state": st.group(1) if st else "?",
+        })
+    return rows[-n:]
+
+
+def cmd_status(args):
+    print("REPO")
+    print(f"  path     {REPO}")
+    print(f"  branch   {out(['git','rev-parse','--abbrev-ref','HEAD'], cwd=REPO)}")
+    print(f"  head     {repo_sha()}{' (dirty)' if repo_dirty() else ''}")
+    print(f"  version  {repo_version()}")
+
+    print("\nBUILD")
+    if APP_BIN.exists():
+        v, _ = image_version(APP_BIN)
+        ts = datetime.fromtimestamp(APP_BIN.stat().st_mtime, timezone.utc).isoformat(timespec="seconds")
+        print(f"  {v}  {APP_BIN.stat().st_size} bytes  built {ts}")
+    else:
+        print("  no build output")
+
+    print("\nPUBLISHED")
+    items = load_manifests()
+    if not items:
+        print("  none")
+    else:
+        for m in items[-5:]:
+            print(f"  {m['version']:<24} {m['size']:>9} bytes  {m['sha256'][:12]}")
+
+    print("\nDEPLOYED (desired)")
+    d = current_desired()
+    print(f"  {d['version']}  sha256 {d['sha256'][:12]}" if d else "  nothing deployed")
+
+    print("\nDEVICE CHECK-INS (most recent last)")
+    rows = last_checkins()
+    if not rows:
+        print("  none seen (needs read access to the nginx access log)")
+    else:
+        for r in rows:
+            print(f"  {r['when']}  {r['ip']:<15} running {r['version']}  slot {r['slot']}  {r['state']}")
+        newest = rows[-1]
+        if d and newest["version"] == d["version"]:
+            print(f"\n  device is running the deployed version ({d['version']})")
+        elif d:
+            print(f"\n  device has NOT taken the deployed version yet "
+                  f"(running {newest['version']}, desired {d['version']})")
+
+
+def cmd_logs(args):
+    for r in last_checkins(args.count):
+        print(f"{r['when']}  {r['ip']:<15} {r['version']:<24} slot={r['slot']} state={r['state']}")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="workstation", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("build", help="build the firmware in /opt/workstation/repo")
+
+    pub = sub.add_parser("publish", help="make the built image downloadable and record its manifest")
+    pub.add_argument("--allow-dirty", action="store_true",
+                     help="publish a build made from a modified working tree")
+
+    dep = sub.add_parser("deploy", help="tell the device which published version it should run")
+    dep.add_argument("version", help="full version, a git sha, or 'latest'")
+
+    sub.add_parser("list", help="published versions")
+    sub.add_parser("status", help="repo, build, published, deployed, and device check-ins")
+
+    lg = sub.add_parser("logs", help="recent device check-ins")
+    lg.add_argument("-n", "--count", type=int, default=20)
+
+    args = p.parse_args()
+    {"build": cmd_build, "publish": cmd_publish, "deploy": cmd_deploy,
+     "list": cmd_list, "status": cmd_status, "logs": cmd_logs}[args.cmd](args)
+
+
+if __name__ == "__main__":
+    main()
