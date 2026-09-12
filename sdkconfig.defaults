@@ -85,3 +85,16 @@ CONFIG_BSP_LCD_DRAW_BUF_HEIGHT=50
 # lives in flash rodata, not RAM, so this costs image size rather than the
 # internal heap that MultiNet needs.
 CONFIG_LV_FONT_MONTSERRAT_32=y
+
+# TLS on a board with very little internal RAM. The first attempt at an OTA
+# check failed with mbedtls_ssl_setup -0x7F00 (MBEDTLS_ERR_SSL_ALLOC_FAILED):
+# mbedTLS wants ~32KB of session buffers, and internal heap - the scarce
+# resource here, see the LCD draw-buffer note above - simply did not have it.
+#
+# Two changes, both standard. mbedTLS allocations move to the 16MB of PSRAM
+# that is otherwise idle, and the inbound record buffer drops from the 16KB
+# default to 8KB, which is ample: nginx on CLAWBOX is configured with
+# ssl_buffer_size 4k and serves a single 2048-bit certificate.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=8192
+CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096

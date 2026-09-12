@@ -624,9 +624,22 @@ esp_err_t ota_service_start(void)
     s_status.state = OTA_STATE_IDLE;
     strlcpy(s_status.message, "starting", sizeof(s_status.message));
 
-    /* 6KB stack: mbedTLS' TLS handshake is the peak consumer here. Priority
-     * 4 keeps it below the audio and LVGL work - a firmware update must
-     * never be the reason a recording drops samples. */
+    /* 6KB, and it has to come from internal RAM: this task calls
+     * esp_ota_write(), which disables the flash cache, so a stack in PSRAM
+     * would vanish underneath it mid-write. 8KB was tried and would not fit -
+     * the largest free internal block after the UI is built is about 7.6KB,
+     * which is the standing constraint on this board (see the LCD draw-buffer
+     * note in sdkconfig.defaults). mbedTLS' large buffers are heap, not
+     * stack, and CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC puts those in PSRAM.
+     *
+     * Priority 4 keeps this below the audio and LVGL work - a firmware
+     * update must never be the reason a recording drops samples. */
     BaseType_t ok = xTaskCreate(ota_task, "ota", 6144, NULL, 4, &s_task);
-    return ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
+    if (ok != pdPASS) {
+        s_task = NULL;
+        ESP_LOGE(TAG, "could not start the OTA task - no internal RAM for its stack. "
+                      "Wireless updates are unavailable this boot; everything else still works.");
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
 }

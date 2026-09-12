@@ -1,4 +1,4 @@
-/*
+﻿/*
  * SPDX-FileCopyrightText: 2021-2026 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: CC0-1.0
@@ -75,5 +75,15 @@ void app_main(void)
      * backend health poller. That is the health gate's definition of "this
      * image got far enough to be worth keeping". */
     ota_service_report_ui_ready();
-    ESP_ERROR_CHECK(ota_service_start());
+
+    /* Not ESP_ERROR_CHECK. If the updater cannot start - it needs a few KB of
+     * internal RAM for its stack, and internal RAM is the scarce resource on
+     * this board - that is a device which cannot be updated wirelessly, not a
+     * device which should refuse to boot. An earlier version of this line did
+     * abort here, and turned a tight heap into a boot loop. */
+    esp_err_t ota_err = ota_service_start();
+    if (ota_err != ESP_OK) {
+        ESP_LOGE("workstation", "OTA updater did not start: %s - USB updates only this boot",
+                 esp_err_to_name(ota_err));
+    }
 }
