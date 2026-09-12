@@ -74,17 +74,58 @@ static TaskHandle_t       s_task;
 static volatile bool      s_check_requested;
 static volatile bool      s_update_requested;
 
+/* The status mutex does not exist until ota_service_start() runs, and the UI
+ * is built before that - status_deck_ui() draws the FIRMWARE page, which
+ * reads this status, during app_main. Taking a NULL semaphore is an assert
+ * failure and a boot loop, so every use goes through these two. */
+static bool lock_take(void)
+{
+    return s_lock != NULL && xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE;
+}
+
+static void lock_give(void)
+{
+    if (s_lock != NULL) {
+        xSemaphoreGive(s_lock);
+    }
+}
+
+static void status_note_check(void)
+{
+    if (lock_take()) { s_status.checks++; lock_give(); }
+}
+
+static void status_note_failure(void)
+{
+    if (lock_take()) { s_status.failures++; lock_give(); }
+}
+
+static void status_set_desired(const char *version)
+{
+    if (lock_take()) {
+        strlcpy(s_status.desired_version, version, sizeof(s_status.desired_version));
+        lock_give();
+    }
+}
+
+static void status_clear_rollback(void)
+{
+    if (lock_take()) { s_status.rolled_back = false; lock_give(); }
+}
+
 static void status_set(ota_state_t state, const char *fmt, ...)
 {
     va_list ap;
-    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool locked = lock_take();
     s_status.state = state;
     if (fmt != NULL) {
         va_start(ap, fmt);
         vsnprintf(s_status.message, sizeof(s_status.message), fmt, ap);
         va_end(ap);
     }
-    xSemaphoreGive(s_lock);
+    if (locked) {
+        lock_give();
+    }
     if (fmt != NULL) {
         ESP_LOGI(TAG, "[%s] %s", ota_service_state_label(state), s_status.message);
     }
@@ -92,9 +133,11 @@ static void status_set(ota_state_t state, const char *fmt, ...)
 
 static void status_set_progress(int pct)
 {
-    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (!lock_take()) {
+        return;
+    }
     s_status.progress_pct = pct;
-    xSemaphoreGive(s_lock);
+    lock_give();
 }
 
 void ota_service_get_status(ota_status_t *out)
@@ -102,9 +145,16 @@ void ota_service_get_status(ota_status_t *out)
     if (out == NULL) {
         return;
     }
-    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (!lock_take()) {
+        /* Called before the OTA task exists - which the UI does, on the way
+         * up. Report the honest answer rather than asserting. */
+        memset(out, 0, sizeof(*out));
+        out->state = OTA_STATE_IDLE;
+        strlcpy(out->message, "not started", sizeof(out->message));
+        return;
+    }
     *out = s_status;
-    xSemaphoreGive(s_lock);
+    lock_give();
 }
 
 const char *ota_service_state_label(ota_state_t state)
@@ -506,9 +556,7 @@ static void ota_task(void *arg)
     /* Probation first. Nothing else matters until we know whether this image
      * is staying. */
     if (firmware_is_pending_verify()) {
-        xSemaphoreTake(s_lock, portMAX_DELAY);
-        s_status.rolled_back = false;
-        xSemaphoreGive(s_lock);
+        status_clear_rollback();
         run_health_gate();
     } else {
         status_set(OTA_STATE_IDLE, "running %s", firmware_version());
@@ -531,14 +579,10 @@ static void ota_task(void *arg)
             if (w.state == WIFI_MGR_ONLINE) {
                 ota_manifest_t m;
                 status_set(OTA_STATE_CHECKING, NULL);
-                xSemaphoreTake(s_lock, portMAX_DELAY);
-                s_status.checks++;
-                xSemaphoreGive(s_lock);
+                status_note_check();
 
                 if (fetch_manifest(&m)) {
-                    xSemaphoreTake(s_lock, portMAX_DELAY);
-                    strlcpy(s_status.desired_version, m.version, sizeof(s_status.desired_version));
-                    xSemaphoreGive(s_lock);
+                    status_set_desired(m.version);
 
                     if (strcmp(m.version, firmware_version()) == 0) {
                         status_set(OTA_STATE_IDLE, "up to date (%s)", m.version);
@@ -548,9 +592,7 @@ static void ota_task(void *arg)
                          * never reaches this point. */
                         status_set(OTA_STATE_UPDATE_READY, "desired %s", m.version);
                         if (!install_manifest(&m)) {
-                            xSemaphoreTake(s_lock, portMAX_DELAY);
-                            s_status.failures++;
-                            xSemaphoreGive(s_lock);
+                            status_note_failure();
                         }
                     }
                 } else {

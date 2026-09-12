@@ -1,4 +1,4 @@
-# For more information about build system see
+﻿# For more information about build system see
 # https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/build-system.html
 # The following five lines of boilerplate have to be in your project's
 # CMakeLists in this exact order for cmake to work correctly
@@ -45,6 +45,14 @@ endif()
 if(WORKSTATION_GIT_DIRTY)
     set(WORKSTATION_GIT_SHA "${WORKSTATION_GIT_SHA}-dirty")
 endif()
+
+# Re-run this configure step whenever the commit or the working tree changes.
+# Without it CMake caches the version from whenever it last configured, and a
+# build after a commit quietly ships an image labelled with the previous sha -
+# which is worse than no version at all, because it looks trustworthy.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_LIST_DIR}/.git/HEAD"
+    "${CMAKE_CURRENT_LIST_DIR}/.git/index")
 
 set(PROJECT_VER "${WORKSTATION_VERSION}+${WORKSTATION_GIT_SHA}")
 message(STATUS "WORKSTATION firmware version: ${PROJECT_VER}")
