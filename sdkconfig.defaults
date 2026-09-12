@@ -98,3 +98,17 @@ CONFIG_LV_FONT_MONTSERRAT_32=y
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=8192
 CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
+
+# Software AES for TLS. The hardware accelerator needs a DMA-capable buffer
+# from internal RAM for every record it decrypts, and partway through the
+# first 2.6MB firmware download it could not get one:
+#
+#   E esp-aes: Failed to allocate memory
+#   E esp-tls-mbedtls: read error :-0x0001
+#
+# The download died at 593KB. Internal RAM is the constraint on this board
+# (see the two notes above), and a long OTA transfer is the worst case for it.
+# Software AES costs a second or two of CPU across the whole image and asks
+# for no DMA memory at all. Wi-Fi's own WPA2 crypto does not go through
+# mbedTLS and is unaffected.
+# CONFIG_MBEDTLS_HARDWARE_AES is not set
