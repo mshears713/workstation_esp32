@@ -20,7 +20,7 @@ set(COMPONENTS main) # "Trim" the build. Include the minimal set of components; 
 # "1.1.0+cb93a81-dirty". esp_app_desc_t allows 32 characters; this is 19 at
 # the longest. Bump WORKSTATION_VERSION by hand - it describes the firmware's
 # own capability, which git cannot infer.
-set(WORKSTATION_VERSION "1.1.0")
+set(WORKSTATION_VERSION "1.1.1")
 
 execute_process(
     COMMAND git rev-parse --short=7 HEAD

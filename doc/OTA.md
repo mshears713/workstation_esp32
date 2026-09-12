@@ -1,8 +1,8 @@
-# WORKSTATION firmware: build, publish, deploy
+﻿# WORKSTATION firmware: build, publish, deploy
 
 How firmware gets onto WORKSTATION now that it no longer arrives over USB.
 
-This document is the reference for anyone — person or agent — picking the
+This document is the reference for anyone â€” person or agent â€” picking the
 system up cold. It assumes nothing about the conversation that produced it.
 
 ---
@@ -30,7 +30,7 @@ system up cold. It assumes nothing about the conversation that produced it.
 ### Why the device pulls
 
 There is no agent on the device and no inbound port. CLAWBOX publishes a
-statement of intent — "the version you should be running is X" — and the
+statement of intent â€” "the version you should be running is X" â€” and the
 device acts on it the next time it looks. That makes deployment a change to
 one file on CLAWBOX rather than a network operation that has to succeed while
 the device happens to be awake and reachable.
@@ -70,7 +70,7 @@ workstation status                 # confirm the device took it
 ```
 
 `workstation status` prints the repo head, the last build, what is published,
-what is deployed, and the device's own recent check-ins — including whether
+what is deployed, and the device's own recent check-ins â€” including whether
 the device has actually taken the deployed version yet.
 
 ### The shortest version
@@ -82,7 +82,7 @@ ssh mshears@clawbox
 cd /opt/workstation/repo && git pull && workstation build && workstation publish && workstation deploy latest
 ```
 
-Then wait up to ~60s and run `workstation status`. Done — no cable.
+Then wait up to ~60s and run `workstation status`. Done â€” no cable.
 
 ---
 
@@ -90,8 +90,8 @@ Then wait up to ~60s and run `workstation status`. Done — no cable.
 
 1. Every 60 seconds the OTA task GETs
    `https://clawbox.local:8443/api/v1/firmware/desired`, appending its own
-   state to the query string (`?current=…&slot=…&state=…`). That query string
-   is how CLAWBOX knows what the device is running — nginx logs it, and
+   state to the query string (`?current=â€¦&slot=â€¦&state=â€¦`). That query string
+   is how CLAWBOX knows what the device is running â€” nginx logs it, and
    `workstation status` reads the log.
 2. If the manifest names a version different from the running one, the device
    downloads that image into the **inactive** OTA slot, hashing as it writes.
@@ -117,19 +117,19 @@ Then it calls `esp_ota_mark_app_valid_cancel_rollback()`.
 If the 90 seconds elapse first, it calls
 `esp_ota_mark_app_invalid_rollback_and_reboot()` and the device comes back on
 the previous slot. If the image crashes outright, the bootloader does the same
-thing on its own — an image that never marks itself valid does not get a
+thing on its own â€” an image that never marks itself valid does not get a
 second boot.
 
 The checks are deliberately few. Each one is something that, if broken, makes
 the device useless in a way the previous image was not. The specific failure
-this project has hit before — a change that starves internal RAM so
-`esp_wifi_start()` fails — is caught by the Wi-Fi condition.
+this project has hit before â€” a change that starves internal RAM so
+`esp_wifi_start()` fails â€” is caught by the Wi-Fi condition.
 
 ---
 
 ## 5. Partition layout
 
-16MB flash, verified on the chip (`esptool flash_id` → GigaDevice c8/6018).
+16MB flash, verified on the chip (`esptool flash_id` â†’ GigaDevice c8/6018).
 
 | Offset | Name | Size | Notes |
 |---|---|---|---|
@@ -142,9 +142,9 @@ this project has hit before — a change that starves internal RAM so
 | 0x020000 | `ota_0` | 5504K | |
 | 0x580000 | `ota_1` | 5504K | |
 | 0xAE0000 | `model` | 5248K | ESP-SR WakeNet + MultiNet |
-| 0x1000000 | — | | end of flash, exactly |
+| 0x1000000 | â€” | | end of flash, exactly |
 
-At the time of the migration the application was 2,637,856 bytes — 47% of a
+At the time of the migration the application was 2,637,856 bytes â€” 47% of a
 slot, so there is 2.1x headroom.
 
 ### Why no factory partition
@@ -166,7 +166,7 @@ are the one part of the old table carried across untouched.
 
 ---
 
-## 6. Runtime configuration — no more rebuilds to move the backend
+## 6. Runtime configuration â€” no more rebuilds to move the backend
 
 `BACKEND_BASE_URL` used to be a string literal in `main/backend_config.h`
 holding a laptop's DHCP address. It is now a call into `main/device_config.c`.
@@ -178,7 +178,7 @@ Precedence:
 
 Same for the OTA endpoint (`ota_url`, default `https://clawbox.local:8443`).
 
-A value written at runtime takes effect **on the next boot**, not instantly —
+A value written at runtime takes effect **on the next boot**, not instantly â€”
 the accessor hands out a pointer into a static buffer that several tasks read
 without locking, and rewriting it mid-request would be a real race for the
 sake of skipping a reboot nobody minds.
@@ -186,7 +186,7 @@ sake of skipping a reboot nobody minds.
 `clawbox.local` resolves through lwIP's mDNS support
 (`CONFIG_LWIP_DNS_SUPPORT_MDNS_QUERIES`, already enabled), so a DHCP change on
 CLAWBOX does not require touching the device. If mDNS ever proves unreliable,
-write a literal IP into NVS — that escape hatch is the reason this module
+write a literal IP into NVS â€” that escape hatch is the reason this module
 exists.
 
 The FIRMWARE page on the device shows which backend address is actually in
@@ -201,7 +201,7 @@ instead of inferring from the source you think you flashed.
 
 - The firmware channel is HTTPS. CLAWBOX's certificate is compiled into the
   image (`main/certs/clawbox_ota_ca.pem`) and is the *only* certificate
-  accepted — not a public CA, not the bundle. A different server cannot serve
+  accepted â€” not a public CA, not the bundle. A different server cannot serve
   this device firmware.
 - Every image is checked against the SHA-256 in the manifest before the boot
   slot is switched. Corruption or a swapped artifact is caught.
@@ -246,7 +246,7 @@ Getting that order wrong bricks wireless updates and means a USB cable.
 
 ## 8. What still needs USB
 
-- **A partition table change.** Slots, sizes, offsets — anything in
+- **A partition table change.** Slots, sizes, offsets â€” anything in
   `partitions.csv`.
 - **The bootloader.** Including turning secure boot or signed apps on.
 - **ESP-SR speech models.** `srmodels.bin` is written by `idf.py flash`; it is
@@ -254,8 +254,8 @@ Getting that order wrong bricks wireless updates and means a USB cable.
   concern. Changing the enabled WakeNet/MultiNet models means a USB flash.
 - **Recovery** when both slots are bad, or NVS needs erasing.
 
-Everything else — application code, UI, backend clients, the OTA logic
-itself — goes over Wi-Fi.
+Everything else â€” application code, UI, backend clients, the OTA logic
+itself â€” goes over Wi-Fi.
 
 ### USB recovery procedure
 
@@ -269,7 +269,7 @@ idf.py -p /dev/ttyACM0 flash monitor # Linux
 That writes bootloader, partition table, fresh `otadata`, the app into
 `ota_0`, and the speech models. It does **not** erase NVS, so the Black Box
 and the runtime backend address survive. To start genuinely clean, add
-`erase-flash` first — and know that you are discarding both.
+`erase-flash` first â€” and know that you are discarding both.
 
 ---
 
@@ -302,11 +302,60 @@ sudo tail -f /var/log/nginx/workstation-ota-access.log
 
 The backend repo is a **separate repository**
 (`github.com/mshears713/workstation-backend`). The `backend/` directory inside
-*this* repo is an early single-file version and is not what runs — see the
+*this* repo is an early single-file version and is not what runs â€” see the
 note in that directory.
 
 ---
 
+## 9a. Things a fresh CLAWBOX needs that git does not carry
+
+Two of these cost an hour between them the first time. They are not bugs;
+they are the parts of the setup that deliberately do not live in the repo.
+
+**`main/wifi_credentials.h`.** Git-ignored, so a fresh clone does not have it
+and the build fails with a clear `#error`. Copy it onto CLAWBOX by hand:
+
+```bash
+scp main/wifi_credentials.h mshears@clawbox:/tmp/ && \
+  ssh mshears@clawbox 'sudo -u agent install -m600 /tmp/wifi_credentials.h \
+    /opt/workstation/repo/main/ && rm /tmp/wifi_credentials.h'
+```
+
+It stays ignored, so it never reaches git history from CLAWBOX either.
+
+**Firewall.** CLAWBOX runs `ufw`, and its rules were written when the only
+client was the laptop - port 8000 was allowed from `192.168.1.65` alone, so
+the device itself was silently dropped. Both ports are now open to the local
+network:
+
+```
+8000/tcp  ALLOW  192.168.0.0/16   # WORKSTATION app API
+8443/tcp  ALLOW  192.168.0.0/16   # WORKSTATION OTA
+```
+
+The symptom of getting this wrong is `ESP_ERR_HTTP_CONNECT` on the device
+while the very same request succeeds from a laptop. Check `sudo ufw status`
+before suspecting DNS.
+
+## 9b. Why the TLS settings are what they are
+
+Internal RAM, not flash, is the binding constraint on this board. mbedTLS
+wants ~32KB of session buffers; after the UI is built there is about 20KB of
+internal heap free, largest block ~7.6KB. The first OTA attempt failed with
+`mbedtls_ssl_setup returned -0x7F00` (`MBEDTLS_ERR_SSL_ALLOC_FAILED`).
+
+So `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y` moves those buffers into the 16MB of
+PSRAM that is otherwise idle, and the inbound record buffer is 8KB rather
+than 16KB. nginx is configured with `ssl_buffer_size 4k` to match.
+
+The OTA task's own stack stays at 6KB **in internal RAM**. It cannot move to
+PSRAM: the task calls `esp_ota_write()`, which disables the flash cache, and
+a stack in PSRAM would be unreachable mid-write. 8KB was tried and does not
+fit in the largest free block.
+
+If a future change makes internal RAM tighter still, the OTA task may fail to
+start. That is logged and survivable - the device boots and works, it just
+cannot update itself until a USB flash frees something up.
 ## 10. Firmware identity
 
 Set in the top-level `CMakeLists.txt`:
@@ -315,7 +364,7 @@ Set in the top-level `CMakeLists.txt`:
 <semver>+<short git sha>[-dirty]        e.g. 1.1.0+cb93a81
 ```
 
-`WORKSTATION_VERSION` is bumped by hand — it describes capability, which git
+`WORKSTATION_VERSION` is bumped by hand â€” it describes capability, which git
 cannot infer. The SHA is read from the working tree at configure time.
 
 The string is stamped into `esp_app_desc_t`, so it is visible:
@@ -335,16 +384,16 @@ told `--allow-dirty`.
 ## 11. Troubleshooting
 
 **The device is not taking a deploy.**
-`workstation status` — if there are no recent check-ins, the device cannot
+`workstation status` â€” if there are no recent check-ins, the device cannot
 reach `:8443`. Check Wi-Fi, then whether `clawbox.local` resolves from the
 device's network. The device's FIRMWARE page shows the last OTA message.
 
-**"hash mismatch, not installing"** — the published artifact and its manifest
+**"hash mismatch, not installing"** â€” the published artifact and its manifest
 disagree. Republish. Nothing was installed; the running firmware is untouched.
 
 **The device rebooted back to the old version.** The health gate failed. The
 serial log names which condition (`wifi not online`, `backend not answering`,
-…). The previous firmware is running and safe; fix and deploy again.
+â€¦). The previous firmware is running and safe; fix and deploy again.
 
 **`nginx -t` fails after a certificate change.** The key and certificate must
 be the matching pair, and nginx must be able to read both.
