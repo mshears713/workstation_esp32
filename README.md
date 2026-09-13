@@ -43,8 +43,8 @@ check - otherwise it rolls back on its own.
 
 The backend the device talks to is a **separate repository**
 (`mshears713/workstation-backend`), running on CLAWBOX as
-`workstation-backend.service`. The `backend/` directory here is the old
-single-file version; see `backend/README.md`.
+`workstation-backend.service`. The `backend-legacy-mission-era/` directory here is the old
+single-file version; see `backend-legacy-mission-era/README.md`.
 
 **Full reference: [doc/OTA.md](doc/OTA.md)** - partition layout, the health
 gate, what is and is not cryptographically protected, what still needs a USB
@@ -121,7 +121,7 @@ instead:
   before Mission 10 (Capture the Transmission) was added. (Wi-Fi credentials
   are never archived - see `.gitignore`.)
 - `archive/mission_10/` â€” the Capture the Transmission source (including
-  `backend/`) as it stood right before Mission 11 (Computer Is Listening)
+  `backend-legacy-mission-era/`) as it stood right before Mission 11 (Computer Is Listening)
   was added.
 
 ## Overview
@@ -145,7 +145,7 @@ events.
   RETRY_WAIT states, bounded retry backoff, a manual NET reconnect button,
   and network transitions fed into the Black Box.
 - **Mission 09 â€” Earthside Handshake:** an operator-triggered backend
-  request (`main/handshake_client.c` + `backend/main.py`). The SND button
+  request (`main/handshake_client.c` + `backend-legacy-mission-era/main.py`). The SND button
   sends a small JSON event to a local FastAPI service, which returns a
   server-generated `event_id`; request state (SENDING / ACCEPTED / TIMEOUT /
   NETWORK_ERROR / SERVER_ERROR / BAD_RESPONSE) is tracked separately from
@@ -286,7 +286,7 @@ the other way around.
 ## Run the backend (required before any voice command will complete)
 
 **The backend is a separate repository now** - `mshears713/workstation-backend`,
-checked out alongside this one. The `backend/` directory still in this repo is
+checked out alongside this one. The `backend-legacy-mission-era/` directory still in this repo is
 the retired Mission 10 version, kept only as history; do not run it.
 
 ```

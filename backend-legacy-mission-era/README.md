@@ -1,8 +1,14 @@
-# This is not the backend that runs
+# Dead code. This is not the backend that runs.
+
+The folder is named this way on purpose. It used to be called `backend/`, which
+made it look authoritative — an agent grepping for `/api/v1/` handlers found
+this first and could reasonably conclude it was the live service. It is not,
+and following it would mean deploying a stale single-file app over a working
+one.
 
 `main.py` here is the original single-file FastAPI service from the
-mission-era build. It is kept for history and because parts of the firmware's
-endpoint contract are easiest to read against it.
+mission era. It is kept for history, and because parts of the firmware's
+endpoint contract are easiest to read against something this short.
 
 **The backend WORKSTATION actually talks to is a separate repository:**
 

@@ -1,8 +1,8 @@
-# CLAWBOX deployment tooling
+﻿# CLAWBOX deployment tooling
 
 These are the files that make CLAWBOX a deployment host. They are copies of
 what is installed there, kept in the repo so that the setup survives the
-machine — if CLAWBOX is ever rebuilt, this directory is the recipe.
+machine â€” if CLAWBOX is ever rebuilt, this directory is the recipe.
 
 | File | Installed at | What it is |
 |---|---|---|
@@ -35,7 +35,7 @@ sudo install -o agent -g agent -m 0755 tools/workstation /opt/workstation/bin/wo
 sudo ln -sf /opt/workstation/bin/workstation /usr/local/bin/workstation
 ```
 
-Then the TLS certificate the firmware pins — note the SANs, which must match
+Then the TLS certificate the firmware pins â€” note the SANs, which must match
 what `device_config.h` points at:
 
 ```bash
@@ -50,7 +50,7 @@ sudo chmod 600 clawbox_ota.key
 ```
 
 A **new** certificate means `main/certs/clawbox_ota_ca.pem` has to be updated
-and that firmware deployed *before* nginx starts serving it — see doc/OTA.md,
+and that firmware deployed *before* nginx starts serving it â€” see doc/OTA.md,
 "Replacing CLAWBOX's certificate". Get that order wrong and wireless updates
 stop until someone brings a USB cable.
 
@@ -73,4 +73,4 @@ ssh mshears@clawbox 'sudo -u agent install -m600 /tmp/wifi_credentials.h \
 ```
 
 The backend is a **separate repository** and is not covered by the clone
-above; see `backend/README.md`.
+above; see `backend-legacy-mission-era/README.md`.

@@ -301,7 +301,7 @@ sudo tail -f /var/log/nginx/workstation-ota-access.log
 ```
 
 The backend repo is a **separate repository**
-(`github.com/mshears713/workstation-backend`). The `backend/` directory inside
+(`github.com/mshears713/workstation-backend`). The `backend-legacy-mission-era/` directory inside
 *this* repo is an early single-file version and is not what runs â€” see the
 note in that directory.
 
