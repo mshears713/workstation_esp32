@@ -26,6 +26,8 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -38,6 +40,16 @@ BINS = ART / "bin"
 MANIFESTS = ART / "manifests"
 DESIRED = ART / "desired.json"
 ACCESS_LOG = Path("/var/log/nginx/workstation-ota-access.log")
+TLS = ROOT / "tls"
+
+# Everything below here is only read, and only by `doctor`.
+DEVICE_IP = "192.168.1.68"
+DEVICE_SUBNET = "192.168.1.0/24"
+OTA_PORT = 8443
+BACKEND_PORT = 8000
+BACKEND_HEALTH = f"http://127.0.0.1:{BACKEND_PORT}/health"
+UFW_CONF = Path("/etc/ufw/ufw.conf")
+UFW_RULES = Path("/etc/ufw/user.rules")
 
 BUILD_DIR = REPO / "build"
 APP_BIN = BUILD_DIR / "status_deck.bin"
@@ -241,7 +253,11 @@ def last_checkins(n=5):
 
     The device appends its own state to the manifest request, so the log line
     is also the device's status report - no extra endpoint, no state to keep
-    in sync. Reading a log is not elegant; it is, however, evidence."""
+    in sync. Reading a log is not elegant; it is, however, evidence.
+
+    n is how many of the most recent rows to return; None means all of them,
+    which is what `doctor` wants when it goes looking for one device's last
+    word in a log that several clients write to."""
     if not ACCESS_LOG.exists():
         return []
     rows = []
@@ -264,7 +280,7 @@ def last_checkins(n=5):
             "slot": s.group(1) if s else "?",
             "state": st.group(1) if st else "?",
         })
-    return rows[-n:]
+    return rows if n is None else rows[-n:]
 
 
 def cmd_status(args):
@@ -314,6 +330,384 @@ def cmd_logs(args):
         print(f"{r['when']}  {r['ip']:<15} {r['version']:<24} slot={r['slot']} state={r['state']}")
 
 
+# ------------------------------------------------------------------- doctor
+#
+# doctor exists because the last outage was one question away from obvious and
+# still took an hour: a firewall rule quietly dropped the device, and every
+# individual piece looked fine to whoever was looking at it. So this asks every
+# question at once and says what each answer means.
+#
+# It is strictly read-only. It reads files, asks git about refs it already has,
+# GETs localhost, and asks systemd what it thinks. It builds nothing, publishes
+# nothing, deploys nothing, restarts nothing and writes nothing - including no
+# `git fetch`, which is why the repo check says out loud that its idea of the
+# remote may be stale. Checks that would need root report UNKNOWN and hand over
+# the command a human should run; they never fail the run.
+
+OK, WARN, FAIL, UNKNOWN = "OK", "WARN", "FAIL", "UNKNOWN"
+
+LOG_TIME = "%d/%b/%Y:%H:%M:%S %z"
+
+
+class Report:
+    """Prints each check as it is decided, and remembers the verdicts so the
+    summary and the exit code cannot disagree with the lines above them."""
+
+    def __init__(self):
+        self.verdicts = []
+
+    def add(self, status, name, detail, *notes):
+        self.verdicts.append(status)
+        print(f"{status:<8} {name:<15} {detail}")
+        for n in notes:
+            if n:
+                print(f"{'':<24} {n}")
+
+    def count(self, status):
+        return sum(1 for s in self.verdicts if s == status)
+
+
+def ago(seconds):
+    if seconds is None:
+        return "never"
+    s = int(seconds)
+    if s < 90:
+        return f"{s}s ago"
+    if s < 5400:
+        return f"{s // 60}m ago"
+    if s < 172800:
+        return f"{s // 3600}h ago"
+    return f"{s // 86400}d ago"
+
+
+def unit_state(unit):
+    """`systemctl is-active` exits non-zero for a unit that is not running, so
+    out() - which swallows failures and returns '' - cannot be used here."""
+    try:
+        r = subprocess.run(["systemctl", "is-active", unit],
+                           capture_output=True, text=True)
+        return r.stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def remote_ref_age():
+    """How long ago the local copy of origin/master was last written.
+
+    doctor does not fetch: that needs the network, it is slow, and it changes
+    the repo. The comparison is therefore against whatever was fetched last,
+    and this is how old that answer might be."""
+    newest = None
+    for p in (REPO / ".git/refs/remotes/origin/master", REPO / ".git/FETCH_HEAD"):
+        try:
+            m = p.stat().st_mtime
+        except OSError:
+            continue
+        newest = m if newest is None else max(newest, m)
+    return None if newest is None else time.time() - newest
+
+
+def latest_checkin():
+    """The device's last word, out of the same log `status` and `logs` read."""
+    rows = [r for r in last_checkins(None) if r["ip"] == DEVICE_IP]
+    return rows[-1] if rows else None
+
+
+def checkin_age(row):
+    if not row:
+        return None
+    try:
+        t = datetime.strptime(row["when"], LOG_TIME)
+    except ValueError:
+        return None
+    return (datetime.now(timezone.utc) - t).total_seconds()
+
+
+def listening_ports():
+    """TCP listen ports, from `ss -tln`. None if ss could not be run.
+
+    -l and -n mean no root is needed; we never ask for the owning process,
+    which is the part that would."""
+    ss = shutil.which("ss") or "/usr/sbin/ss"
+    text = out([ss, "-tln"])
+    if not text:
+        return None
+    ports = set()
+    for line in text.splitlines()[1:]:
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        port = fields[3].rsplit(":", 1)[-1]
+        if port.isdigit():
+            ports.add(int(port))
+    return ports
+
+
+def check_repo(rep):
+    branch = out(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=REPO) or "?"
+    head = repo_sha()
+    remote = out(["git", "rev-parse", "--short=7", "origin/master"], cwd=REPO)
+    stale = (f"origin/master was last fetched {ago(remote_ref_age())}; doctor does not "
+             "fetch, so that ref may be stale")
+    if not remote:
+        rep.add(UNKNOWN, "repo", f"{branch} at {head}, no origin/master ref to compare with",
+                "run `git -C /opt/workstation/repo fetch origin` once to get one")
+        return
+    counts = out(["git", "rev-list", "--left-right", "--count", "HEAD...origin/master"], cwd=REPO)
+    try:
+        ahead, behind = (int(x) for x in counts.split())
+    except ValueError:
+        rep.add(UNKNOWN, "repo", f"{branch} at {head}, could not count against origin/master", stale)
+        return
+
+    state = []
+    if behind:
+        state.append(f"{behind} commit{'s' if behind != 1 else ''} BEHIND origin/master ({remote})")
+    if ahead:
+        state.append(f"{ahead} commit{'s' if ahead != 1 else ''} ahead of origin/master")
+    if repo_dirty():
+        state.append("working tree is dirty")
+    if not state:
+        rep.add(OK, "repo", f"{branch} at {head}, clean, level with origin/master", stale)
+        return
+
+    notes = [stale]
+    if behind:
+        notes.append("this box would build something master has already moved past, "
+                     "and nothing else in this system notices that")
+    if repo_dirty():
+        notes.append("`publish` refuses a build made from a dirty tree unless you pass --allow-dirty")
+    rep.add(WARN, "repo", f"{branch} at {head}: " + "; ".join(state), *notes)
+
+
+def check_device(rep, newest, age):
+    if not ACCESS_LOG.exists():
+        rep.add(FAIL, "device", f"{ACCESS_LOG} does not exist",
+                "that log is the device's only status report; without it nothing here can see it")
+        return
+    if newest is None:
+        rep.add(FAIL, "device", f"no check-in from {DEVICE_IP} in {ACCESS_LOG.name}",
+                "the device polls every ~60s - silence means it is off, or it cannot reach "
+                f"{OTA_PORT}, or this log was rotated")
+        return
+    if age is None:
+        rep.add(UNKNOWN, "device", f"last line from {DEVICE_IP} has an unreadable timestamp "
+                                   f"({newest['when']})")
+        return
+
+    detail = (f"{DEVICE_IP} checked in {ago(age)}, reports {newest['version']} "
+              f"slot {newest['slot']} state {newest['state']}")
+    odd_state = None
+    if newest["state"] != "valid":
+        odd_state = (f"slot state is '{newest['state']}', not 'valid' - the image in {newest['slot']} "
+                     "has not been confirmed good yet")
+    if age > 900:
+        rep.add(FAIL, "device", detail,
+                "over fifteen minutes without a poll; treat the device as down", odd_state)
+    elif age > 180:
+        rep.add(WARN, "device", detail,
+                "polls are ~60s apart, so this is already several missed ones", odd_state)
+    else:
+        rep.add(OK, "device", detail, odd_state)
+
+
+def check_deployed(rep, newest):
+    d = current_desired()
+    if not d:
+        rep.add(WARN, "deployed", "nothing deployed - no desired.json",
+                "the device has nothing to converge on; `workstation deploy <version>` sets it")
+        return
+    want = d.get("version", "?")
+    if newest is None:
+        rep.add(UNKNOWN, "deployed", f"desired is {want}, but the device has not been heard from",
+                "so whether it has taken it cannot be known from here")
+        return
+    have = newest["version"]
+    if have == want:
+        rep.add(OK, "deployed", f"device has taken the deployed version ({want})")
+    else:
+        rep.add(WARN, "deployed", f"device has NOT taken it: running {have}, desired {want}",
+                "it retries every ~60s; if this does not clear, the image or its hash is the "
+                "thing to look at")
+
+
+def check_published(rep):
+    items = load_manifests()
+    bins = sorted(BINS.glob("*.bin")) if BINS.exists() else []
+    if not items:
+        rep.add(FAIL, "published", f"no manifests in {MANIFESTS}",
+                "nothing is downloadable, so no deploy can succeed")
+        return
+
+    bad = []
+    for m in items:
+        p = BINS / Path(m.get("url", "")).name
+        if not p.exists():
+            bad.append(f"{m.get('version', '?')}: {p.name} is missing")
+        elif sha256_of(p) != m.get("sha256"):
+            bad.append(f"{m.get('version', '?')}: {p.name} no longer matches its manifest sha256")
+
+    summary = (f"{len(items)} manifest{'s' if len(items) != 1 else ''}, "
+               f"{len(bins)} binar{'ies' if len(bins) != 1 else 'y'}")
+    if bad:
+        rep.add(FAIL, "published", f"{summary}; integrity check failed", *bad,
+                "`deploy` makes this same check and would refuse; the device would reject "
+                "the download for the same reason")
+        return
+    if len(items) == 1:
+        rep.add(WARN, "published", f"{summary}, hash matches ({items[0]['version']} is the only one)",
+                "one published version means there is NO ROLLBACK TARGET",
+                "if the next deploy is bad there is nothing to deploy back to")
+        return
+    rep.add(OK, "published", f"{summary}, every manifest's binary exists and still hashes correctly")
+
+
+def check_backend(rep):
+    try:
+        with urllib.request.urlopen(BACKEND_HEALTH, timeout=3) as r:
+            body = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception as e:
+        rep.add(WARN, "backend", f"{BACKEND_HEALTH} unreachable ({e.__class__.__name__})",
+                "serving firmware does not depend on this, but the OTA health gate does")
+        return
+    status = body.get("status", "?")
+    detail = f"{BACKEND_HEALTH} says status {status}, commit {body.get('commit', '?')}"
+    if status == "ok":
+        rep.add(OK, "backend", detail)
+    else:
+        rep.add(WARN, "backend", detail,
+                "the OTA health gate asks the backend before it lets an update through")
+
+
+def check_services(rep):
+    consequence = {
+        "nginx": "nothing serves firmware and no check-in gets logged",
+        "workstation-backend": "the OTA health gate has nothing to ask",
+    }
+    for unit in ("nginx", "workstation-backend"):
+        state = unit_state(unit)
+        if state == "active":
+            rep.add(OK, "service", f"{unit} is active")
+        elif state == "unknown":
+            rep.add(UNKNOWN, "service", f"{unit}: systemctl could not be asked")
+        else:
+            rep.add(FAIL, "service", f"{unit} is {state}", consequence[unit])
+
+
+def check_ports(rep, ports):
+    for port, what in ((OTA_PORT, "nginx, firmware downloads"),
+                       (BACKEND_PORT, "workstation-backend")):
+        if ports is None:
+            rep.add(UNKNOWN, "port", f"{port}: `ss` is not available to ask")
+        elif port in ports:
+            rep.add(OK, "port", f"{port} has a listener ({what})")
+        else:
+            rep.add(FAIL, "port", f"{port} has NO listener ({what})")
+
+
+def check_firewall(rep, age):
+    """The check this whole command was written for.
+
+    A ufw rule that dropped the device's subnet was invisible for an hour. ufw
+    will not answer without root and its rules file is root-only, so when that
+    is the case this says exactly that and hands over the command - it does not
+    guess, and it does not fail the run over it."""
+    enabled = None
+    try:
+        for line in UFW_CONF.read_text(errors="replace").splitlines():
+            if line.strip().startswith("ENABLED="):
+                enabled = line.split("=", 1)[1].strip().strip('"').lower()
+    except OSError:
+        pass
+
+    proof = None
+    if age is not None and age < 900:
+        proof = (f"{DEVICE_IP} did check in {ago(age)}, which is live evidence that it can "
+                 f"reach {OTA_PORT} right now, whatever the rules say")
+
+    try:
+        rules = UFW_RULES.read_text(errors="replace")
+    except OSError:
+        rules = None
+
+    if rules is not None:
+        allowed = [str(p) for p in (OTA_PORT, BACKEND_PORT) if re.search(rf"\b{p}\b", rules)]
+        detail = (f"ufw enabled={enabled}; {UFW_RULES.name} mentions "
+                  + (", ".join(allowed) if allowed else "neither port"))
+        rep.add(OK if len(allowed) == 2 else WARN, "firewall", detail, proof)
+        return
+
+    where = shutil.which("ufw") or ("/usr/sbin/ufw" if Path("/usr/sbin/ufw").exists() else None)
+    rep.add(UNKNOWN, "firewall",
+            f"ufw ENABLED={enabled if enabled else 'unreadable'}; its rules are root-only, so "
+            f"which ports {DEVICE_SUBNET} is allowed cannot be determined here",
+            "run: sudo ufw status",
+            f"look for {OTA_PORT}/tcp and {BACKEND_PORT}/tcp allowed from {DEVICE_SUBNET}",
+            (f"({where} exists but needs root; this account has none)" if where else None),
+            proof)
+
+
+def check_tls(rep):
+    certs = sorted(TLS.glob("*.crt")) if TLS.exists() else []
+    if not certs:
+        rep.add(UNKNOWN, "tls cert", f"no readable .crt in {TLS}",
+                "run: sudo ls -l /opt/workstation/tls")
+        return
+    cert = certs[0]
+    end = out(["openssl", "x509", "-enddate", "-noout", "-in", str(cert)])
+    if not end.startswith("notAfter="):
+        rep.add(UNKNOWN, "tls cert", f"{cert.name}: notAfter could not be read "
+                                     "(unreadable file, or no openssl)")
+        return
+    raw = " ".join(end.split("=", 1)[1].split())
+    try:
+        expires = datetime.strptime(raw, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+    except ValueError:
+        rep.add(UNKNOWN, "tls cert", f"{cert.name}: notAfter is unparseable ({raw})")
+        return
+
+    days = (expires - datetime.now(timezone.utc)).days
+    detail = f"{cert.name} expires {expires.date().isoformat()} ({days} days)"
+    if days < 0:
+        rep.add(FAIL, "tls cert", f"{detail} - EXPIRED",
+                "the device validates the certificate and will refuse to download")
+    elif days < 90:
+        rep.add(WARN, "tls cert", detail,
+                "renew it before the device starts refusing the download")
+    else:
+        rep.add(OK, "tls cert", detail)
+
+
+def cmd_doctor(args):
+    now = datetime.now(timezone.utc).astimezone()
+    print(f"workstation doctor  {os.uname().nodename}  {now.isoformat(timespec='seconds')}")
+    print("read-only: nothing here builds, publishes, deploys, restarts or writes\n")
+
+    rep = Report()
+    newest = latest_checkin()
+    age = checkin_age(newest)
+
+    check_repo(rep)
+    check_device(rep, newest, age)
+    check_deployed(rep, newest)
+    check_published(rep)
+    check_backend(rep)
+    check_services(rep)
+    check_ports(rep, listening_ports())
+    check_firewall(rep, age)
+    check_tls(rep)
+
+    fails, warns, unknowns = rep.count(FAIL), rep.count(WARN), rep.count(UNKNOWN)
+    print(f"\n{rep.count(OK)} ok, {warns} warn, {unknowns} unknown, {fails} fail")
+    if fails:
+        print("something is broken - the FAIL lines say what and what it costs")
+        raise SystemExit(1)
+    if warns or unknowns:
+        print("nothing is broken; the WARN and UNKNOWN lines are what to look at next")
+    else:
+        print("everything checked is healthy")
+
+
 def main():
     p = argparse.ArgumentParser(prog="workstation", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -334,9 +728,13 @@ def main():
     lg = sub.add_parser("logs", help="recent device check-ins")
     lg.add_argument("-n", "--count", type=int, default=20)
 
+    sub.add_parser("doctor", help="read-only health check of the whole path: "
+                                  "repo, artifacts, services, ports, device")
+
     args = p.parse_args()
     {"build": cmd_build, "publish": cmd_publish, "deploy": cmd_deploy,
-     "list": cmd_list, "status": cmd_status, "logs": cmd_logs}[args.cmd](args)
+     "list": cmd_list, "status": cmd_status, "logs": cmd_logs,
+     "doctor": cmd_doctor}[args.cmd](args)
 
 
 if __name__ == "__main__":
