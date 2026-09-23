@@ -10,6 +10,7 @@ machine â€” if CLAWBOX is ever rebuilt, this directory is the recipe.
 | `clawbox/nginx-workstation-ota.conf` | `/etc/nginx/sites-available/workstation-ota` | the HTTPS firmware endpoint on :8443 |
 | `clawbox/workstation-backend.service` | `/etc/systemd/system/workstation-backend.service` | the FastAPI app on :8000 |
 | `hosttest/` | not installed - run in place | 1.2.2: builds the real `main/report_client.c` + `main/diag.c` with host gcc (ASan/UBSan) against stubs; `hosttest/run.sh` must print ALL PASS, `hosttest/run.sh 1.2.1` reproduces the 1.2.1 crash |
+| `uisim/` | not installed - read by `/opt/workstation/lvgl-sim` | render targets for the host LVGL simulator (the `workstation-ui` MCP / `ws-ui` CLI): which `main/ui_*.c` builders it can render and with what fixture states. See `uisim/README.md` |
 
 They are **copies, not the live files.** Editing them here changes nothing on
 CLAWBOX until they are installed again. If you change one on CLAWBOX, copy it
