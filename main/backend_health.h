@@ -40,8 +40,38 @@ typedef struct {
     uint32_t last_ok_uptime_s;     /* 0 if never reached this boot */
 } backend_health_status_t;
 
-/* Starts the poll task. Safe to call once, after wifi_mgr_init(). */
-void backend_health_init(void);
+/* Connection history since boot (1.2.0). Kept here because this module is
+ * the one that already sees every probe and every upload's verdict. */
+typedef struct {
+    uint32_t probe_failures;    /* failed /health probes since boot */
+    uint32_t outages;           /* times the backend went DOWN since boot */
+    uint32_t longest_outage_s;  /* longest finished outage this boot */
+    uint32_t current_outage_s;  /* 0 unless an outage is in progress */
+    uint32_t secs_since_ok;     /* since the last success, or since boot if none */
+    uint32_t url_switches;      /* primary<->fallback flips this boot */
+    bool     ever_ok;           /* the backend has answered at least once */
+} backend_health_stats_t;
+
+typedef enum {
+    BACKEND_HEALTH_EVT_LOST = 0, /* went DOWN */
+    BACKEND_HEALTH_EVT_BACK,     /* answered again after being DOWN */
+    BACKEND_HEALTH_EVT_SWITCHED, /* now using the other base URL */
+} backend_health_event_t;
+
+/* Runs on whichever task observed the change (the poll task, or an upload
+ * task via backend_health_report) - never the LVGL task. Bridge it, the same
+ * way status_deck_ui.c bridges wifi_manager's callback. `outage_s` is the
+ * finished outage's length for EVT_BACK, else 0. `message` fits the Black
+ * Box's 32-byte records. */
+typedef void (*backend_health_event_cb_t)(backend_health_event_t ev, uint32_t outage_s,
+                                          const char *message, void *user_ctx);
+
+/* Starts the poll task. Safe to call once, after wifi_mgr_init(). The
+ * callback may be NULL. */
+void backend_health_init(backend_health_event_cb_t cb, void *user_ctx);
+
+/* Snapshot of the counters above. Safe from any task. */
+void backend_health_get_stats(backend_health_stats_t *out);
 
 /* Snapshot, mutex-free (single word writes under a portMUX). Safe from any
  * task, including the LVGL timer. */

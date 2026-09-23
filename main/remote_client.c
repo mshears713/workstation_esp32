@@ -38,8 +38,14 @@ static const char *TAG = "remote_client";
 
 /* Fast enough that a keypress feels immediate (idf.py monitor's old serial
  * keymap was effectively instant); slow enough not to hammer the backend or
- * starve other tasks polling the same wifi link. */
-#define REMOTE_POLL_INTERVAL_MS 150
+ * starve other tasks polling the same wifi link.
+ *
+ * 500ms since 1.2.0, was 150ms. Each poll is a fresh HTTP client and a fresh
+ * socket, so 150ms meant ~370 connections a minute through a 10-socket lwIP
+ * pool shared with every other backend client - the socket-starvation risk
+ * the comments below already describe. Half a second is still well inside
+ * "the TV responded to my button". */
+#define REMOTE_POLL_INTERVAL_MS 500
 #define REMOTE_REQUEST_TIMEOUT_MS 2000
 
 /* While Wi-Fi is down there is nothing to poll, so this is just how often to

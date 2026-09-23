@@ -176,6 +176,7 @@
 #include "audio_playback.h"
 #include "project_selector.h"
 #include "backend_catalog.h"
+#include "report_client.h"
 /* Mission 19: lv_sysmon's public API (lv_sysmon_show/hide_performance) has
  * no accessor for the FPS/CPU label object itself, only show/hide - moving
  * it into the LOG page's button row (see status_deck_ui()) needs the actual
@@ -233,9 +234,33 @@ typedef enum {
     EVT_HANDSHAKE,
     EVT_AUDIO,
     EVT_VOICE,
+    EVT_BACKEND,   /* 1.2.0: backend lost / back / address switched */
+    EVT_REPORT,    /* 1.2.0: device report sent / failed */
 } event_type_t;
 
-#define EVENT_HISTORY_LEN 8
+static const char *event_type_name(event_type_t t)
+{
+    switch (t) {
+    case EVT_BOOT:      return "BOOT";
+    case EVT_RESET:     return "RESET";
+    case EVT_COMMAND:   return "COMMAND";
+    case EVT_SENSOR:    return "SENSOR";
+    case EVT_SYSTEM:    return "SYSTEM";
+    case EVT_NETWORK:   return "NETWORK";
+    case EVT_HANDSHAKE: return "HANDSHAKE";
+    case EVT_AUDIO:     return "AUDIO";
+    case EVT_VOICE:     return "VOICE";
+    case EVT_BACKEND:   return "BACKEND";
+    case EVT_REPORT:    return "REPORT";
+    default:            return "?";
+    }
+}
+
+/* 1.2.0: 32, up from 8, so a device report carries the story of an outage
+ * and not just its last few lines. Held in PSRAM (allocated at the top of
+ * status_deck_ui()) - ~1.3KB that internal RAM cannot spare. The LOG page
+ * still shows the newest EVENT_DISPLAY_LINES. */
+#define EVENT_HISTORY_LEN 32
 /* 32, up from 28. The failure *reason* was the part getting clipped, which
  * is the part worth reading - "NOTE UPLOAD FAILED: UPLOAD" lost its
  * "TIMEOUT", and "GO UPLOAD FAILED: UPLOAD ER" lost the status code.
@@ -248,11 +273,10 @@ typedef enum {
  * see voice_control.c - since "UPLOAD FAILED: UPLOAD TIMEOUT" said UPLOAD
  * twice. */
 #define EVENT_MSG_LEN 32
-/* Mission 15: the LOG page now gives the log panel most of the screen (see
- * status_deck_ui()), so the compact panel no longer has to show fewer lines
- * than the recorder keeps - this now equals EVENT_HISTORY_LEN, i.e. every
- * retained record is visible at once. */
-#define EVENT_DISPLAY_LINES EVENT_HISTORY_LEN
+/* Mission 15 made this equal to EVENT_HISTORY_LEN (8 then). 1.2.0 grows the
+ * recorder to 32 but keeps the panel at the newest 8: the full history goes
+ * out in the device report, where there is room to read it. */
+#define EVENT_DISPLAY_LINES 8
 
 typedef struct {
     event_type_t type;
@@ -260,11 +284,28 @@ typedef struct {
     char message[EVENT_MSG_LEN];
 } event_record_t;
 
-static event_record_t event_history[EVENT_HISTORY_LEN];
+static event_record_t *event_history;   /* EVENT_HISTORY_LEN records, PSRAM */
 static int event_history_used = 0;
+
+static void event_history_alloc(void)
+{
+    if (event_history != NULL) {
+        return;
+    }
+    event_history = heap_caps_calloc(EVENT_HISTORY_LEN, sizeof(event_record_t),
+                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (event_history == NULL) {
+        /* No PSRAM would already have stopped the audio pipeline; keep the
+         * Black Box working anyway rather than dereferencing NULL. */
+        event_history = heap_caps_calloc(EVENT_HISTORY_LEN, sizeof(event_record_t), MALLOC_CAP_8BIT);
+    }
+}
 
 static void event_history_push(event_type_t type, const char *message)
 {
+    if (event_history == NULL) {
+        return;
+    }
     int keep = (event_history_used < EVENT_HISTORY_LEN - 1) ? event_history_used : EVENT_HISTORY_LEN - 1;
     for (int i = keep; i > 0; i--) {
         event_history[i] = event_history[i - 1];
@@ -325,6 +366,9 @@ typedef struct {
     esp_reset_reason_t prev_reset_reason; /* reset reason as of the previous boot */
     char last_significant_cmd[16];
     char last_fault[EVENT_MSG_LEN];
+    /* 1.2.0: the previous boot ended in backend_health.c's no-backend
+     * self-restart. Read from (and then erased from) the "selfrst" key. */
+    bool prev_was_self_restart;
 } blackbox_summary_t;
 
 static blackbox_summary_t blackbox = {
@@ -377,6 +421,13 @@ static void blackbox_boot_update(void)
         nvs_get_str(h, "lastcmd", last_cmd, &len);
         len = sizeof(last_fault);
         nvs_get_str(h, "lastfault", last_fault, &len);
+        /* Written by backend_health.c just before its self-restart; read
+         * once and erased so it describes exactly one boot. */
+        uint8_t selfrst = 0;
+        if (nvs_get_u8(h, "selfrst", &selfrst) == ESP_OK) {
+            nvs_erase_key(h, "selfrst");
+        }
+        blackbox.prev_was_self_restart = (selfrst != 0);
 
         boot_count++;
         nvs_set_u32(h, "bootcnt", boot_count);
@@ -628,6 +679,10 @@ static handshake_pending_evt_t handshake_pending[HANDSHAKE_PENDING_LEN];
 static int handshake_pending_count = 0;
 static portMUX_TYPE handshake_pending_mux = portMUX_INITIALIZER_UNLOCKED;
 
+/* Dormant since 1.2.0: handshake_client_init() is no longer called (its
+ * button became RPT, and its 6KB worker stack went to report_client). Kept
+ * compiled so the handshake can be brought back by restoring one call. */
+__attribute__((unused))
 static void handshake_status_changed_cb(handshake_state_t new_state, const char *message, void *ctx)
 {
     (void)new_state;
@@ -702,6 +757,48 @@ static void voice_status_changed_cb(voice_state_t new_state, const char *message
     }
     portEXIT_CRITICAL(&voice_pending_mux);
 }
+
+/* ---- Backend connection (1.2.0), bridged from a foreign task ----------
+ * backend_health.c's callback runs on its poll task (or on whichever upload
+ * task reported a result) - never the LVGL task. Same bridge shape as the
+ * queues above; drained by wifi_ui_timer_cb as EVT_BACKEND records.
+ *
+ * `auto_report` marks a recovery after an outage long enough to be worth a
+ * report (BACKEND_AUTO_REPORT_OUTAGE_S) - the drain turns it into a pending
+ * "auto-reconnect" report once the event itself is in the ring, so the
+ * report carries the line that caused it. */
+#define BACKEND_PENDING_LEN 4
+#define BACKEND_AUTO_REPORT_OUTAGE_S 120
+
+typedef struct {
+    char message[EVENT_MSG_LEN];
+    bool auto_report;
+} backend_pending_evt_t;
+
+static backend_pending_evt_t backend_pending[BACKEND_PENDING_LEN];
+static int backend_pending_count = 0;
+static portMUX_TYPE backend_pending_mux = portMUX_INITIALIZER_UNLOCKED;
+
+static void backend_event_cb(backend_health_event_t ev, uint32_t outage_s, const char *message, void *ctx)
+{
+    (void)ctx;
+    portENTER_CRITICAL(&backend_pending_mux);
+    if (backend_pending_count < BACKEND_PENDING_LEN) {
+        strncpy(backend_pending[backend_pending_count].message, message, EVENT_MSG_LEN - 1);
+        backend_pending[backend_pending_count].message[EVENT_MSG_LEN - 1] = '\0';
+        backend_pending[backend_pending_count].auto_report =
+            (ev == BACKEND_HEALTH_EVT_BACK && outage_s > BACKEND_AUTO_REPORT_OUTAGE_S);
+        backend_pending_count++;
+    }
+    portEXIT_CRITICAL(&backend_pending_mux);
+}
+
+/* An automatic report waiting for its moment: set by the drain above
+ * ("auto-reconnect") or at boot after a self-restart ("auto-watchdog"),
+ * fired by report_try_pending() once the backend is answering and the
+ * report worker is free. LVGL task only. */
+static const char *report_pending_trigger = NULL;
+static uint32_t report_seen_seq = 0;
 
 /* Cached on first use from the eFuse-programmed base MAC (esp_mac.h) rather
  * than anything Wi-Fi-related - a real, stable per-device identifier that's
@@ -848,6 +945,50 @@ static lv_obj_t *humi_chart;
 static lv_chart_series_t *humi_series;
 static lv_obj_t *humi_value_label;
 
+/* ---- Device report (1.2.0) -------------------------------------------
+ * Fills the parts of a report only this task owns - the Black Box ring and
+ * summary - and hands it to report_client's worker. LVGL task only, which
+ * is what makes reading event_history here safe. false if a report is
+ * already in flight. */
+static bool report_start(const char *trigger)
+{
+    report_request_t *r = report_client_begin();
+    if (r == NULL) {
+        return false;
+    }
+    strlcpy(r->trigger, trigger, sizeof(r->trigger));
+    r->boot_count = blackbox.boot_count;
+    strlcpy(r->reset_reason, reset_reason_str(esp_reset_reason()), sizeof(r->reset_reason));
+    strlcpy(r->prev_reset_reason, reset_reason_str(blackbox.prev_reset_reason), sizeof(r->prev_reset_reason));
+    r->prev_was_self_restart = blackbox.prev_was_self_restart;
+    strlcpy(r->last_fault, blackbox.last_fault, sizeof(r->last_fault));
+    strlcpy(r->last_cmd, blackbox.last_significant_cmd, sizeof(r->last_cmd));
+
+    int n = event_history_used < REPORT_MAX_EVENTS ? event_history_used : REPORT_MAX_EVENTS;
+    for (int i = 0; i < n; i++) {
+        r->events[i].uptime_s = event_history[i].uptime_s;
+        strlcpy(r->events[i].type, event_type_name(event_history[i].type), sizeof(r->events[i].type));
+        strlcpy(r->events[i].message, event_history[i].message, sizeof(r->events[i].message));
+    }
+    r->event_count = n;
+    report_client_commit();
+    ESP_LOGI(TAG, "report (%s) queued with %d events", trigger, n);
+    return true;
+}
+
+/* Fires a waiting automatic report once there is somewhere to send it. */
+static void report_try_pending(void)
+{
+    if (report_pending_trigger == NULL) {
+        return;
+    }
+    backend_health_status_t bh;
+    backend_health_get_status(&bh);
+    if (bh.state == BACKEND_HEALTH_OK && report_start(report_pending_trigger)) {
+        report_pending_trigger = NULL;
+    }
+}
+
 /* ---- Rendering: UI reads app_state / event_history, never the reverse - */
 
 /* Renders the newest EVENT_DISPLAY_LINES of event_history - as of Mission
@@ -860,6 +1001,9 @@ static void render_event_log(void)
     char buf[EVENT_DISPLAY_LINES * (EVENT_MSG_LEN + 8)];
     size_t off = 0;
     int shown = event_history_used < EVENT_DISPLAY_LINES ? event_history_used : EVENT_DISPLAY_LINES;
+    if (event_history == NULL) {
+        shown = 0;
+    }
     for (int i = 0; i < shown && off < sizeof(buf); i++) {
         int n = snprintf(buf + off, sizeof(buf) - off, "%s%3lus %s",
                           i == 0 ? "" : "\n",
@@ -980,6 +1124,24 @@ static void wifi_ui_timer_cb(lv_timer_t *t)
     for (int i = 0; i < count; i++) {
         log_event(EVT_NETWORK, drained[i].message);
     }
+
+    backend_pending_evt_t bdrained[BACKEND_PENDING_LEN];
+    int bcount;
+    portENTER_CRITICAL(&backend_pending_mux);
+    bcount = backend_pending_count;
+    if (bcount > 0) {
+        memcpy(bdrained, backend_pending, sizeof(backend_pending_evt_t) * (size_t)bcount);
+        backend_pending_count = 0;
+    }
+    portEXIT_CRITICAL(&backend_pending_mux);
+    for (int i = 0; i < bcount; i++) {
+        log_event(EVT_BACKEND, bdrained[i].message);
+        if (bdrained[i].auto_report && report_pending_trigger == NULL) {
+            report_pending_trigger = "auto-reconnect";
+        }
+    }
+    report_try_pending();
+
     render_wifi_panel();
     render_settings_panel();
 }
@@ -1009,6 +1171,15 @@ static void handshake_ui_timer_cb(lv_timer_t *t)
 
     for (int i = 0; i < count; i++) {
         log_event(EVT_HANDSHAKE, drained[i].message);
+    }
+
+    /* 1.2.0: the device report's result, as a Black Box line at the top of
+     * the LOG page - "REPORT SENT #12" or "REPORT FAIL: HTTP_CONNECT". */
+    report_status_t rs;
+    report_client_get_status(&rs);
+    if (rs.seq != report_seen_seq) {
+        report_seen_seq = rs.seq;
+        log_event(EVT_REPORT, rs.message);
     }
 }
 
@@ -1519,6 +1690,18 @@ static void net_button_cb(lv_event_t *e)
     wifi_mgr_request_reconnect();
 }
 
+/* RPT (1.2.0, took SND's place): send a device report now. The result
+ * arrives as a Black Box line via handshake_ui_timer_cb; a press while one
+ * is already in flight says REPORT BUSY rather than silently doing nothing. */
+static void report_button_cb(lv_event_t *e)
+{
+    (void)e;
+    handle_command("RPT", true);   /* first, so the report includes it */
+    if (!report_start("button")) {
+        log_event(EVT_REPORT, "REPORT BUSY");
+    }
+}
+
 /* Notification-playback volume (Mission 20 side control). 10-point steps -
  * coarse enough that a single tap is felt, fine enough that the full 0-100
  * range takes a reasonable number of taps; a fixed choice, not a
@@ -1609,6 +1792,7 @@ static void project_down_button_cb(lv_event_t *e)
  * accepts it - a press the in-flight guard rejects (a request is already
  * SENDING) had no effect, so it shouldn't show up in the command history
  * or Black Box as if it did. */
+__attribute__((unused))   /* dormant since 1.2.0 - see handshake_status_changed_cb */
 static void send_handshake_button_cb(lv_event_t *e)
 {
     handshake_payload_t payload = { 0 };
@@ -1806,7 +1990,8 @@ static void refresh_firmware_page(void)
      * own: it is now a runtime value, so "what is it configured for" is a
      * real question with a real answer rather than something you read off
      * the source you think you flashed. */
-    snprintf(buf, sizeof(buf), "api %s", device_config_backend_base_url());
+    snprintf(buf, sizeof(buf), "api %s%s", device_config_backend_base_url(),
+             device_config_backend_on_fallback() ? " (fb)" : "");
     lv_label_set_text(fw_backend_label, buf);
 
     snprintf(buf, sizeof(buf), "SLOT %s   %s",
@@ -2012,6 +2197,7 @@ static void humiture_deck_init(void)
 
 void status_deck_ui(lv_obj_t *scr)
 {
+    event_history_alloc();
     blackbox_boot_update();
 
     /* Widgets don't exist yet: record only, render once they do. */
@@ -2021,6 +2207,13 @@ void status_deck_ui(lv_obj_t *scr)
     char reset_msg[EVENT_MSG_LEN];
     snprintf(reset_msg, sizeof(reset_msg), "RST %s", reset_reason_str(esp_reset_reason()));
     event_push_only(EVT_RESET, reset_msg);
+    if (blackbox.prev_was_self_restart) {
+        /* The last boot ended because the backend had been silent for ten
+         * minutes. Say so on the LOG page, and send the evidence as soon as
+         * the backend answers. */
+        event_push_only(EVT_BACKEND, "PREV RST: API WATCHDOG");
+        report_pending_trigger = "auto-watchdog";
+    }
     ESP_LOGI(TAG, "boot #%lu, this-boot reset=%s, previous-boot reset=%s, last_significant_cmd=%s, last_fault=%s",
              (unsigned long)blackbox.boot_count, reset_reason_str(esp_reset_reason()),
              reset_reason_str(blackbox.prev_reset_reason), blackbox.last_significant_cmd,
@@ -2375,7 +2568,8 @@ void status_deck_ui(lv_obj_t *scr)
      * 19 widens this row to the full 304px content width and left-packs
      * the buttons (FLEX_ALIGN_START, was SPACE_EVENLY, and each button
      * narrowed 68px -> 54px) to leave room on the right for the FPS/CPU
-     * label reparented in below. */
+     * label reparented in below. 1.2.0: SND (the dormant handshake) became
+     * RPT, the device report - same slot, same size. */
     lv_obj_t *log_btn_row = lv_obj_create(page_log);
     lv_obj_set_size(log_btn_row, 304, 44);
     lv_obj_align(log_btn_row, LV_ALIGN_TOP_MID, 0, 154);
@@ -2390,7 +2584,7 @@ void status_deck_ui(lv_obj_t *scr)
         lv_event_cb_t cb;
     } log_buttons[] = {
         { "NET", net_button_cb },
-        { "SND", send_handshake_button_cb },
+        { "RPT", report_button_cb },
         { "CLR", clear_log_button_cb },
     };
     for (size_t i = 0; i < sizeof(log_buttons) / sizeof(log_buttons[0]); i++) {
@@ -2777,7 +2971,10 @@ void status_deck_ui(lv_obj_t *scr)
     render_wifi_panel();
     wifi_mgr_init(wifi_status_changed_cb, NULL);
 
-    handshake_client_init(handshake_status_changed_cb, NULL);
+    /* 1.2.0: the report worker replaces the handshake worker here - the
+     * handshake is dormant (its SND button is now RPT), and its 6KB of
+     * internal stack pays for the report task's 5KB. */
+    report_client_init();
 
     /* Mission 11: exactly one esp_codec_dev_handle_t for the ES7210 mic,
      * created here and shared by audio_capture (bounded 4s capture) and
@@ -2810,7 +3007,7 @@ void status_deck_ui(lv_obj_t *scr)
     remote_client_init();
     /* After wifi_mgr_init above - the poll task reads wifi_mgr_get_status()
      * to avoid calling a backend it has no route to. */
-    backend_health_init();
+    backend_health_init(backend_event_cb, NULL);
     /* Also after wifi_mgr_init - it waits for ONLINE before its first fetch,
      * and stops once the catalog loads. */
     backend_catalog_init();

@@ -85,7 +85,7 @@
  *          REMOTE_BASE_PATH: root of the wireless Roku IR remote command
  *          queue - see remote_client.c. GET {base}/pending -> {pending,
  *          count, command_id, key, created_at}, polled aggressively (every
- *          ~150ms, not lightly like notifications) since this drives live
+ *          ~500ms since 1.2.0, was 150ms; not lightly like notifications) since this drives live
  *          TV navigation. POST {base}/{id}/ack -> drains the command after
  *          it's been sent (or found unrecognized). Commands are created by
  *          the PC-side control script's POST {base}/keys/{key} - see

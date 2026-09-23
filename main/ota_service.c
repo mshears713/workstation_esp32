@@ -74,6 +74,26 @@ static TaskHandle_t       s_task;
 static volatile bool      s_check_requested;
 static volatile bool      s_update_requested;
 
+/* 1.2.0: which OTA base URL this task is using - the primary (CLAWBOX's IP)
+ * or the fallback (clawbox.local). Only the OTA task reads or writes it.
+ * Sticky: whichever one last worked is tried first on the next poll, so a
+ * dead primary costs one failed connect per switch, not one per minute. */
+static const char        *s_ota_base;
+
+static const char *ota_base(void)
+{
+    return s_ota_base != NULL ? s_ota_base : device_config_ota_base_url();
+}
+
+/* The other of the two, or NULL if there is no distinct other. */
+static const char *ota_other_base(void)
+{
+    const char *primary  = device_config_ota_base_url();
+    const char *fallback = device_config_ota_fallback_url();
+    const char *other = (strcmp(ota_base(), primary) == 0) ? fallback : primary;
+    return strcmp(other, ota_base()) == 0 ? NULL : other;
+}
+
 /* The status mutex does not exist until ota_service_start() runs, and the UI
  * is built before that - status_deck_ui() draws the FIRMWARE page, which
  * reads this status, during app_main. Taking a NULL semaphore is an assert
@@ -291,14 +311,22 @@ static void build_url(char *dst, size_t dst_sz, const char *maybe_relative)
         /* Manifests publish a path, not a host, so the same artifact stays
          * correct if CLAWBOX's address changes. */
         snprintf(dst, dst_sz, "%s%s%s",
-                 device_config_ota_base_url(),
+                 ota_base(),
                  maybe_relative[0] == '/' ? "" : "/",
                  maybe_relative);
     }
 }
 
-static esp_http_client_handle_t open_get(const char *url, int *content_length_out)
+/* transport_failed_out (may be NULL) is set true when no HTTP response was
+ * obtained at all - DNS, connect or TLS failure - as opposed to CLAWBOX
+ * answering with an error. Only the former is worth retrying on the other
+ * address. */
+static esp_http_client_handle_t open_get(const char *url, int *content_length_out,
+                                         bool *transport_failed_out)
 {
+    if (transport_failed_out) {
+        *transport_failed_out = false;
+    }
     esp_http_client_config_t cfg = {
         .url             = url,
         .cert_pem        = (const char *)clawbox_ota_ca_pem_start,
@@ -313,9 +341,21 @@ static esp_http_client_handle_t open_get(const char *url, int *content_length_ou
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "open %s: %s", url, esp_err_to_name(err));
         esp_http_client_cleanup(client);
+        if (transport_failed_out) {
+            *transport_failed_out = true;
+        }
         return NULL;
     }
     int len = esp_http_client_fetch_headers(client);
+    if (len < 0) {
+        ESP_LOGE(TAG, "GET %s: no response headers", url);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        if (transport_failed_out) {
+            *transport_failed_out = true;
+        }
+        return NULL;
+    }
     int status = esp_http_client_get_status_code(client);
     if (status != 200) {
         ESP_LOGE(TAG, "GET %s -> HTTP %d", url, status);
@@ -337,7 +377,7 @@ static void close_client(esp_http_client_handle_t client)
 
 /* ---- manifest ------------------------------------------------------------ */
 
-static bool fetch_manifest(ota_manifest_t *out)
+static bool fetch_manifest(ota_manifest_t *out, bool *transport_failed_out)
 {
     /* The device reports its own state in the query string of the request
      * it was going to make anyway. CLAWBOX has no other way to ask - the
@@ -356,7 +396,7 @@ static bool fetch_manifest(ota_manifest_t *out)
     build_url(url, sizeof(url), path);
 
     int len = 0;
-    esp_http_client_handle_t client = open_get(url, &len);
+    esp_http_client_handle_t client = open_get(url, &len, transport_failed_out);
     if (client == NULL) {
         return false;
     }
@@ -428,7 +468,7 @@ static bool install_manifest(const ota_manifest_t *m)
     status_set_progress(0);
 
     int content_length = 0;
-    esp_http_client_handle_t client = open_get(url, &content_length);
+    esp_http_client_handle_t client = open_get(url, &content_length, NULL);
     if (client == NULL) {
         status_set(OTA_STATE_FAILED, "cannot fetch image");
         return false;
@@ -596,7 +636,19 @@ static void ota_task(void *arg)
                 status_set(OTA_STATE_CHECKING, NULL);
                 status_note_check();
 
-                if (fetch_manifest(&m)) {
+                bool transport_failed = false;
+                bool got = fetch_manifest(&m, &transport_failed);
+                const char *other = ota_other_base();
+                if (!got && transport_failed && other != NULL) {
+                    /* Could not reach CLAWBOX at all on this address (the
+                     * IP, normally). Same poll, other address - the image
+                     * download that may follow uses whichever worked. */
+                    ESP_LOGW(TAG, "%s unreachable, retrying on %s", ota_base(), other);
+                    s_ota_base = other;
+                    got = fetch_manifest(&m, &transport_failed);
+                }
+
+                if (got) {
                     status_set_desired(m.version);
 
                     if (strcmp(m.version, firmware_version()) == 0) {

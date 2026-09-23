@@ -23,9 +23,16 @@
  *          A value set at runtime takes effect on the NEXT BOOT, not
  *          immediately. That is deliberate. The accessors below hand out a
  *          pointer into a static buffer, and several tasks (remote_client
- *          polls every ~150ms) read it concurrently without locking;
+ *          polls every ~500ms) read it concurrently without locking;
  *          rewriting that buffer underneath a snprintf() would be a genuine
  *          race for the sake of saving a reboot nobody minds.
+ *
+ *          1.2.0 adds a fallback without breaking that rule: there are two
+ *          buffers (primary and fallback), both filled once at init, and a
+ *          switch swaps which one the accessor returns. The primary is the
+ *          NVS value if one is stored, else the compiled IP default; the
+ *          fallback is the compiled default the primary is not (the mDNS
+ *          name, normally).
  *
  *          Scope: these are *addresses*, not secrets. Wi-Fi credentials stay
  *          in main/wifi_credentials.h (git-ignored) and backend API keys stay
@@ -49,16 +56,25 @@
 /** Longest URL we will store or hand back, including the NUL. */
 #define DEVICE_CONFIG_URL_MAX 128
 
-/* Compiled-in fallbacks, used only when NVS holds nothing.
+/* Compiled-in defaults, used only when NVS holds nothing.
  *
- * A hostname rather than an IPv4 address: CLAWBOX's DHCP lease can move, its
- * name cannot. Resolution goes through lwIP's mDNS support for ".local"
- * names (CONFIG_LWIP_DNS_SUPPORT_MDNS_QUERIES), so no extra client code is
- * needed - esp_http_client resolves it like any other host. If mDNS is ever
- * unreliable on a given network, set a literal IP into NVS; that is exactly
- * the escape hatch this module exists to provide. */
-#define DEVICE_CONFIG_DEFAULT_BACKEND_URL "http://clawbox.local:8000"
-#define DEVICE_CONFIG_DEFAULT_OTA_URL     "https://clawbox.local:8443"
+ * 1.2.0: CLAWBOX's LAN address first, its mDNS name second. Until 1.1.3 the
+ * name was the only address, and it proved to be the weak link: on CLAWBOX
+ * both avahi and OctoPrint's zeroconf answer for "clawbox.local", avahi then
+ * renames itself clawbox-2.local, and OctoPrint answers with its Tailscale
+ * address (unreachable from the LAN) as well as the real one. When that
+ * happened every backend task went silent while Wi-Fi and ping stayed up,
+ * and nothing on the device noticed. The address is reserved on the router;
+ * the name is kept as the fallback in case it ever moves.
+ *
+ * The OTA default can be an IP because CLAWBOX's pinned certificate carries
+ * "IP Address:192.168.1.71" in its subjectAltName, and mbedTLS matches IP
+ * SANs (x509_crt_check_san_ip) when the hostname handed to
+ * mbedtls_ssl_set_hostname() - here, the URL's host - is a literal IPv4. */
+#define DEVICE_CONFIG_DEFAULT_BACKEND_URL "http://192.168.1.71:8000"
+#define DEVICE_CONFIG_DEFAULT_OTA_URL     "https://192.168.1.71:8443"
+#define DEVICE_CONFIG_FALLBACK_BACKEND_URL "http://clawbox.local:8000"
+#define DEVICE_CONFIG_FALLBACK_OTA_URL     "https://clawbox.local:8443"
 
 /**
  * @brief Load configuration from NVS into memory.
@@ -68,11 +84,38 @@
  */
 esp_err_t device_config_init(void);
 
-/** @return Backend API base URL, no trailing slash. Never NULL. */
+/**
+ * @return Backend API base URL currently in use, no trailing slash. Never
+ *         NULL. Always one of two static strings that are written once in
+ *         device_config_init() and never again, so a pointer a task got a
+ *         moment ago stays valid and unchanged even after a switch - a
+ *         switch only changes which of the two the NEXT caller gets.
+ */
 const char *device_config_backend_base_url(void);
 
-/** @return Firmware/OTA base URL, no trailing slash. Never NULL. */
+/** @return Primary OTA base URL, no trailing slash. Never NULL. */
 const char *device_config_ota_base_url(void);
+
+/** @return The OTA URL to retry with when the primary cannot be reached
+ *          (connect/TLS failure). Never NULL; may equal the primary if no
+ *          distinct fallback exists. */
+const char *device_config_ota_fallback_url(void);
+
+/**
+ * @brief Switch the backend between primary and fallback.
+ * @details Called by backend_health.c after repeated /health failures.
+ *          A single pointer store - no buffer is rewritten, so readers
+ *          mid-snprintf are unaffected. Not persisted: every boot starts on
+ *          the primary.
+ * @return true if the fallback is now in use, false if the primary is.
+ */
+bool device_config_backend_switch(void);
+
+/** @return true if the backend URL in use is the fallback, not the primary. */
+bool device_config_backend_on_fallback(void);
+
+/** @return The backend URL that is NOT currently in use (for log lines). */
+const char *device_config_backend_other_url(void);
 
 /**
  * @brief Persist a new backend base URL. Takes effect on next boot.

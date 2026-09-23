@@ -89,7 +89,8 @@ Then wait up to ~60s and run `workstation status`. Done â€” no cable.
 ## 4. What happens on the device
 
 1. Every 60 seconds the OTA task GETs
-   `https://clawbox.local:8443/api/v1/firmware/desired`, appending its own
+   `https://192.168.1.71:8443/api/v1/firmware/desired` (falling back to
+   `clawbox.local` if the IP cannot be reached - see section 6), appending its own
    state to the query string (`?current=â€¦&slot=â€¦&state=â€¦`). That query string
    is how CLAWBOX knows what the device is running â€” nginx logs it, and
    `workstation status` reads the log.
@@ -174,20 +175,60 @@ holding a laptop's DHCP address. It is now a call into `main/device_config.c`.
 Precedence:
 
 1. the value in NVS (namespace `wscfg`, key `backend_url`)
-2. the compiled default, `http://clawbox.local:8000`
+2. the compiled default, `http://192.168.1.71:8000` (since 1.2.0; was
+   `http://clawbox.local:8000`)
 
-Same for the OTA endpoint (`ota_url`, default `https://clawbox.local:8443`).
+Same for the OTA endpoint (`ota_url`, default `https://192.168.1.71:8443`).
 
 A value written at runtime takes effect **on the next boot**, not instantly â€”
 the accessor hands out a pointer into a static buffer that several tasks read
 without locking, and rewriting it mid-request would be a real race for the
 sake of skipping a reboot nobody minds.
 
-`clawbox.local` resolves through lwIP's mDNS support
-(`CONFIG_LWIP_DNS_SUPPORT_MDNS_QUERIES`, already enabled), so a DHCP change on
-CLAWBOX does not require touching the device. If mDNS ever proves unreliable,
-write a literal IP into NVS â€” that escape hatch is the reason this module
-exists.
+### IP first, name as fallback (1.2.0)
+
+Up to 1.1.3 the only address was `clawbox.local`, resolved over mDNS. On
+CLAWBOX that name is contested: avahi and OctoPrint's zeroconf both answer for
+it, avahi then renames itself `clawbox-2.local`, and OctoPrint answers with its
+Tailscale address (unreachable from the LAN) as well as the real one. When the
+name broke, every backend task went silent while Wi-Fi and ping stayed up.
+
+So since 1.2.0 each address has two static values, both fixed at boot:
+
+| | primary | fallback |
+|---|---|---|
+| backend | NVS `backend_url`, else `http://192.168.1.71:8000` | `http://clawbox.local:8000` |
+| OTA | NVS `ota_url`, else `https://192.168.1.71:8443` | `https://clawbox.local:8443` |
+
+(If NVS holds the name, the IP is the fallback; if it holds something else,
+the compiled IP is.) The backend switches by pointer swap - no buffer is ever
+rewritten - after 5 failed `/health` probes in a row (~15 s), and logs
+`API VIA <host>` to the Black Box. The OTA task retries the same poll on the
+other address when the first fails at connect/TLS, and keeps using whichever
+worked. Every boot starts on the primary.
+
+The OTA certificate's subjectAltName includes `IP Address:192.168.1.71`, and
+mbedTLS 3.6.5 matches IP SANs when the hostname esp-tls hands it (the URL's
+host) is an IPv4 literal (`x509_crt_check_san_ip` in
+`components/mbedtls/mbedtls/library/x509_crt.c`). **If CLAWBOX's LAN address
+ever changes, the certificate must be reissued with the new IP SAN before the
+IP default can verify**; until then the device will fail TLS on the IP and fall
+back to the name.
+
+### Self-recovery and the device report (1.2.0)
+
+- No successful backend answer for 10 minutes: the device writes
+  `lastfault = "WDT NO API <n>s"` and `selfrst = 1` into the Black Box NVS
+  namespace and restarts. Deferred while an OTA download, the health gate
+  (image on probation), an audio capture/upload or a voice command is active.
+- The LOG page's RPT button (was SND) POSTs a JSON report to
+  `/api/v1/device/report`: firmware, slot, OTA state, uptime, boot count, reset
+  reasons, last fault, the 32-entry event ring, backend counters (failures,
+  outages, longest outage, seconds since last success), heap, PSRAM, RSSI, IP,
+  backend URL and whether it is the fallback. Sent automatically with trigger
+  `auto-reconnect` after an outage longer than 2 minutes, and `auto-watchdog`
+  once after a self-restart. Reports land in the backend repo's
+  `data/device-reports/`; `GET /api/v1/device/reports` lists them.
 
 The FIRMWARE page on the device shows which backend address is actually in
 use, so "what is it configured for" has an answer you can read off the screen
@@ -411,7 +452,8 @@ told `--allow-dirty`.
 
 **The device is not taking a deploy.**
 `workstation status` â€” if there are no recent check-ins, the device cannot
-reach `:8443`. Check Wi-Fi, then whether `clawbox.local` resolves from the
+reach `:8443`. Check Wi-Fi, then whether `192.168.1.71` (or, as the fallback,
+`clawbox.local`) is reachable from the
 device's network. The device's FIRMWARE page shows the last OTA message.
 
 **"hash mismatch, not installing"** â€” the published artifact and its manifest

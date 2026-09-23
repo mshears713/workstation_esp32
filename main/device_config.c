@@ -22,8 +22,28 @@ static const char *TAG = "device_config";
 
 static char s_backend_url[DEVICE_CONFIG_URL_MAX] = DEVICE_CONFIG_DEFAULT_BACKEND_URL;
 static char s_ota_url[DEVICE_CONFIG_URL_MAX]     = DEVICE_CONFIG_DEFAULT_OTA_URL;
+/* The fallbacks. Written once in device_config_init() (pick_fallback), never
+ * again - see the header for why the swap is a pointer, not a copy. */
+static char s_backend_fallback[DEVICE_CONFIG_URL_MAX] = DEVICE_CONFIG_FALLBACK_BACKEND_URL;
+static char s_ota_fallback[DEVICE_CONFIG_URL_MAX]     = DEVICE_CONFIG_FALLBACK_OTA_URL;
+/* Which of the two backend buffers callers get. One aligned word; a store
+ * is atomic on this CPU, so readers see either the old or the new pointer,
+ * never half of one. */
+static const char *volatile s_backend_active = s_backend_url;
 static bool s_backend_from_nvs = false;
 static bool s_ready            = false;
+
+/* The fallback for a primary: whichever compiled default the primary is
+ * not. Normally the primary is the IP default and this yields the name. If
+ * NVS holds the name, the IP becomes the fallback; if NVS holds something
+ * else entirely, the compiled IP default is the fallback. */
+static void pick_fallback(const char *primary, const char *ip_default, const char *name_default,
+                          char *dst, size_t dst_size)
+{
+    strlcpy(dst, strcmp(primary, name_default) == 0 ? ip_default
+               : (strcmp(primary, ip_default) == 0 ? name_default : ip_default),
+            dst_size);
+}
 
 static bool url_is_sane(const char *url)
 {
@@ -97,19 +117,49 @@ esp_err_t device_config_init(void)
         s_ready = true;
     }
 
-    ESP_LOGI(TAG, "backend = %s (%s)", s_backend_url, s_backend_from_nvs ? "from NVS" : "compiled default");
-    ESP_LOGI(TAG, "ota     = %s", s_ota_url);
+    pick_fallback(s_backend_url, DEVICE_CONFIG_DEFAULT_BACKEND_URL, DEVICE_CONFIG_FALLBACK_BACKEND_URL,
+                  s_backend_fallback, sizeof(s_backend_fallback));
+    pick_fallback(s_ota_url, DEVICE_CONFIG_DEFAULT_OTA_URL, DEVICE_CONFIG_FALLBACK_OTA_URL,
+                  s_ota_fallback, sizeof(s_ota_fallback));
+
+    ESP_LOGI(TAG, "backend = %s (%s), fallback %s", s_backend_url,
+             s_backend_from_nvs ? "from NVS" : "compiled default", s_backend_fallback);
+    ESP_LOGI(TAG, "ota     = %s, fallback %s", s_ota_url, s_ota_fallback);
     return ESP_OK;
 }
 
 const char *device_config_backend_base_url(void)
 {
-    return s_backend_url;
+    return s_backend_active;
 }
 
 const char *device_config_ota_base_url(void)
 {
     return s_ota_url;
+}
+
+const char *device_config_ota_fallback_url(void)
+{
+    return s_ota_fallback;
+}
+
+bool device_config_backend_switch(void)
+{
+    /* Only backend_health's poll task calls this, so there is one writer;
+     * everyone else only reads the pointer. */
+    const char *next = (s_backend_active == s_backend_url) ? s_backend_fallback : s_backend_url;
+    s_backend_active = next;
+    return next == s_backend_fallback;
+}
+
+bool device_config_backend_on_fallback(void)
+{
+    return s_backend_active == s_backend_fallback;
+}
+
+const char *device_config_backend_other_url(void)
+{
+    return (s_backend_active == s_backend_url) ? s_backend_fallback : s_backend_url;
 }
 
 bool device_config_is_ready(void)
