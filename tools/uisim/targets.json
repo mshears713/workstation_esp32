@@ -1,0 +1,67 @@
+{
+  "about": "Render targets for the workstation-ui simulator (/opt/workstation/lvgl-sim). Each target compiles REAL firmware UI sources from main/ plus a small adapter in tools/uisim/targets/ that turns fixture state into the same calls status_deck_ui.c makes. Fixture values are flat strings/ints/bools; 'fixtures' are named, realistic states. See tools/uisim/README.md.",
+  "targets": {
+    "voice_listening_widget": {
+      "kind": "component",
+      "description": "HOME's microphone: rotating outer ring with a travelling highlight, counter-rotating accent, inner ring, halo, navy disc, white mic. 172x172. Its colour/motion is the device's link indicator. Rendered alone, centred on a plain screen.",
+      "sources": ["main/voice_listening_widget.c"],
+      "headers": ["voice_listening_widget.h"],
+      "adapter": "tools/uisim/targets/voice_listening_widget.c",
+      "fields": {
+        "link": {"type": "enum", "values": ["ok", "down", "no_net", "unknown"], "default": "ok",
+                 "doc": "backend reachability as the widget shows it: ok = spinning + white mic; down = stopped + red mic; no_net = stopped + grey mic; unknown = spinning + grey mic"},
+        "notification_pending": {"type": "bool", "default": false, "doc": "outer ring turns orange while a low-confidence notification waits"}
+      },
+      "fixtures": {
+        "default": {},
+        "backend_down": {"link": "down"},
+        "no_wifi": {"link": "no_net"},
+        "booting": {"link": "unknown"},
+        "notification": {"notification_pending": true}
+      }
+    },
+    "home": {
+      "kind": "page",
+      "description": "HOME as the device builds it today: the listening widget centred (ui_home.c) under the four 96x52 corner nav buttons (ui_kit.c), default light theme.",
+      "sources": ["main/ui_kit.c", "main/ui_home.c", "main/voice_listening_widget.c"],
+      "headers": ["ui_kit.h", "ui_home.h", "voice_listening_widget.h"],
+      "adapter": "tools/uisim/targets/home.c",
+      "fields": {
+        "link": {"type": "enum", "values": ["ok", "down", "no_net", "unknown"], "default": "ok",
+                 "doc": "backend_health state mapped the way voice_ui_timer_cb maps it"},
+        "notification_pending": {"type": "bool", "default": false, "doc": "notification_client says a low-confidence notification is waiting"}
+      },
+      "fixtures": {
+        "default": {},
+        "backend_down": {"link": "down"},
+        "no_wifi": {"link": "no_net"},
+        "notification": {"notification_pending": true}
+      }
+    },
+    "firmware": {
+      "kind": "page",
+      "description": "FIRMWARE page (ui_firmware_page.c): version, build time, backend address, OTA slot and probation state, updater status line, CHECK CLAWBOX NOW button; HOME corner button only.",
+      "sources": ["main/ui_kit.c", "main/ui_firmware_page.c"],
+      "headers": ["ui_kit.h", "ui_firmware_page.h"],
+      "adapter": "tools/uisim/targets/firmware.c",
+      "fields": {
+        "version": {"type": "str", "default": "1.2.2+2d189af", "doc": "firmware_version(): <semver>+<sha>[-dirty]"},
+        "built_at": {"type": "str", "default": "Sep 23 2026 15:06:22", "doc": "firmware_built_at(): __DATE__ __TIME__ of the build"},
+        "backend_url": {"type": "str", "default": "http://192.168.1.71:8000", "doc": "device_config_backend_base_url()"},
+        "backend_fallback": {"type": "bool", "default": false, "doc": "running on the fallback address (clawbox.local)"},
+        "slot": {"type": "str", "default": "ota_1", "doc": "running partition label: ota_0 / ota_1"},
+        "pending_verify": {"type": "bool", "default": false, "doc": "image still on probation (health gate not passed)"},
+        "ota_state": {"type": "enum", "values": ["idle", "validating", "checking", "update ready", "downloading", "verifying", "rebooting", "failed"], "default": "idle", "doc": "ota_service_state_label()"},
+        "ota_message": {"type": "str", "default": "up to date (1.2.2+2d189af)", "doc": "ota_status_t.message (<= 79 chars)"},
+        "ota_progress_pct": {"type": "int", "default": 0, "doc": "0-100, shown while ota_state is downloading"}
+      },
+      "fixtures": {
+        "default": {},
+        "probation": {"pending_verify": true, "ota_state": "validating", "ota_message": "new image on probation, validating"},
+        "downloading": {"ota_state": "downloading", "ota_progress_pct": 42, "ota_message": "1.2.3+9f3c1aa -> ota_0"},
+        "failed": {"ota_state": "failed", "ota_message": "hash mismatch, not installing"},
+        "fallback_backend": {"backend_url": "http://clawbox.local:8000", "backend_fallback": true, "ota_message": "no manifest from CLAWBOX"}
+      }
+    }
+  }
+}

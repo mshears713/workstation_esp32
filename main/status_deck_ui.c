@@ -166,6 +166,9 @@
 #include "audio_capture.h"
 #include "voice_control.h"
 #include "voice_listening_widget.h"
+#include "ui_kit.h"
+#include "ui_home.h"
+#include "ui_firmware_page.h"
 #include "backend_health.h"
 #include "backend_catalog.h"
 #include "notification_client.h"
@@ -854,14 +857,10 @@ static lv_obj_t *page_set;          /* SETTINGS - replaced TALK in the nav */
 static lv_obj_t *page_projects;     /* PROJECTS - reached from SETTINGS */
 static lv_obj_t *page_firmware;     /* FIRMWARE - reached from SETTINGS */
 
-/* FIRMWARE page labels. Refreshed once a second while the page is visible,
- * from firmware_identity.h and ota_service.h - both of which are explicitly
- * safe to read from any task, this one included. */
-static lv_obj_t *fw_version_label;
-static lv_obj_t *fw_build_label;
-static lv_obj_t *fw_backend_label;
-static lv_obj_t *fw_slot_label;
-static lv_obj_t *fw_ota_label;
+/* FIRMWARE page labels (ui_firmware_page.h). Refreshed once a second while
+ * the page is visible, from firmware_identity.h and ota_service.h - both of
+ * which are explicitly safe to read from any task, this one included. */
+static ui_firmware_page_t fw_page;
 /* SETTINGS reuses telemetry_label / conn_label / volume_label - the same
  * objects HOME used to own, just reparented to this page. Only the two
  * genuinely new rows need their own handles. */
@@ -870,7 +869,10 @@ static lv_obj_t *settings_repo_label;
 /* Four corners, five pages: the corner buttons stopped being one-per-page
  * when PROJECTS arrived. Index i still addresses page i for i < this, which is
  * what set_active_page() relies on to highlight the current tab. */
-#define NAV_BUTTON_COUNT 4
+#define NAV_BUTTON_COUNT UI_NAV_COUNT
+_Static_assert(APP_PAGE_HOME == (int)UI_NAV_HOME && APP_PAGE_SENS == (int)UI_NAV_SENS &&
+               APP_PAGE_LOG == (int)UI_NAV_LOG && APP_PAGE_SET == (int)UI_NAV_SET,
+               "ui_nav_set_active() takes the page number as the nav slot");
 static lv_obj_t *nav_buttons[NAV_BUTTON_COUNT];
 
 /* Command Window overlay (Mission 12): four-button recognition-test grid,
@@ -1394,61 +1396,7 @@ static void render_command_overlay(void)
  * counter should show a target. */
 #define AUTO_STOP_MAX_MS 60000
 
-/* The panel look, in one function.
- *
- * It started on GO's repository chooser, which read better than everything
- * around it - a bordered, filled block with its content grouped inside,
- * rather than labels floating on the page background. Applied per page it
- * would drift the way the command hints did, so it lives here and the pages
- * call it.
- *
- * Used as a *backing* panel: created before a page's content and never
- * reparenting it, so existing layout coordinates keep working and this is
- * purely a visual layer behind them. */
-static void apply_panel_style(lv_obj_t *obj)
-{
-    lv_obj_set_style_bg_color(obj, lv_palette_darken(LV_PALETTE_BLUE_GREY, 3), 0);
-    lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(obj, 10, 0);
-    lv_obj_set_style_border_width(obj, 2, 0);
-    lv_obj_set_style_border_color(obj, lv_palette_darken(LV_PALETTE_BLUE, 2), 0);
-    lv_obj_set_style_pad_all(obj, 0, 0);
-    lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
-}
-
-/* A backing panel filling a page's safe band - the region clear of the
- * corner nav buttons. Created first so it sits behind everything the page
- * adds afterwards. */
-static lv_obj_t *page_panel(lv_obj_t *page, int y, int h)
-{
-    lv_obj_t *panel = lv_obj_create(page);
-    lv_obj_set_size(panel, 304, h);
-    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, y);
-    apply_panel_style(panel);
-    return panel;
-}
-
-/* A sub-page's name, sitting in the band beside the HOME button.
- *
- * It earns its place because of what the nav change took away: with only HOME
- * showing on a sub-page, nothing else says which page you are on - the
- * highlighted tab that used to answer that is gone with the other three
- * buttons. SETTINGS already had a centred title of its own; this makes it the
- * rule rather than the exception, and puts it where the corner button leaves a
- * gap instead of competing with the content below.
- *
- * x=104 clears the 96px-wide button plus a margin; y=12 centers a 32px line
- * against the button's own y 2..54. Content on every page starts at y=58,
- * below both. */
-static void page_title(lv_obj_t *page, const char *text)
-{
-    lv_obj_t *label = lv_label_create(page);
-    lv_label_set_text(label, text);
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(label, lv_palette_main(LV_PALETTE_BLUE), 0);
-    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 104, 12);
-}
+/* The panel look, page panel and page title live in ui_kit.c. */
 
 static void refresh_project_label(void);
 static void refresh_firmware_page(void);
@@ -1910,28 +1858,9 @@ static void set_active_page(app_page_t page)
             lv_obj_add_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
         }
     }
-    for (int i = 0; i < NAV_BUTTON_COUNT; i++) {
-        lv_obj_set_style_bg_color(nav_buttons[i], i == (int)page ? lv_palette_main(LV_PALETTE_BLUE)
-                                                                   : lv_palette_main(LV_PALETTE_GREY), 0);
-    }
-
-    /* Nav visibility: all four corners on HOME, HOME alone everywhere else.
-     * Four buttons on every page was too much furniture - on a 320x240 panel
-     * they crowd the content the page exists to show, and three of the four
-     * are always wrong for where you already are. So HOME is the hub: from it
-     * you pick a destination, and from a destination the only move is back.
-     * That costs one extra tap to go SENS -> LOG, which is rare, and buys the
-     * whole screen back on the pages that actually need it.
-     *
-     * HOME stays in the top-left corner rather than moving to a "back" slot,
-     * so the one button that is always present is always in the same place. */
-    for (int i = 0; i < NAV_BUTTON_COUNT; i++) {
-        if (page == APP_PAGE_HOME || i == (int)APP_PAGE_HOME) {
-            lv_obj_clear_flag(nav_buttons[i], LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(nav_buttons[i], LV_OBJ_FLAG_HIDDEN);
-        }
-    }
+    /* Highlight and all-four-on-HOME / HOME-alone-elsewhere visibility:
+     * see ui_nav_set_active(). */
+    ui_nav_set_active(nav_buttons, (int)page);
 
     /* Mission 15: the LVGL-builtin FPS/CPU readout (CONFIG_LV_USE_PERF_
      * MONITOR) is normally a permanent overlay on the display's system
@@ -2058,39 +1987,25 @@ static void notification_stop_button_cb(lv_event_t *e)
 
 static void refresh_firmware_page(void)
 {
-    if (fw_version_label == NULL) {
+    if (fw_page.version == NULL) {
         return;   /* page not built yet */
     }
 
-    char buf[96];
-    lv_label_set_text(fw_version_label, firmware_version());
-
-    snprintf(buf, sizeof(buf), "built %s", firmware_built_at());
-    lv_label_set_text(fw_build_label, buf);
-
-    /* Which backend this device is actually talking to. Worth a line of its
-     * own: it is now a runtime value, so "what is it configured for" is a
-     * real question with a real answer rather than something you read off
-     * the source you think you flashed. */
-    snprintf(buf, sizeof(buf), "api %s%s", device_config_backend_base_url(),
-             device_config_backend_on_fallback() ? " (fb)" : "");
-    lv_label_set_text(fw_backend_label, buf);
-
-    snprintf(buf, sizeof(buf), "SLOT %s   %s",
-             firmware_running_partition_label(),
-             firmware_is_pending_verify() ? "ON PROBATION" : "CONFIRMED");
-    lv_label_set_text(fw_slot_label, buf);
-
     ota_status_t o;
     ota_service_get_status(&o);
-    if (o.state == OTA_STATE_DOWNLOADING) {
-        snprintf(buf, sizeof(buf), "OTA: downloading %d%%", o.progress_pct);
-    } else if (o.message[0] != '\0') {
-        snprintf(buf, sizeof(buf), "OTA: %s", o.message);
-    } else {
-        snprintf(buf, sizeof(buf), "OTA: %s", ota_service_state_label(o.state));
-    }
-    lv_label_set_text(fw_ota_label, buf);
+    const ui_firmware_view_t view = {
+        .version = firmware_version(),
+        .built_at = firmware_built_at(),
+        .backend_url = device_config_backend_base_url(),
+        .backend_fallback = device_config_backend_on_fallback(),
+        .slot = firmware_running_partition_label(),
+        .pending_verify = firmware_is_pending_verify(),
+        .ota_state = ota_service_state_label(o.state),
+        .ota_message = o.message,
+        .ota_downloading = (o.state == OTA_STATE_DOWNLOADING),
+        .ota_progress_pct = o.progress_pct,
+    };
+    ui_firmware_page_apply(&fw_page, &view);
 }
 
 static void telemetry_timer_cb(lv_timer_t *t)
@@ -2328,17 +2243,9 @@ void status_deck_ui(lv_obj_t *scr)
      * 180), so pages and nav bar meet with no gap or overlap. */
     lv_obj_t *pages_init[APP_PAGE_COUNT];
     for (int i = 0; i < APP_PAGE_COUNT; i++) {
-        lv_obj_t *page = lv_obj_create(scr);
         /* Full screen. The corner buttons float on top; each page is
          * responsible for keeping its own content clear of them. */
-        lv_obj_set_size(page, 320, 240);
-        lv_obj_align(page, LV_ALIGN_TOP_LEFT, 0, 0);
-        lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(page, 0, 0);
-        lv_obj_set_style_radius(page, 0, 0);
-        lv_obj_set_style_pad_all(page, 0, 0);
-        lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
-        pages_init[i] = page;
+        pages_init[i] = ui_page_create(scr);
     }
     page_home = pages_init[APP_PAGE_HOME];
     page_sens = pages_init[APP_PAGE_SENS];
@@ -2349,22 +2256,14 @@ void status_deck_ui(lv_obj_t *scr)
 
     /* ---- HOME: nothing but the microphone ---------------------------- */
 
-    /* Stripped back deliberately. The title, uptime and Wi-Fi row, the
-     * project selector and the volume control all moved off (title dropped,
-     * the rest to SETTINGS) so this page is one thing: a large microphone
-     * that shows whether the workstation is listening and reachable.
-     *
-     * Tapping it is what TALK used to do. A dedicated TALK button in the
-     * nav made sense when the nav was a bar along the bottom; with the
-     * microphone filling the page, the microphone *is* the button. */
-    voice_widget = voice_listening_widget_create(page_home);
-    lv_obj_align(voice_widget, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_add_flag(voice_widget, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(voice_widget, talk_button_cb, LV_EVENT_CLICKED, NULL);
+    /* One thing: a large microphone that shows whether the workstation is
+     * listening and reachable, and is itself the TALK button - see
+     * ui_home.c. */
+    voice_widget = ui_home_build(page_home, talk_button_cb);
 
     /* ---- SETTINGS: the things HOME used to carry -------------------- */
 
-    page_title(page_set, "SETTINGS");
+    ui_page_title(page_set, "SETTINGS");
 
     /* Took over the nav slot TALK vacated. Everything here was previously
      * competing with the microphone for space on HOME: uptime, Wi-Fi,
@@ -2377,9 +2276,9 @@ void status_deck_ui(lv_obj_t *scr)
      * fetched from the backend (backend_catalog.h), so what is on screen is
      * what a GO capture would file against. The project selector now lives
      * only on the NOTE recording screen, where it is actually used. */
-    page_panel(page_set, 58, 40);    /* status:  uptime / API / Wi-Fi */
-    page_panel(page_set, 104, 48);    /* volume */
-    page_panel(page_set, 158, 48);   /* repository GO files to */
+    ui_page_panel(page_set, 58, 40);    /* status:  uptime / API / Wi-Fi */
+    ui_page_panel(page_set, 104, 48);    /* volume */
+    ui_page_panel(page_set, 158, 48);   /* repository GO files to */
 
     telemetry_label = lv_label_create(page_set);
     lv_obj_align(telemetry_label, LV_ALIGN_TOP_LEFT, 14, 70);
@@ -2485,9 +2384,9 @@ void status_deck_ui(lv_obj_t *scr)
      *    y  58..126   the selector: < LABEL >
      *    y 132..206   the cue for whatever is selected
      */
-    page_title(page_projects, "PROJECTS");
+    ui_page_title(page_projects, "PROJECTS");
 
-    lv_obj_t *proj_ctrl = page_panel(page_projects, 58, 68);
+    lv_obj_t *proj_ctrl = ui_page_panel(page_projects, 58, 68);
 
     lv_obj_t *proj_prev = lv_btn_create(proj_ctrl);
     lv_obj_set_size(proj_prev, 56, 56);
@@ -2513,7 +2412,7 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_set_style_text_font(proj_next_label, &lv_font_montserrat_32, 0);
     lv_obj_center(proj_next_label);
 
-    lv_obj_t *cue_panel = page_panel(page_projects, 132, 74);
+    lv_obj_t *cue_panel = ui_page_panel(page_projects, 132, 74);
     projects_page_cue = lv_label_create(cue_panel);
     lv_label_set_long_mode(projects_page_cue, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(projects_page_cue, 284);
@@ -2524,51 +2423,15 @@ void status_deck_ui(lv_obj_t *scr)
 
     /* ---- FIRMWARE: what is running, and what the updater is doing ------ */
 
-    page_title(page_firmware, "FIRMWARE");
-
-    page_panel(page_firmware, 58, 70);    /* identity: version, build, backend */
-    page_panel(page_firmware, 134, 40);   /* which slot, and is it confirmed   */
-    page_panel(page_firmware, 180, 24);   /* what the updater is doing         */
-
-    fw_version_label = lv_label_create(page_firmware);
-    lv_obj_set_style_text_font(fw_version_label, &lv_font_montserrat_20, 0);
-    lv_obj_align(fw_version_label, LV_ALIGN_TOP_LEFT, 14, 64);
-    lv_label_set_text(fw_version_label, "...");
-
-    fw_build_label = lv_label_create(page_firmware);
-    lv_obj_set_style_text_font(fw_build_label, &lv_font_montserrat_14, 0);
-    lv_obj_align(fw_build_label, LV_ALIGN_TOP_LEFT, 14, 94);
-    lv_label_set_text(fw_build_label, "");
-
-    fw_backend_label = lv_label_create(page_firmware);
-    lv_obj_set_style_text_font(fw_backend_label, &lv_font_montserrat_14, 0);
-    lv_obj_align(fw_backend_label, LV_ALIGN_TOP_LEFT, 14, 110);
-    lv_label_set_text(fw_backend_label, "");
-
-    fw_slot_label = lv_label_create(page_firmware);
-    lv_obj_align(fw_slot_label, LV_ALIGN_TOP_LEFT, 14, 146);
-    lv_label_set_text(fw_slot_label, "");
-
-    fw_ota_label = lv_label_create(page_firmware);
-    lv_obj_set_style_text_font(fw_ota_label, &lv_font_montserrat_14, 0);
-    lv_obj_align(fw_ota_label, LV_ALIGN_TOP_LEFT, 14, 184);
-    lv_label_set_text(fw_ota_label, "");
-
-    lv_obj_t *fw_check_btn = lv_btn_create(page_firmware);
-    lv_obj_set_size(fw_check_btn, 304, 28);
-    lv_obj_align(fw_check_btn, LV_ALIGN_TOP_LEFT, 8, 208);
-    lv_obj_add_event_cb(fw_check_btn, firmware_check_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *fw_check_lbl = lv_label_create(fw_check_btn);
-    lv_label_set_text(fw_check_lbl, "CHECK CLAWBOX NOW");
-    lv_obj_center(fw_check_lbl);
+    ui_firmware_page_build(&fw_page, page_firmware, firmware_check_button_cb);
 
     refresh_firmware_page();
 
     /* ---- SENS: three stacked trend charts, each a third of the page ----- */
 
-    page_title(page_sens, "SENSORS");
+    ui_page_title(page_sens, "SENSORS");
 
-    page_panel(page_sens, 58, 150);
+    ui_page_panel(page_sens, 58, 150);
 
     /* Band layout: 144 / 3 = 48px each, inside y=48..192 to clear the
      * corner nav buttons. Same
@@ -2646,7 +2509,7 @@ void status_deck_ui(lv_obj_t *scr)
 
     /* ---- LOG: Black Box panel (as tall as the page allows) + NET/SND/CLR */
 
-    page_title(page_log, "LOG");
+    ui_page_title(page_log, "LOG");
 
     /* No "EVENT LOG" title label inside the panel (Mission 05 had one) -
      * the panel's content is self-evident without it. Shows all
@@ -2657,7 +2520,7 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_t *log_panel = lv_obj_create(page_log);
     lv_obj_set_size(log_panel, 304, 84);
     lv_obj_align(log_panel, LV_ALIGN_TOP_MID, 0, 58);
-    apply_panel_style(log_panel);
+    ui_panel_style(log_panel);
     lv_obj_set_style_pad_all(log_panel, 6, 0);
 
     log_label = lv_label_create(log_panel);
@@ -2727,44 +2590,14 @@ void status_deck_ui(lv_obj_t *scr)
      * (not inside any page) - same size/position the old NET/SND/REC/CLR
      * row used, so the overlays below (already sized to cover it) still
      * cover exactly the same area. */
-    /* Four corners rather than a bottom bar. That frees the whole middle of
-     * the screen for the listening widget, which is what HOME is actually
-     * for, and it gives the fourth page somewhere to live now that TALK is
-     * no longer a button - tapping the microphone does that job.
-     *
-     * 96x52 in each corner with montserrat_20 labels - these are read and
-     * hit at arm's length, so the text carries as much as the target size
-     * does. The pages are full-screen underneath
-     * rather than squeezed into the gap between them. That matters because
-     * HOME is a circle: the corners of its bounding box are transparent, so
-     * big corner buttons and a big microphone can share the same 320x240
-     * without touching. SENS and LOG do have rectangular content, so they
-     * keep theirs inside y=48..192 by their own offsets. */
-    static const struct {
-        const char *label;
-        lv_align_t align;
-        int x;
-        int y;
-        lv_event_cb_t cb;
-    } nav_button_defs[] = {
-        { "HOME", LV_ALIGN_TOP_LEFT,      2,  2, home_nav_button_cb },
-        { "SENS", LV_ALIGN_TOP_RIGHT,    -2,  2, sens_nav_button_cb },
-        { "LOG",  LV_ALIGN_BOTTOM_LEFT,   2, -2, log_nav_button_cb  },
-        { "SET",  LV_ALIGN_BOTTOM_RIGHT, -2, -2, set_nav_button_cb  },
+    /* Four 96x52 corner buttons - see ui_nav_create() for why corners. */
+    static const lv_event_cb_t nav_cbs[UI_NAV_COUNT] = {
+        [UI_NAV_HOME] = home_nav_button_cb,
+        [UI_NAV_SENS] = sens_nav_button_cb,
+        [UI_NAV_LOG]  = log_nav_button_cb,
+        [UI_NAV_SET]  = set_nav_button_cb,
     };
-    for (size_t i = 0; i < sizeof(nav_button_defs) / sizeof(nav_button_defs[0]); i++) {
-        lv_obj_t *btn = lv_btn_create(scr);
-        lv_obj_set_size(btn, 96, 52);
-        lv_obj_align(btn, nav_button_defs[i].align, nav_button_defs[i].x, nav_button_defs[i].y);
-        lv_obj_add_event_cb(btn, nav_button_defs[i].cb, LV_EVENT_CLICKED, NULL);
-
-        lv_obj_t *btn_label = lv_label_create(btn);
-        lv_label_set_text(btn_label, nav_button_defs[i].label);
-        lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_20, 0);
-        lv_obj_center(btn_label);
-
-        nav_buttons[i] = btn;
-    }
+    ui_nav_create(scr, nav_buttons, nav_cbs);
 
     /* Command Window overlay (Mission 12): full-screen, built last so it
      * naturally sits on top of the dashboard - render_command_overlay also
@@ -2889,7 +2722,7 @@ void status_deck_ui(lv_obj_t *scr)
     lv_obj_t *rec_panel = lv_obj_create(recording_overlay);
     lv_obj_set_size(rec_panel, 304, 92);
     lv_obj_align(rec_panel, LV_ALIGN_TOP_LEFT, 8, 28);
-    apply_panel_style(rec_panel);
+    ui_panel_style(rec_panel);
 
     recording_title = lv_label_create(recording_overlay);
     lv_label_set_text(recording_title, "RECORDING");
@@ -2937,7 +2770,7 @@ void status_deck_ui(lv_obj_t *scr)
     recording_project_ctrl = lv_obj_create(recording_overlay);
     lv_obj_set_size(recording_project_ctrl, 304, 46);
     lv_obj_align(recording_project_ctrl, LV_ALIGN_TOP_LEFT, 8, 126);
-    apply_panel_style(recording_project_ctrl);
+    ui_panel_style(recording_project_ctrl);
     lv_obj_add_flag(recording_project_ctrl, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *rec_project_prev = lv_btn_create(recording_project_ctrl);
@@ -2971,7 +2804,7 @@ void status_deck_ui(lv_obj_t *scr)
     recording_repo_ctrl = lv_obj_create(recording_overlay);
     lv_obj_set_size(recording_repo_ctrl, 304, 46);
     lv_obj_align(recording_repo_ctrl, LV_ALIGN_TOP_LEFT, 8, 126);
-    apply_panel_style(recording_repo_ctrl);
+    ui_panel_style(recording_repo_ctrl);
     lv_obj_add_flag(recording_repo_ctrl, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *repo_prev = lv_btn_create(recording_repo_ctrl);
