@@ -9,6 +9,7 @@ machine â€” if CLAWBOX is ever rebuilt, this directory is the recipe.
 | `workstation` | `/opt/workstation/bin/workstation`, symlinked into `/usr/local/bin` | build / publish / deploy / status CLI |
 | `clawbox/nginx-workstation-ota.conf` | `/etc/nginx/sites-available/workstation-ota` | the HTTPS firmware endpoint on :8443 |
 | `clawbox/workstation-backend.service` | `/etc/systemd/system/workstation-backend.service` | the FastAPI app on :8000 |
+| `hosttest/` | not installed - run in place | 1.2.2: builds the real `main/report_client.c` + `main/diag.c` with host gcc (ASan/UBSan) against stubs; `hosttest/run.sh` must print ALL PASS, `hosttest/run.sh 1.2.1` reproduces the 1.2.1 crash |
 
 They are **copies, not the live files.** Editing them here changes nothing on
 CLAWBOX until they are installed again. If you change one on CLAWBOX, copy it

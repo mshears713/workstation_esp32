@@ -978,11 +978,41 @@ static bool report_start(const char *trigger)
     return true;
 }
 
-/* Fires a waiting automatic report once there is somewhere to send it. */
+/* 1.2.2: no automatic report before this much uptime AND one finished OTA
+ * check, so an update can always land before any report work runs. 1.2.1's
+ * report path crashed ~25 s into every boot and OTA never got its turn. */
+#define AUTO_REPORT_MIN_UPTIME_S 120
+
+/* True once automatic reports may run this boot. Latches: the OTA check
+ * only has to have happened once. LVGL task only. */
+static bool auto_report_allowed(void)
+{
+    static bool ota_checked = false;
+    if (diag_auto_reports_off()) {
+        return false;      /* last boot died inside a report (diag.h) */
+    }
+    if (esp_timer_get_time() < (int64_t)AUTO_REPORT_MIN_UPTIME_S * 1000000) {
+        return false;
+    }
+    if (!ota_checked) {
+        ota_status_t o;
+        ota_service_get_status(&o);
+        /* checks counts attempts as they start; IDLE/FAILED means the one
+         * counted has finished (and no install is under way). */
+        ota_checked = o.checks > 0 && (o.state == OTA_STATE_IDLE || o.state == OTA_STATE_FAILED);
+    }
+    return ota_checked;
+}
+
+/* Fires a waiting automatic report once there is somewhere to send it and
+ * auto_report_allowed(). RPT does not come through here. */
 static void report_try_pending(void)
 {
     if (report_pending_trigger == NULL) {
         return;
+    }
+    if (!auto_report_allowed()) {
+        return;            /* stays pending; tried again each second */
     }
     backend_health_status_t bh;
     backend_health_get_status(&bh);
@@ -2278,6 +2308,12 @@ void status_deck_ui(lv_obj_t *scr)
                  crash->breadcrumb_valid ? crash->page : "(no crumb)");
         event_push_only(EVT_RESET, crash_msg);
     }
+    if (diag_auto_reports_off()) {
+        /* 1.2.2 loop guard: the last boot reset while a report was being
+         * sent. Automatic reports are off until the next boot; RPT works.
+         * (EVENT_MSG_LEN is 32; diag logs the full sentence.) */
+        event_push_only(EVT_REPORT, "AUTO RPT OFF: CRASH IN REPORT");
+    }
     ESP_LOGI(TAG, "boot #%lu, this-boot reset=%s, previous-boot reset=%s, last_significant_cmd=%s, last_fault=%s",
              (unsigned long)blackbox.boot_count, reset_reason_str(esp_reset_reason()),
              reset_reason_str(blackbox.prev_reset_reason), blackbox.last_significant_cmd,
@@ -3043,7 +3079,7 @@ void status_deck_ui(lv_obj_t *scr)
 
     /* 1.2.0: the report worker replaces the handshake worker here - the
      * handshake is dormant (its SND button is now RPT), and its 6KB of
-     * internal stack pays for the report task's 5KB. */
+     * internal stack pays for the report task's 5KB (6KB since 1.2.2). */
     report_client_init();
 
     /* Mission 11: exactly one esp_codec_dev_handle_t for the ES7210 mic,

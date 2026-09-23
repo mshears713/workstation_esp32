@@ -16,6 +16,10 @@
  *     "heartbeat"). Every report also carries diag.h's counters, the
  *     previous boot's crash breadcrumb (`crash`, `last_words`) and task
  *     stack high-water marks (`stack_free_min`).
+ *   - 1.2.2: automatic reports wait for 120 s of uptime and one finished
+ *     OTA check, and are skipped for a whole boot that followed a crash
+ *     inside the report path (diag.h, report loop guard). RPT is never
+ *     held back.
  *
  * Threading: status_deck_ui.c (the LVGL task) claims the request with
  * report_client_begin(), fills in the parts only it owns - the Black Box

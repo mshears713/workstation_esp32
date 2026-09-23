@@ -60,6 +60,8 @@ typedef struct {
     uint32_t self_restart_last_boot;
     uint32_t brownouts;         /* BROWNOUT and PWR_GLITCH */
     uint32_t brownout_last_boot;
+    uint32_t report_crashes;    /* 1.2.2: abnormal resets with a report in flight */
+    uint32_t report_crash_last_boot;
 } diag_counters_t;
 
 typedef struct {
@@ -98,6 +100,25 @@ void diag_after_crash_delivered(void);
  *  Calls cb once per task that exists. Hourly use; walks the task lists. */
 typedef void (*diag_stack_cb_t)(const char *task, uint32_t free_bytes, void *ctx);
 void diag_stack_hwm(diag_stack_cb_t cb, void *ctx);
+
+/* ---- report loop guard (1.2.2) ------------------------------------------
+ * 1.2.1 crash-looped: the report path aborted (see diag_stack_hwm in diag.c),
+ * and the after-crash report it scheduled on every following boot aborted
+ * the same way, ~25 s after each boot, before OTA could land a fix.
+ *
+ * report_client.c brackets every report attempt (automatic or RPT) with
+ * begin/end. The marker lives in RTC_NOINIT memory, so it survives the
+ * reset. If diag_init() finds it set after an abnormal reset, it counts a
+ * report crash (NVS "diag"/rptcrash) and automatic reports - after-crash,
+ * heartbeat, auto-reconnect, auto-watchdog - stay off for this boot. The
+ * RPT button still works. The next boot re-enables them. So a report path
+ * that always crashes costs at most one reset, then the device stays up. */
+void diag_report_guard_begin(const char *trigger);
+void diag_report_guard_end(void);
+/** True for the whole boot if the previous one died inside a report. */
+bool diag_auto_reports_off(void);
+/** The trigger of the report that was in flight then ("" if none). */
+const char *diag_report_crash_trigger(void);
 
 #if DIAG_TEST_CRASH
 /** Commissioning only: logs why, then abort(). Never returns. */

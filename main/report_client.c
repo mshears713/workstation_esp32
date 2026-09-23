@@ -43,14 +43,26 @@ static const char *TAG = "report";
  * last_words (printable ASCII, newlines escaped as \n), ~0.6KB of stack
  * marks and ~0.5KB of counters/crash fields: 16KB. PSRAM, so the size costs
  * nothing that matters. */
-#define REPORT_BODY_MAX (16 * 1024)
+/* 1.2.2: 20KB. tools/hosttest builds an absurd worst case (every event and
+ * every breadcrumb byte needing escapes) at 15.6KB; 16KB was too close. An
+ * overflow is not a crash - it fails as REPORT FAIL: TOO BIG - but an
+ * after-crash report that never fits would never be delivered. */
+#define REPORT_BODY_MAX (20 * 1024)
 #define REPORT_RESPONSE_MAX 192
 
 /* Internal RAM, not PSRAM: the worker reads the OTA state from flash
  * (firmware_is_pending_verify), which a task on a PSRAM stack must not do.
- * Plain HTTP, no TLS, and the body is built with snprintf into PSRAM, so
- * this is the same budget backend_health's GET task runs on plus margin. */
-#define REPORT_TASK_STACK 5120
+ * Plain HTTP, no TLS, and the body is built with snprintf into PSRAM.
+ *
+ * 1.2.2: 6KB, was 5KB. Measured with -fstack-usage/-fcallgraph-info=su over
+ * the whole build plus the frames of the precompiled newlib: the worst
+ * static chain from worker_task is ~4.7KB (send_report 480 B, then an
+ * ESP_LOG inside lwip/heap -> the diag.c log hook -> newlib vprintf, 800 B
+ * per printf frame). That left ~0.4KB for an interrupt frame saved on this
+ * stack - too thin. The stack was NOT what crashed 1.2.1 (see diag.c,
+ * diag_stack_hwm); this is margin. The report's own stack_free_min.report
+ * shows the real figure. */
+#define REPORT_TASK_STACK 6144
 
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static report_status_t s_status = { .state = REPORT_IDLE };
@@ -169,7 +181,12 @@ static void build_diag(jbuf_t *j)
     jb_key_u32(j, "self_restart_last_boot", c->self_restart_last_boot);
     jb_key_u32(j, "brownouts", c->brownouts);
     jb_key_u32(j, "brownout_last_boot", c->brownout_last_boot);
+    jb_key_u32(j, "report_crashes", c->report_crashes);
+    jb_key_u32(j, "report_crash_last_boot", c->report_crash_last_boot);
     jb_close(j, '}');
+    /* 1.2.2 loop guard: true only on a boot that followed a crash inside the
+     * report path - so this report was sent by RPT. */
+    jb_key_bool(j, "auto_reports_off", diag_auto_reports_off());
 
     /* Present on every report of the boot after an abnormal reset, null
      * otherwise - it describes the previous boot, not this one. */
@@ -344,7 +361,7 @@ static void settle(report_state_t state, const char *id, const char *message)
     portEXIT_CRITICAL(&s_mux);
 }
 
-static void send_report(void)
+static void send_report_once(void)
 {
     jbuf_t j = { .buf = s_body, .cap = REPORT_BODY_MAX, .len = 0, .overflow = false };
     s_body[0] = '\0';
@@ -417,6 +434,17 @@ static void send_report(void)
     char msg[32];
     snprintf(msg, sizeof(msg), "REPORT SENT #%.18s", id);
     settle(REPORT_SENT, id, msg);
+}
+
+/* 1.2.2: every attempt, automatic or RPT, runs inside the loop guard (diag.h).
+ * If anything in build or send resets the chip, the next boot knows and
+ * holds automatic reports off. Cleared on every return path, since
+ * send_report_once() only ever returns normally. */
+static void send_report(void)
+{
+    diag_report_guard_begin(s_req->trigger);
+    send_report_once();
+    diag_report_guard_end();
 }
 
 static void worker_task(void *arg)

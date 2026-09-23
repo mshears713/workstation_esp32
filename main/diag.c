@@ -162,6 +162,8 @@ void diag_tick(void)
 
 /* ---- boot-time capture ------------------------------------------------- */
 
+static bool report_guard_take(bool abnormal_reset);   /* below, with the guard */
+
 static diag_counters_t s_counters;
 static diag_crash_t s_crash = { .last_words = "" };
 static volatile bool s_after_crash_pending;
@@ -227,7 +229,7 @@ static void nvs_get_u32_or(nvs_handle_t h, const char *key, uint32_t *v)
     }
 }
 
-static void update_counters(esp_reset_reason_t reason, const char *kind)
+static void update_counters(esp_reset_reason_t reason, const char *kind, bool report_crash)
 {
     diag_counters_t *c = &s_counters;
     nvs_handle_t h;
@@ -262,6 +264,16 @@ static void update_counters(esp_reset_reason_t reason, const char *kind)
     nvs_get_u32_or(h, "selfrst_at", &c->self_restart_last_boot);
     nvs_get_u32_or(h, "brownouts", &c->brownouts);
     nvs_get_u32_or(h, "brown_at", &c->brownout_last_boot);
+    nvs_get_u32_or(h, "rptcrash", &c->report_crashes);
+    nvs_get_u32_or(h, "rptcrash_at", &c->report_crash_last_boot);
+
+    if (report_crash) {
+        c->report_crashes++;
+        c->report_crash_last_boot = c->boot;
+        nvs_set_u32(h, "rptcrash", c->report_crashes);
+        nvs_set_u32(h, "rptcrash_at", c->report_crash_last_boot);
+        dirty = true;
+    }
 
     if (kind != NULL && strcmp(kind, "panic") == 0) {
         c->panics++;
@@ -300,7 +312,10 @@ void diag_init(void)
     esp_reset_reason_t reason = esp_reset_reason();
     const char *kind = classify(reason);
 
-    update_counters(reason, kind);
+    /* 1.2.2 loop guard: did the previous boot die while sending a report? */
+    bool report_crash = report_guard_take(kind != NULL);
+
+    update_counters(reason, kind, report_crash);
 
     if (kind != NULL) {
         s_crash.happened = true;
@@ -341,6 +356,11 @@ void diag_init(void)
              (unsigned long)c->self_restarts, (unsigned long)c->self_restart_last_boot,
              (unsigned long)c->brownouts, (unsigned long)c->brownout_last_boot,
              (unsigned long)c->counting_since);
+    if (report_crash) {
+        ESP_LOGW(TAG, "AUTO REPORT OFF: crashed while reporting (trigger %s) - automatic reports are off "
+                 "this boot; RPT still works (report crashes %lu)", diag_report_crash_trigger(),
+                 (unsigned long)c->report_crashes);
+    }
     if (s_crash.happened) {
         ESP_LOGW(TAG, "previous boot ended in a %s; breadcrumb %s (page %s, cmd %s, internal min-free %lu, %u bytes of log)",
                  s_crash.kind, s_crash.breadcrumb_valid ? "valid" : "missing/invalid",
@@ -384,12 +404,88 @@ static const char *const s_task_names[] = {
 void diag_stack_hwm(diag_stack_cb_t cb, void *ctx)
 {
     for (size_t i = 0; i < sizeof(s_task_names) / sizeof(s_task_names[0]); i++) {
-        TaskHandle_t t = xTaskGetHandle(s_task_names[i]);
+        /* 1.2.2 - THE 1.2.1 FIELD CRASH. xTaskGetHandle() starts with
+         *   configASSERT(strlen(pcNameToQuery) < configMAX_TASK_NAME_LEN)
+         * and configMAX_TASK_NAME_LEN is 16. "handshake_worker" is 16
+         * characters, so every report (the RPT tap, then the after-crash
+         * report on each boot after it) hit assert() -> abort() inside
+         * build_body(), before the POST. FreeRTOS keeps a task's name cut to
+         * 15 characters ("handshake_worke"), so look it up the same way:
+         * truncate here and never pass a name that is too long. The report
+         * key stays the full name. */
+        char name[configMAX_TASK_NAME_LEN];
+        strlcpy(name, s_task_names[i], sizeof(name));
+        TaskHandle_t t = xTaskGetHandle(name);
         if (t != NULL) {
             /* ESP-IDF's StackType_t is a byte, so this is bytes. */
             cb(s_task_names[i], (uint32_t)uxTaskGetStackHighWaterMark(t), ctx);
         }
     }
+}
+
+/* ---- report loop guard (1.2.2) ------------------------------------------
+ * Set while a report is being built and sent; cleared when the attempt
+ * ends. Found set at boot after an abnormal reset means that reset happened
+ * inside the report path, so automatic reports stay off for that boot (see
+ * diag.h). Magic plus its complement, so power-on garbage in RTC memory
+ * cannot pass for "set". Plain stores: only the report task writes it, and
+ * diag_init() reads it before that task exists. */
+#define REPORT_GUARD_MAGIC 0x52505447u   /* "RPTG" */
+
+typedef struct {
+    uint32_t magic;
+    uint32_t magic_inv;
+    char trigger[24];
+} report_guard_t;
+
+static RTC_NOINIT_ATTR report_guard_t s_report_guard;
+static bool s_auto_reports_off;
+static char s_report_crash_trigger[24];
+
+/* diag_init(): true if the previous boot died with a report in flight.
+ * Clears the guard either way. */
+static bool report_guard_take(bool abnormal_reset)
+{
+    bool set = s_report_guard.magic == REPORT_GUARD_MAGIC &&
+               s_report_guard.magic_inv == ~REPORT_GUARD_MAGIC;
+    if (set && abnormal_reset) {
+        /* copy_str stops at the buffer end even if the text is not
+         * terminated; sanitise to printable for the log and the report. */
+        copy_str(s_report_crash_trigger, sizeof(s_report_crash_trigger), "");
+        size_t i = 0;
+        for (; i + 1 < sizeof(s_report_crash_trigger) && i < sizeof(s_report_guard.trigger) &&
+               s_report_guard.trigger[i]; i++) {
+            char c = s_report_guard.trigger[i];
+            s_report_crash_trigger[i] = (c >= 0x20 && c < 0x7f && c != '"' && c != '\\') ? c : '?';
+        }
+        s_report_crash_trigger[i] = '\0';
+        s_auto_reports_off = true;
+    }
+    memset(&s_report_guard, 0, sizeof(s_report_guard));
+    return set && abnormal_reset;
+}
+
+void diag_report_guard_begin(const char *trigger)
+{
+    copy_str(s_report_guard.trigger, sizeof(s_report_guard.trigger), trigger);
+    s_report_guard.magic_inv = ~REPORT_GUARD_MAGIC;
+    s_report_guard.magic = REPORT_GUARD_MAGIC;
+}
+
+void diag_report_guard_end(void)
+{
+    s_report_guard.magic = 0;
+    s_report_guard.magic_inv = 0;
+}
+
+bool diag_auto_reports_off(void)
+{
+    return s_auto_reports_off;
+}
+
+const char *diag_report_crash_trigger(void)
+{
+    return s_report_crash_trigger;
 }
 
 #if DIAG_TEST_CRASH

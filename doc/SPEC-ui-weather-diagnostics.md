@@ -33,6 +33,40 @@ Acceptance: builds clean. After deploy, the next heartbeat shows internal min-fr
 the report carries the counters. A deliberate test panic (debug-only trigger, removed before merge, or gated by a
 backend flag) produces `last_words` in the following report.
 
+### 1.2.1 field failure → 1.2.2 (23 Sep 2026)
+**What happened.** 1.2.1 ran fine for ~6 min after its 14:03 deploy. At ~14:10 Mike tapped RPT (a normal tap)
+on the LOG page; the report never reached the backend, and from then on the device restarted every ~25 s and
+never reached its first OTA check. Stopping the backend on :8000 kept it up long enough for OTA to pull 1.2.0.
+
+**Cause (certain).** `diag_stack_hwm()` looked tasks up with `xTaskGetHandle(name)`. ESP-IDF 5.5's FreeRTOS
+starts that function with `configASSERT(strlen(pcNameToQuery) < configMAX_TASK_NAME_LEN)`, and
+`configMAX_TASK_NAME_LEN` is 16. The list contained `"handshake_worker"`: 16 characters. So **every** report
+(`stack_free_min` is in all of them) hit `assert()` → `abort()` inside `build_body()`, before the POST. The RPT
+tap crashed the first time. Each boot after that queued an `after-crash` report "once the backend answers",
+which crashed the same way, ~25 s after boot. The first OTA check comes ~60 s after boot (the OTA task's first
+pass runs before Wi-Fi is up, so its first real check waits one poll interval), so OTA never got a turn. With
+the backend down the report never started, so the device stayed up. 1.2.0 had no stack marks, so its RPT worked.
+Reproduced off-device: `tools/hosttest/run.sh 1.2.1` aborts on exactly that assert. The report task's stack
+was measured and was not the problem (see the 1.2.2 commit message for the numbers).
+
+**Fix.** Names are cut to 15 characters before the lookup (how FreeRTOS stores them); the report key keeps the
+full name.
+
+**Loop guard (1.2.2, for any future crash in the report path).**
+- Every report attempt (automatic or RPT) sets an RTC_NOINIT marker (magic + complement, and the trigger)
+  before building the body and clears it when the attempt ends.
+- If a boot finds the marker set after a PANIC/watchdog/brownout reset, it counts it (NVS `diag/rptcrash`,
+  reported as `counters.report_crashes`), logs "AUTO REPORT OFF: crashed while reporting" (Black Box line
+  `AUTO RPT OFF: CRASH IN REPORT`), and sends **no automatic report that boot** (after-crash, heartbeat,
+  auto-reconnect, auto-watchdog). RPT still works; its report says `auto_reports_off: true`. The next
+  boot starts fresh. A report path that always crashes therefore costs one reset, then the device stays up.
+- No automatic report is sent before **120 s of uptime and one finished OTA check**, so an update can
+  always land before any report work runs.
+- The RPT 5 s hold test crash (`DIAG_TEST_CRASH`) stays for commissioning.
+- Host test: `tools/hosttest/run.sh` compiles the real `report_client.c` + `diag.c` with gcc under
+  ASan/UBSan, with a worst-case breadcrumb and event ring (15.6 KB body; buffer now 20 KB), and checks the
+  guard logic.
+
 ## 1.3.0 — home + weather + menu + dark theme (Class 3 rework; DRAFT)
 **Home (the only screen at boot):**
 | Area | Content |
