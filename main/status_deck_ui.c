@@ -177,6 +177,8 @@
 #include "project_selector.h"
 #include "backend_catalog.h"
 #include "report_client.h"
+#include "diag.h"
+#include "lvgl_psram_alloc.h"
 /* Mission 19: lv_sysmon's public API (lv_sysmon_show/hide_performance) has
  * no accessor for the FPS/CPU label object itself, only show/hide - moving
  * it into the LOG page's button row (see status_deck_ui()) needs the actual
@@ -989,6 +991,30 @@ static void report_try_pending(void)
     }
 }
 
+/* 1.2.1: the two automatic reports diagnostics adds, queued through the same
+ * report_pending_trigger slot as auto-reconnect/auto-watchdog so they wait
+ * for the backend in exactly the same way.
+ *   after-crash: the boot after a PANIC/WDT/brownout, until the backend has
+ *                stored one (report_client marks it delivered). A failed
+ *                POST is retried a minute later.
+ *   heartbeat:   hourly. Carries heap min-free, stack marks and counters.
+ * Called from telemetry_timer_cb, once a second. LVGL task only. */
+static void diag_report_schedule(uint32_t uptime_s)
+{
+    static uint32_t next_heartbeat_s = DIAG_HEARTBEAT_S;
+    static uint32_t next_crash_try_s = 0;
+
+    if (report_pending_trigger == NULL && diag_after_crash_pending() && uptime_s >= next_crash_try_s) {
+        report_pending_trigger = "after-crash";
+        next_crash_try_s = uptime_s + 60;
+    }
+    if (report_pending_trigger == NULL && uptime_s >= next_heartbeat_s) {
+        report_pending_trigger = "heartbeat";
+        next_heartbeat_s = uptime_s + DIAG_HEARTBEAT_S;
+    }
+    report_try_pending();
+}
+
 /* ---- Rendering: UI reads app_state / event_history, never the reverse - */
 
 /* Renders the newest EVENT_DISPLAY_LINES of event_history - as of Mission
@@ -1660,6 +1686,7 @@ static void handle_command(const char *name, bool significant)
     log_event(EVT_COMMAND, msg);
 
     ESP_LOGI(TAG, "command=%s count=%lu", name, (unsigned long)app_state.command_count);
+    diag_set_cmd(name);   /* 1.2.1 crash breadcrumb (RTC memory, not NVS) */
 
     if (significant) {
         blackbox_save_last_cmd(name);
@@ -1689,6 +1716,25 @@ static void net_button_cb(lv_event_t *e)
     handle_command("NET", true);
     wifi_mgr_request_reconnect();
 }
+
+#if DIAG_TEST_CRASH
+/* ---- DIAG_TEST_CRASH: commissioning only, remove after 1.2.1 is proven --
+ * Holding RPT for DIAG_TEST_CRASH_HOLD_MS (5 s) deliberately abort()s, so
+ * the crash breadcrumb and the after-crash report can be checked end to end
+ * on the real device. A normal tap still sends a report as before (CLICKED
+ * fires on release, long before 5 s). To remove: set DIAG_TEST_CRASH to 0
+ * in diag.h, or delete this block and the one in the log-button loop. */
+static uint32_t rpt_pressed_at;
+static void report_button_hold_cb(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_PRESSED) {
+        rpt_pressed_at = lv_tick_get();
+    } else if (code == LV_EVENT_PRESSING && lv_tick_elaps(rpt_pressed_at) >= DIAG_TEST_CRASH_HOLD_MS) {
+        diag_test_crash("RPT held 5 s on LOG page");
+    }
+}
+#endif
 
 /* RPT (1.2.0, took SND's place): send a device report now. The result
  * arrives as a Black Box line via handshake_ui_timer_cb; a press while one
@@ -1821,6 +1867,12 @@ static void set_active_page(app_page_t page)
     lv_obj_t *pages[APP_PAGE_COUNT] = {
         page_home, page_sens, page_log, page_set, page_projects, page_firmware,
     };
+    /* 1.2.1: which page was on screen, for the crash breadcrumb. Same
+     * order as app_page_t. */
+    static const char *const page_names[APP_PAGE_COUNT] = {
+        "HOME", "SENS", "LOG", "SET", "PROJECTS", "FIRMWARE",
+    };
+    diag_set_page(page_names[page]);
     for (int i = 0; i < APP_PAGE_COUNT; i++) {
         if (i == (int)page) {
             lv_obj_clear_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
@@ -2024,6 +2076,9 @@ static void telemetry_timer_cb(lv_timer_t *t)
     char buf[16];
     snprintf(buf, sizeof(buf), "UP %02u:%02u", (unsigned)(uptime_s / 60), (unsigned)(uptime_s % 60));
     lv_label_set_text(telemetry_label, buf);
+
+    diag_tick();
+    diag_report_schedule(uptime_s);
 }
 
 /* ---- Sensor/chart: fast timer, matched to SENSOR_ACQUIRE_PERIOD_MS --- */
@@ -2213,6 +2268,15 @@ void status_deck_ui(lv_obj_t *scr)
          * the backend answers. */
         event_push_only(EVT_BACKEND, "PREV RST: API WATCHDOG");
         report_pending_trigger = "auto-watchdog";
+    }
+    const diag_crash_t *crash = diag_crash();
+    if (crash->happened) {
+        /* 1.2.1: say so on the LOG page; diag_report_schedule() sends the
+         * after-crash report (with the breadcrumb) once the backend answers. */
+        char crash_msg[EVENT_MSG_LEN];
+        snprintf(crash_msg, sizeof(crash_msg), "PREV: %s %s", crash->kind,
+                 crash->breadcrumb_valid ? crash->page : "(no crumb)");
+        event_push_only(EVT_RESET, crash_msg);
     }
     ESP_LOGI(TAG, "boot #%lu, this-boot reset=%s, previous-boot reset=%s, last_significant_cmd=%s, last_fault=%s",
              (unsigned long)blackbox.boot_count, reset_reason_str(esp_reset_reason()),
@@ -2591,6 +2655,12 @@ void status_deck_ui(lv_obj_t *scr)
         lv_obj_t *btn = lv_btn_create(log_btn_row);
         lv_obj_set_size(btn, 54, 44);
         lv_obj_add_event_cb(btn, log_buttons[i].cb, LV_EVENT_CLICKED, NULL);
+#if DIAG_TEST_CRASH
+        if (log_buttons[i].cb == report_button_cb) {
+            lv_obj_add_event_cb(btn, report_button_hold_cb, LV_EVENT_PRESSED, NULL);
+            lv_obj_add_event_cb(btn, report_button_hold_cb, LV_EVENT_PRESSING, NULL);
+        }
+#endif
 
         lv_obj_t *btn_label = lv_label_create(btn);
         lv_label_set_text(btn_label, log_buttons[i].label);
@@ -3046,10 +3116,16 @@ void status_deck_ui(lv_obj_t *scr)
      * a marginal boot fails intermittently. Logged at the one point where
      * the whole UI exists but Wi-Fi has not started, so the margin is
      * visible rather than inferred after the next crash. */
-    ESP_LOGI(TAG, "UI built: internal heap %u free (%u largest block), PSRAM %u free",
+    /* 1.2.1: LVGL now allocates from PSRAM (lvgl_psram_alloc.c). Compare
+     * this line with 1.2.0's on hardware: internal free should be up by the
+     * size of the widget tree, and fallbacks should be 0. */
+    ESP_LOGI(TAG, "UI built: internal heap %u free (%u largest block, %u min), PSRAM %u free, "
+             "LVGL internal fallbacks %lu",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+             (unsigned long)lvgl_psram_alloc_fallbacks());
 
     set_active_page(APP_PAGE_HOME);
 }

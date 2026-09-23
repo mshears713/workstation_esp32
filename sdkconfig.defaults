@@ -30,8 +30,16 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 CONFIG_LV_CONF_SKIP=y
 CONFIG_LV_BUILD_EXAMPLES=n
 
-#CLIB default
-CONFIG_LV_USE_CLIB_MALLOC=y
+#CLIB default (string and sprintf only - see the malloc note below)
+# 1.2.1: LVGL's malloc is our own, PSRAM first (main/lvgl_psram_alloc.c).
+# With CONFIG_LV_USE_CLIB_MALLOC and SPIRAM_MALLOC_ALWAYSINTERNAL=4096 below,
+# every LVGL object, style and label (all small) landed in internal RAM - an
+# estimated 25-45 KB for six pages and three overlays built at boot and never
+# freed. The 1.2.0 report of 23 Sep showed internal min-free at 1,207 bytes
+# and a PANIC on the boot before. LVGL needs none of it to be internal: the
+# DMA draw buffer is allocated by esp_lvgl_port directly (MALLOC_CAP_DMA) and
+# stays internal; the allocator falls back to internal only if PSRAM is full.
+CONFIG_LV_USE_CUSTOM_MALLOC=y
 CONFIG_LV_USE_CLIB_SPRINTF=y
 CONFIG_LV_USE_CLIB_STRING=y
 

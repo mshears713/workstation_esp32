@@ -11,6 +11,11 @@
  *     (trigger "auto-reconnect"),
  *   - once after boot, if the previous reset was backend_health's
  *     self-recovery restart (trigger "auto-watchdog").
+ *   - 1.2.1: once after a PANIC/watchdog/brownout reset, retried each minute
+ *     until stored (trigger "after-crash"), and hourly (trigger
+ *     "heartbeat"). Every report also carries diag.h's counters, the
+ *     previous boot's crash breadcrumb (`crash`, `last_words`) and task
+ *     stack high-water marks (`stack_free_min`).
  *
  * Threading: status_deck_ui.c (the LVGL task) claims the request with
  * report_client_begin(), fills in the parts only it owns - the Black Box
@@ -43,7 +48,7 @@ typedef struct {
 } report_event_t;
 
 typedef struct {
-    char trigger[24];                    /* "button", "auto-reconnect", "auto-watchdog" */
+    char trigger[24];                    /* "button", "auto-reconnect", "auto-watchdog", "after-crash", "heartbeat" */
     uint32_t boot_count;
     char reset_reason[20];               /* this boot */
     char prev_reset_reason[20];          /* the boot before */

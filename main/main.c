@@ -35,6 +35,7 @@
 #include "nvs_flash.h"
 
 #include "device_config.h"
+#include "diag.h"
 #include "firmware_identity.h"
 #include "ota_service.h"
 
@@ -73,6 +74,13 @@ void app_main(void)
         ESP_LOGE("workstation", "OTA updater did not start: %s - USB updates only this boot",
                  esp_err_to_name(ota_err));
     }
+
+    /* 1.2.1 diagnostics: crash counters, the previous boot's breadcrumb, and
+     * the log hook that keeps this boot's. After the OTA task on purpose (see
+     * above); it allocates nothing internal - the breadcrumb is RTC memory
+     * and the only buffer, after a crash, is PSRAM. As early as possible
+     * otherwise, so the breadcrumb holds as much of the boot as it can. */
+    diag_init();
 
     bsp_display_start();
 

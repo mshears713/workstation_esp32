@@ -25,7 +25,9 @@
 
 #include "backend_config.h"
 #include "backend_health.h"
+#include "diag.h"
 #include "firmware_identity.h"
+#include "lvgl_psram_alloc.h"
 #include "ota_service.h"
 #include "wifi_manager.h"
 
@@ -37,9 +39,11 @@ static const char *TAG = "report";
 #define REPORT_TIMEOUT_MS 8000
 
 /* ~32 events x ~90 bytes + ~1.5KB of the rest. 12KB leaves room for every
- * message being escaped at worst case. PSRAM, so the size costs nothing
- * that matters. */
-#define REPORT_BODY_MAX (12 * 1024)
+ * message being escaped at worst case. 1.2.1 adds up to ~2.3KB of
+ * last_words (printable ASCII, newlines escaped as \n), ~0.6KB of stack
+ * marks and ~0.5KB of counters/crash fields: 16KB. PSRAM, so the size costs
+ * nothing that matters. */
+#define REPORT_BODY_MAX (16 * 1024)
 #define REPORT_RESPONSE_MAX 192
 
 /* Internal RAM, not PSRAM: the worker reads the OTA state from flash
@@ -102,6 +106,9 @@ static void jb_str(jbuf_t *j, const char *s)
         if (c == '"' || c == '\\') {
             jb_putc(j, '\\');
             jb_putc(j, (char)c);
+        } else if (c == '\n') {       /* last_words is mostly newlines */
+            jb_putc(j, '\\');
+            jb_putc(j, 'n');
         } else if (c < 0x20) {
             jb_raw(j, "\\u%04x", c);
         } else {
@@ -139,6 +146,57 @@ static void jb_close(jbuf_t *j, char closer)
         j->len--;
     }
     jb_raw(j, "%c,", closer);
+}
+
+static void jb_stack_cb(const char *task, uint32_t free_bytes, void *ctx)
+{
+    jb_key_u32((jbuf_t *)ctx, task, free_bytes);
+}
+
+/* 1.2.1 diagnostics: counters, the previous boot's crash (if it was one),
+ * and stack high-water marks. See diag.h. */
+static void build_diag(jbuf_t *j)
+{
+    const diag_counters_t *c = diag_counters();
+    jb_raw(j, "\"counters\":{");
+    jb_key_u32(j, "boots", c->boot);
+    jb_key_u32(j, "counting_since_boot", c->counting_since);
+    jb_key_u32(j, "panics", c->panics);
+    jb_key_u32(j, "panic_last_boot", c->panic_last_boot);
+    jb_key_u32(j, "wdt_resets", c->wdt_resets);
+    jb_key_u32(j, "wdt_last_boot", c->wdt_last_boot);
+    jb_key_u32(j, "self_restarts", c->self_restarts);
+    jb_key_u32(j, "self_restart_last_boot", c->self_restart_last_boot);
+    jb_key_u32(j, "brownouts", c->brownouts);
+    jb_key_u32(j, "brownout_last_boot", c->brownout_last_boot);
+    jb_close(j, '}');
+
+    /* Present on every report of the boot after an abnormal reset, null
+     * otherwise - it describes the previous boot, not this one. */
+    const diag_crash_t *k = diag_crash();
+    if (k->happened) {
+        jb_raw(j, "\"crash\":{");
+        jb_key_str(j, "kind", k->kind);
+        jb_key_bool(j, "breadcrumb_valid", k->breadcrumb_valid);
+        if (k->breadcrumb_valid) {
+            jb_key_u32(j, "boot", k->boot);
+            jb_key_u32(j, "uptime_s", k->uptime_s);
+            jb_key_str(j, "last_page", k->page);
+            jb_key_str(j, "last_cmd", k->cmd);
+            jb_key_u32(j, "internal_free", k->internal_free);
+            jb_key_u32(j, "internal_min_free", k->internal_min_free);
+            jb_key_u32(j, "internal_largest", k->internal_largest);
+            jb_key_u32(j, "psram_free", k->psram_free);
+        }
+        jb_close(j, '}');
+        jb_key_str(j, "last_words", k->last_words);
+    } else {
+        jb_raw(j, "\"crash\":null,\"last_words\":null,");
+    }
+
+    jb_raw(j, "\"stack_free_min\":{");
+    diag_stack_hwm(jb_stack_cb, j);
+    jb_close(j, '}');
 }
 
 static const char *wifi_state_word(wifi_mgr_state_t s)
@@ -223,7 +281,12 @@ static bool build_body(const report_request_t *r, jbuf_t *j)
     jb_key_u32(j, "internal_largest", (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
     jb_key_u32(j, "internal_min_free", (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
     jb_key_u32(j, "psram_free", (uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    jb_key_u32(j, "psram_min_free", (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
+    jb_key_u32(j, "lvgl_internal_fallbacks", lvgl_psram_alloc_fallbacks());
+    jb_key_u32(j, "lvgl_alloc_failures", lvgl_psram_alloc_failures());
     jb_close(j, '}');
+
+    build_diag(j);
 
     jb_raw(j, "\"wifi\":{");
     jb_key_str(j, "state", wifi_state_word(w.state));
@@ -348,6 +411,9 @@ static void send_report(void)
         cJSON_Delete(root);
     }
     ESP_LOGI(TAG, "report (%s) stored as #%s, %u bytes", s_req->trigger, id, (unsigned)j.len);
+    if (strcmp(s_req->trigger, "after-crash") == 0) {
+        diag_after_crash_delivered();
+    }
     char msg[32];
     snprintf(msg, sizeof(msg), "REPORT SENT #%.18s", id);
     settle(REPORT_SENT, id, msg);
