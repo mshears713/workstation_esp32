@@ -57,6 +57,9 @@ CONFIG_LV_USE_PERF_MONITOR=y
 
 CONFIG_LV_USE_FLOAT=y
 CONFIG_LV_USE_GESTURE_RECOGNITION=y
+# Survey prototype's thank-you screen links to a website (ui_survey.c). The
+# 1-bit QR buffer is an LVGL allocation, so it lands in PSRAM like the rest.
+CONFIG_LV_USE_QRCODE=y
 
 # Internal RAM, not PSRAM, is the scarce resource on this board. Measured
 # after the UI restructure (four pages, corner nav, larger listening widget):

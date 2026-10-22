@@ -608,6 +608,174 @@
           "uptime_s": "425"
         }
       }
+    },
+    "survey": {
+      "kind": "page",
+      "description": "EXPERIMENT: event-feedback survey kiosk (ui_survey.c, Calm Paper): welcome, three SAMPLE question screens (1-5 tiles, 0-10 slider with -/+ keys, three-way choice), review/submit, thank-you with a QR to a SAMPLE link (example.com), next-visitor reset. Full-screen sheet; no HOME button; organiser leaves by holding the top bar 3 s on welcome. Questions and link are placeholders.",
+      "sources": [
+        "main/ui_paper.c",
+        "main/ui_survey.c"
+      ],
+      "headers": [
+        "ui_paper.h",
+        "ui_survey.h",
+        "ui_theme.h"
+      ],
+      "adapter": "tools/uisim/targets/survey.c",
+      "fields": {
+        "step": {
+          "type": "enum",
+          "values": [
+            "welcome",
+            "q1",
+            "q2",
+            "q3",
+            "review",
+            "thanks"
+          ],
+          "default": "welcome",
+          "doc": "screen to open on (ui_survey_preview); taps then drive the real flow"
+        },
+        "a1": {
+          "type": "int",
+          "default": -1,
+          "doc": "answer to Q1, 1..5 rating; -1 unanswered"
+        },
+        "a2": {
+          "type": "int",
+          "default": -1,
+          "doc": "answer to Q2, 0..10 slider; -1 unanswered"
+        },
+        "a3": {
+          "type": "int",
+          "default": -1,
+          "doc": "answer to Q3, choice index 0..2; -1 unanswered"
+        },
+        "save_failed": {
+          "type": "bool",
+          "default": false,
+          "doc": "review screen shows the not-saved notice"
+        },
+        "save_fails": {
+          "type": "bool",
+          "default": false,
+          "doc": "the submit callback refuses (tests the failure path by tapping Submit)"
+        },
+        "response_no": {
+          "type": "int",
+          "default": 12,
+          "doc": "response number the app hands back"
+        },
+        "thanks_reset_s": {
+          "type": "int",
+          "default": 30,
+          "doc": "thank-you screen's auto reset"
+        },
+        "idle_reset_s": {
+          "type": "int",
+          "default": 90,
+          "doc": "mid-survey inactivity reset"
+        },
+        "qr_url": {
+          "type": "str",
+          "default": "https://example.com/feedback",
+          "doc": "QR content (SAMPLE until Mike gives the real URL)"
+        },
+        "qr_caption": {
+          "type": "str",
+          "default": "Sample link:\nexample.com",
+          "doc": "under the QR"
+        },
+        "saved_note": {
+          "type": "str",
+          "default": "Saved on this device only (sample mode).",
+          "doc": "thank-you line saying where answers went"
+        },
+        "q1_prompt": {
+          "type": "str",
+          "default": "",
+          "doc": "replaces the sample Q1 wording (tests a long question)"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "q1_empty": {
+          "step": "q1"
+        },
+        "q1_answered": {
+          "step": "q1",
+          "a1": 4
+        },
+        "q2_empty": {
+          "step": "q2",
+          "a1": 4
+        },
+        "q2_answered": {
+          "step": "q2",
+          "a1": 4,
+          "a2": 7
+        },
+        "q2_min": {
+          "step": "q2",
+          "a1": 4,
+          "a2": 0
+        },
+        "q2_max": {
+          "step": "q2",
+          "a1": 4,
+          "a2": 10
+        },
+        "q3_empty": {
+          "step": "q3",
+          "a1": 4,
+          "a2": 7
+        },
+        "q3_answered": {
+          "step": "q3",
+          "a1": 4,
+          "a2": 7,
+          "a3": 1
+        },
+        "review": {
+          "step": "review",
+          "a1": 4,
+          "a2": 7,
+          "a3": 1
+        },
+        "review_extremes": {
+          "step": "review",
+          "a1": 1,
+          "a2": 10,
+          "a3": 2
+        },
+        "review_save_failed": {
+          "step": "review",
+          "a1": 4,
+          "a2": 7,
+          "a3": 1,
+          "save_failed": true
+        },
+        "thanks": {
+          "step": "thanks",
+          "a1": 4,
+          "a2": 7,
+          "a3": 1
+        },
+        "thanks_long": {
+          "step": "thanks",
+          "a1": 4,
+          "a2": 7,
+          "a3": 1,
+          "response_no": 4294967295,
+          "qr_url": "https://feedback.example.com/events/2026-10-workstation-demo?src=booth-3",
+          "qr_caption": "Sample link:\nfeedback.example.com/events"
+        },
+        "q1_long_prompt": {
+          "step": "q1",
+          "a1": 3,
+          "q1_prompt": "On a scale of one to five, how useful was the live demonstration you just watched at our booth today?"
+        }
+      }
     }
   }
 }

@@ -31,3 +31,14 @@
 #define UI_OK        lv_palette_main(LV_PALETTE_GREEN)
 #define UI_WARN      lv_palette_main(LV_PALETTE_ORANGE)
 #define UI_ERR       lv_palette_main(LV_PALETTE_RED)
+
+/* Calm Paper (gallery concept 02): the light look Mike chose for the survey
+ * and the music remote. Warm paper, ink type, hairline rules instead of
+ * panels; rust only for a failure, and always with a word. */
+#define PAPER_BG       lv_color_hex(0xF2EFE8)
+#define PAPER_INK      lv_color_hex(0x1F1D1A)
+#define PAPER_GREY     lv_color_hex(0x655F55)   /* secondary text, ~5.9:1 on paper */
+#define PAPER_HAIRLINE lv_color_hex(0xC9C2B4)
+#define PAPER_FADED    lv_color_hex(0xA39C8E)   /* disabled only - never text to read */
+#define PAPER_RUST     lv_color_hex(0x8E3A1C)
+#define PAPER_PRESSED  lv_color_hex(0xE2DDD2)
