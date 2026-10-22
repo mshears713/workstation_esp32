@@ -12,6 +12,7 @@
  */
 
 #include "ui_kit.h"
+#include "ui_theme.h"
 
 lv_obj_t *ui_page_create(lv_obj_t *scr)
 {
@@ -41,11 +42,12 @@ lv_obj_t *ui_page_create(lv_obj_t *scr)
  * purely a visual layer behind them. */
 void ui_panel_style(lv_obj_t *obj)
 {
-    lv_obj_set_style_bg_color(obj, lv_palette_darken(LV_PALETTE_BLUE_GREY, 3), 0);
+    /* 1.3.0 dark look: charcoal block on a black screen, no border. The old
+     * blue-grey panel was the backdrop behind the ~1.6:1 FIRMWARE text. */
+    lv_obj_set_style_bg_color(obj, UI_PANEL, 0);
     lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(obj, 10, 0);
-    lv_obj_set_style_border_width(obj, 2, 0);
-    lv_obj_set_style_border_color(obj, lv_palette_darken(LV_PALETTE_BLUE, 2), 0);
+    lv_obj_set_style_border_width(obj, 0, 0);
     lv_obj_set_style_pad_all(obj, 0, 0);
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
@@ -80,75 +82,30 @@ void ui_page_title(lv_obj_t *page, const char *text)
     lv_obj_t *label = lv_label_create(page);
     lv_label_set_text(label, text);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(label, lv_palette_main(LV_PALETTE_BLUE), 0);
+    lv_obj_set_style_text_color(label, UI_TITLE, 0);
     lv_obj_align(label, LV_ALIGN_TOP_LEFT, 104, 12);
 }
 
-/* Four corners rather than a bottom bar. That frees the whole middle of
- * the screen for the listening widget, which is what HOME is actually
- * for, and it gives the fourth page somewhere to live now that TALK is
- * no longer a button - tapping the microphone does that job.
- *
- * 96x52 in each corner with montserrat_20 labels - these are read and
- * hit at arm's length, so the text carries as much as the target size
- * does. The pages are full-screen underneath
- * rather than squeezed into the gap between them. That matters because
- * HOME is a circle: the corners of its bounding box are transparent, so
- * big corner buttons and a big microphone can share the same 320x240
- * without touching. SENS and LOG do have rectangular content, so they
- * keep theirs inside y=48..192 by their own offsets. */
-void ui_nav_create(lv_obj_t *scr, lv_obj_t *out[UI_NAV_COUNT], const lv_event_cb_t cbs[UI_NAV_COUNT])
+/* 1.3.0: the four corner buttons are gone - HOME is now the weather and the
+ * microphone, and everything else is one tap away through MENU. What is left
+ * is the way back, in the same top-left corner (and at the same 96x52, with a
+ * montserrat_20 label read at arm's length) that HOME always occupied, so the
+ * one button present on every sub-page is still where the hand expects it.
+ * From a sub-page the only move is home: SENS -> LOG is HOME, MENU, LOG. */
+lv_obj_t *ui_back_button_create(lv_obj_t *scr, lv_event_cb_t cb)
 {
-    static const struct {
-        const char *label;
-        lv_align_t align;
-        int x;
-        int y;
-    } defs[UI_NAV_COUNT] = {
-        [UI_NAV_HOME] = { "HOME", LV_ALIGN_TOP_LEFT,      2,  2 },
-        [UI_NAV_SENS] = { "SENS", LV_ALIGN_TOP_RIGHT,    -2,  2 },
-        [UI_NAV_LOG]  = { "LOG",  LV_ALIGN_BOTTOM_LEFT,   2, -2 },
-        [UI_NAV_SET]  = { "SET",  LV_ALIGN_BOTTOM_RIGHT, -2, -2 },
-    };
-    for (int i = 0; i < UI_NAV_COUNT; i++) {
-        lv_obj_t *btn = lv_btn_create(scr);
-        lv_obj_set_size(btn, 96, 52);
-        lv_obj_align(btn, defs[i].align, defs[i].x, defs[i].y);
-        if (cbs && cbs[i]) {
-            lv_obj_add_event_cb(btn, cbs[i], LV_EVENT_CLICKED, NULL);
-        }
-
-        lv_obj_t *btn_label = lv_label_create(btn);
-        lv_label_set_text(btn_label, defs[i].label);
-        lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_20, 0);
-        lv_obj_center(btn_label);
-
-        out[i] = btn;
-    }
-}
-
-void ui_nav_set_active(lv_obj_t *const nav[UI_NAV_COUNT], int active_page)
-{
-    for (int i = 0; i < UI_NAV_COUNT; i++) {
-        lv_obj_set_style_bg_color(nav[i], i == active_page ? lv_palette_main(LV_PALETTE_BLUE)
-                                                           : lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_t *btn = lv_btn_create(scr);
+    lv_obj_set_size(btn, 96, 52);
+    lv_obj_align(btn, LV_ALIGN_TOP_LEFT, 2, 2);
+    lv_obj_set_style_bg_color(btn, UI_ACCENT, 0);
+    if (cb) {
+        lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, NULL);
     }
 
-    /* Nav visibility: all four corners on HOME, HOME alone everywhere else.
-     * Four buttons on every page was too much furniture - on a 320x240 panel
-     * they crowd the content the page exists to show, and three of the four
-     * are always wrong for where you already are. So HOME is the hub: from it
-     * you pick a destination, and from a destination the only move is back.
-     * That costs one extra tap to go SENS -> LOG, which is rare, and buys the
-     * whole screen back on the pages that actually need it.
-     *
-     * HOME stays in the top-left corner rather than moving to a "back" slot,
-     * so the one button that is always present is always in the same place. */
-    for (int i = 0; i < UI_NAV_COUNT; i++) {
-        if (active_page == UI_NAV_HOME || i == UI_NAV_HOME) {
-            lv_obj_clear_flag(nav[i], LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(nav[i], LV_OBJ_FLAG_HIDDEN);
-        }
-    }
+    lv_obj_t *btn_label = lv_label_create(btn);
+    lv_label_set_text(btn_label, LV_SYMBOL_LEFT " HOME");
+    lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(btn_label, UI_TEXT, 0);
+    lv_obj_center(btn_label);
+    return btn;
 }

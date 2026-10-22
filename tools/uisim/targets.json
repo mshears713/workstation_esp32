@@ -4,63 +4,389 @@
     "voice_listening_widget": {
       "kind": "component",
       "description": "HOME's microphone: rotating outer ring with a travelling highlight, counter-rotating accent, inner ring, halo, navy disc, white mic. 172x172. Its colour/motion is the device's link indicator. Rendered alone, centred on a plain screen.",
-      "sources": ["main/voice_listening_widget.c"],
-      "headers": ["voice_listening_widget.h"],
+      "sources": [
+        "main/voice_listening_widget.c"
+      ],
+      "headers": [
+        "voice_listening_widget.h"
+      ],
       "adapter": "tools/uisim/targets/voice_listening_widget.c",
       "fields": {
-        "link": {"type": "enum", "values": ["ok", "down", "no_net", "unknown"], "default": "ok",
-                 "doc": "backend reachability as the widget shows it: ok = spinning + white mic; down = stopped + red mic; no_net = stopped + grey mic; unknown = spinning + grey mic"},
-        "notification_pending": {"type": "bool", "default": false, "doc": "outer ring turns orange while a low-confidence notification waits"}
+        "link": {
+          "type": "enum",
+          "values": [
+            "ok",
+            "down",
+            "no_net",
+            "unknown"
+          ],
+          "default": "ok",
+          "doc": "backend reachability as the widget shows it: ok = spinning + white mic; down = stopped + red mic; no_net = stopped + grey mic; unknown = spinning + grey mic"
+        },
+        "notification_pending": {
+          "type": "bool",
+          "default": false,
+          "doc": "outer ring turns orange while a low-confidence notification waits"
+        }
       },
       "fixtures": {
         "default": {},
-        "backend_down": {"link": "down"},
-        "no_wifi": {"link": "no_net"},
-        "booting": {"link": "unknown"},
-        "notification": {"notification_pending": true}
+        "backend_down": {
+          "link": "down"
+        },
+        "no_wifi": {
+          "link": "no_net"
+        },
+        "booting": {
+          "link": "unknown"
+        },
+        "notification": {
+          "notification_pending": true
+        }
       }
     },
     "home": {
       "kind": "page",
-      "description": "HOME as the device builds it today: the listening widget centred (ui_home.c) under the four 96x52 corner nav buttons (ui_kit.c), default light theme.",
-      "sources": ["main/ui_kit.c", "main/ui_home.c", "main/voice_listening_widget.c"],
-      "headers": ["ui_kit.h", "ui_home.h", "voice_listening_widget.h"],
+      "description": "HOME 1.3.0 (ui_home.c): Orlando weather column (now / +2 h / +6 h / tomorrow, F, rain %) left; the listening widget at 104 px top-right with its link caption; MENU bottom-right. Dark theme. Values are what GET /api/v1/weather returns, as render_weather() passes them.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_home.c",
+        "main/voice_listening_widget.c",
+        "main/weather_icons.c"
+      ],
+      "headers": [
+        "ui_kit.h",
+        "ui_home.h",
+        "voice_listening_widget.h",
+        "weather_icons.h",
+        "ui_theme.h"
+      ],
       "adapter": "tools/uisim/targets/home.c",
       "fields": {
-        "link": {"type": "enum", "values": ["ok", "down", "no_net", "unknown"], "default": "ok",
-                 "doc": "backend_health state mapped the way voice_ui_timer_cb maps it"},
-        "notification_pending": {"type": "bool", "default": false, "doc": "notification_client says a low-confidence notification is waiting"}
+        "link": {
+          "type": "enum",
+          "values": [
+            "ok",
+            "down",
+            "no_net",
+            "unknown"
+          ],
+          "default": "ok",
+          "doc": "backend_health state mapped the way voice_ui_timer_cb maps it"
+        },
+        "notification_pending": {
+          "type": "bool",
+          "default": false,
+          "doc": "notification_client says a low-confidence notification is waiting"
+        },
+        "weather_valid": {
+          "type": "bool",
+          "default": true,
+          "doc": "false until the first weather answer (or if the backend has none)"
+        },
+        "status": {
+          "type": "str",
+          "default": "Loading weather",
+          "doc": "shown instead of the condition when weather_valid is false"
+        },
+        "location": {
+          "type": "str",
+          "default": "Orlando",
+          "doc": "backend config weather_location_name"
+        },
+        "stale_as_of": {
+          "type": "str",
+          "default": "",
+          "doc": "non-empty when the data is over 30 min old: backend as_of, e.g. '2:10 PM'"
+        },
+        "now_temp": {
+          "type": "int",
+          "default": 84,
+          "doc": "degrees F, rounded"
+        },
+        "now_icon": {
+          "type": "enum",
+          "values": [
+            "sun",
+            "moon",
+            "partly",
+            "cloud",
+            "fog",
+            "rain",
+            "storm",
+            "snow"
+          ],
+          "default": "partly",
+          "doc": "icon key from the backend's WMO mapping"
+        },
+        "now_text": {
+          "type": "str",
+          "default": "Partly cloudy",
+          "doc": "longest real value: 'Thunderstorm' / 'Partly cloudy'"
+        },
+        "now_rain": {
+          "type": "int",
+          "default": 10,
+          "doc": "precipitation probability %"
+        },
+        "slot1_label": {
+          "type": "str",
+          "default": "3 PM",
+          "doc": "+2 h, local hour"
+        },
+        "slot1_temp": {
+          "type": "int",
+          "default": 87,
+          "doc": ""
+        },
+        "slot1_icon": {
+          "type": "enum",
+          "values": [
+            "sun",
+            "moon",
+            "partly",
+            "cloud",
+            "fog",
+            "rain",
+            "storm",
+            "snow"
+          ],
+          "default": "storm",
+          "doc": ""
+        },
+        "slot1_rain": {
+          "type": "int",
+          "default": 60,
+          "doc": ""
+        },
+        "slot2_label": {
+          "type": "str",
+          "default": "7 PM",
+          "doc": "+6 h, local hour"
+        },
+        "slot2_temp": {
+          "type": "int",
+          "default": 79,
+          "doc": ""
+        },
+        "slot2_icon": {
+          "type": "enum",
+          "values": [
+            "sun",
+            "moon",
+            "partly",
+            "cloud",
+            "fog",
+            "rain",
+            "storm",
+            "snow"
+          ],
+          "default": "partly",
+          "doc": ""
+        },
+        "slot2_rain": {
+          "type": "int",
+          "default": 20,
+          "doc": ""
+        },
+        "tmrw_hi": {
+          "type": "int",
+          "default": 88,
+          "doc": ""
+        },
+        "tmrw_lo": {
+          "type": "int",
+          "default": 73,
+          "doc": ""
+        },
+        "tmrw_icon": {
+          "type": "enum",
+          "values": [
+            "sun",
+            "moon",
+            "partly",
+            "cloud",
+            "fog",
+            "rain",
+            "storm",
+            "snow"
+          ],
+          "default": "sun",
+          "doc": ""
+        },
+        "tmrw_rain": {
+          "type": "int",
+          "default": 20,
+          "doc": "daily max precipitation probability %"
+        }
       },
       "fixtures": {
         "default": {},
-        "backend_down": {"link": "down"},
-        "no_wifi": {"link": "no_net"},
-        "notification": {"notification_pending": true}
+        "night": {
+          "now_temp": 63,
+          "now_icon": "moon",
+          "now_text": "Clear",
+          "now_rain": 0,
+          "slot1_label": "1 AM",
+          "slot1_temp": 61,
+          "slot1_icon": "moon",
+          "slot1_rain": 0,
+          "slot2_label": "5 AM",
+          "slot2_temp": 58,
+          "slot2_icon": "moon",
+          "slot2_rain": 0,
+          "tmrw_hi": 79,
+          "tmrw_lo": 58,
+          "tmrw_icon": "partly",
+          "tmrw_rain": 0
+        },
+        "worst_case": {
+          "now_temp": 104,
+          "now_icon": "storm",
+          "now_text": "Thunderstorm",
+          "now_rain": 100,
+          "slot1_label": "12 PM",
+          "slot1_temp": -10,
+          "slot1_rain": 100,
+          "slot2_label": "10 PM",
+          "slot2_temp": 100,
+          "slot2_icon": "snow",
+          "slot2_rain": 100,
+          "tmrw_hi": 101,
+          "tmrw_lo": -12,
+          "tmrw_icon": "fog",
+          "tmrw_rain": 100
+        },
+        "stale": {
+          "stale_as_of": "11:40 AM",
+          "link": "down"
+        },
+        "loading": {
+          "weather_valid": false,
+          "link": "unknown"
+        },
+        "backend_down": {
+          "link": "down",
+          "weather_valid": false,
+          "status": "No weather"
+        },
+        "no_wifi": {
+          "link": "no_net"
+        },
+        "notification": {
+          "notification_pending": true
+        }
+      }
+    },
+    "menu": {
+      "kind": "page",
+      "description": "MENU (ui_menu.c, 1.3.0): five 151x54 buttons to SENSORS, LOG, PROJECTS, FIRMWARE, SETTINGS (last one full width), the < HOME back button on top.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_menu.c"
+      ],
+      "headers": [
+        "ui_kit.h",
+        "ui_menu.h",
+        "ui_theme.h"
+      ],
+      "adapter": "tools/uisim/targets/menu.c",
+      "fields": {},
+      "fixtures": {
+        "default": {}
       }
     },
     "firmware": {
       "kind": "page",
-      "description": "FIRMWARE page (ui_firmware_page.c): version, build time, backend address, OTA slot and probation state, updater status line, CHECK CLAWBOX NOW button; HOME corner button only.",
-      "sources": ["main/ui_kit.c", "main/ui_firmware_page.c"],
-      "headers": ["ui_kit.h", "ui_firmware_page.h"],
+      "description": "FIRMWARE page (ui_firmware_page.c): version, build time, backend address, OTA slot and probation state, updater status line, CHECK CLAWBOX NOW button; the < HOME back button.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_firmware_page.c"
+      ],
+      "headers": [
+        "ui_firmware_page.h",
+        "ui_kit.h",
+        "ui_theme.h"
+      ],
       "adapter": "tools/uisim/targets/firmware.c",
       "fields": {
-        "version": {"type": "str", "default": "1.2.2+2d189af", "doc": "firmware_version(): <semver>+<sha>[-dirty]"},
-        "built_at": {"type": "str", "default": "Sep 23 2026 15:06:22", "doc": "firmware_built_at(): __DATE__ __TIME__ of the build"},
-        "backend_url": {"type": "str", "default": "http://192.168.1.71:8000", "doc": "device_config_backend_base_url()"},
-        "backend_fallback": {"type": "bool", "default": false, "doc": "running on the fallback address (clawbox.local)"},
-        "slot": {"type": "str", "default": "ota_1", "doc": "running partition label: ota_0 / ota_1"},
-        "pending_verify": {"type": "bool", "default": false, "doc": "image still on probation (health gate not passed)"},
-        "ota_state": {"type": "enum", "values": ["idle", "validating", "checking", "update ready", "downloading", "verifying", "rebooting", "failed"], "default": "idle", "doc": "ota_service_state_label()"},
-        "ota_message": {"type": "str", "default": "up to date (1.2.2+2d189af)", "doc": "ota_status_t.message (<= 79 chars)"},
-        "ota_progress_pct": {"type": "int", "default": 0, "doc": "0-100, shown while ota_state is downloading"}
+        "version": {
+          "type": "str",
+          "default": "1.2.2+2d189af",
+          "doc": "firmware_version(): <semver>+<sha>[-dirty]"
+        },
+        "built_at": {
+          "type": "str",
+          "default": "Sep 23 2026 15:06:22",
+          "doc": "firmware_built_at(): __DATE__ __TIME__ of the build"
+        },
+        "backend_url": {
+          "type": "str",
+          "default": "http://192.168.1.71:8000",
+          "doc": "device_config_backend_base_url()"
+        },
+        "backend_fallback": {
+          "type": "bool",
+          "default": false,
+          "doc": "running on the fallback address (clawbox.local)"
+        },
+        "slot": {
+          "type": "str",
+          "default": "ota_1",
+          "doc": "running partition label: ota_0 / ota_1"
+        },
+        "pending_verify": {
+          "type": "bool",
+          "default": false,
+          "doc": "image still on probation (health gate not passed)"
+        },
+        "ota_state": {
+          "type": "enum",
+          "values": [
+            "idle",
+            "validating",
+            "checking",
+            "update ready",
+            "downloading",
+            "verifying",
+            "rebooting",
+            "failed"
+          ],
+          "default": "idle",
+          "doc": "ota_service_state_label()"
+        },
+        "ota_message": {
+          "type": "str",
+          "default": "up to date (1.2.2+2d189af)",
+          "doc": "ota_status_t.message (<= 79 chars)"
+        },
+        "ota_progress_pct": {
+          "type": "int",
+          "default": 0,
+          "doc": "0-100, shown while ota_state is downloading"
+        }
       },
       "fixtures": {
         "default": {},
-        "probation": {"pending_verify": true, "ota_state": "validating", "ota_message": "new image on probation, validating"},
-        "downloading": {"ota_state": "downloading", "ota_progress_pct": 42, "ota_message": "1.2.3+9f3c1aa -> ota_0"},
-        "failed": {"ota_state": "failed", "ota_message": "hash mismatch, not installing"},
-        "fallback_backend": {"backend_url": "http://clawbox.local:8000", "backend_fallback": true, "ota_message": "no manifest from CLAWBOX"}
+        "probation": {
+          "pending_verify": true,
+          "ota_state": "validating",
+          "ota_message": "new image on probation, validating"
+        },
+        "downloading": {
+          "ota_state": "downloading",
+          "ota_progress_pct": 42,
+          "ota_message": "1.2.3+9f3c1aa -> ota_0"
+        },
+        "failed": {
+          "ota_state": "failed",
+          "ota_message": "hash mismatch, not installing"
+        },
+        "fallback_backend": {
+          "backend_url": "http://clawbox.local:8000",
+          "backend_fallback": true,
+          "ota_message": "no manifest from CLAWBOX"
+        }
       }
     }
   }

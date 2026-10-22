@@ -76,58 +76,66 @@
  * and slow down once per lap. */
 #define ROTATION_PERIOD_MS 7000
 
+/* 1.3.0: the widget can be built at any diameter (HOME now draws it at ~104
+ * px in the top-right). Every size above is the 172 px design; SC() scales
+ * one of them to the diameter being built, so the proportions - and the
+ * layered look - are the same at any size. Scaling the geometry rather than
+ * applying an LVGL transform matters on this chip: a transformed object is
+ * drawn through an extra layer on every animation frame. */
+#define SC(v, d) (((v) * (d) + RING_DIAM / 2) / RING_DIAM)
+
 /* Capsule + stand + base, all parented directly to the disc and centered on
  * it - so they track the disc's own box with no separate alignment math.
  * Scaled with the ring; the 92px disc still has enough radius to hold them
  * (the icon extends ~35px from center, disc radius is 46px). */
-static void build_mic_icon(lv_obj_t *disc)
+static void build_mic_icon(lv_obj_t *disc, int d)
 {
     lv_obj_t *head = lv_obj_create(disc);
-    lv_obj_set_size(head, 36, 52);
-    lv_obj_set_style_radius(head, 18, 0);
+    lv_obj_set_size(head, SC(36, d), SC(52, d));
+    lv_obj_set_style_radius(head, SC(18, d), 0);
     lv_obj_set_style_bg_color(head, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(head, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(head, 0, 0);
     lv_obj_clear_flag(head, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(head, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_align(head, LV_ALIGN_CENTER, 0, -18);
+    lv_obj_align(head, LV_ALIGN_CENTER, 0, -SC(18, d));
 
     lv_obj_t *stand = lv_obj_create(disc);
-    lv_obj_set_size(stand, 7, 22);
-    lv_obj_set_style_radius(stand, 3, 0);
+    lv_obj_set_size(stand, SC(7, d), SC(22, d));
+    lv_obj_set_style_radius(stand, SC(3, d), 0);
     lv_obj_set_style_bg_color(stand, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(stand, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(stand, 0, 0);
     lv_obj_clear_flag(stand, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(stand, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_align(stand, LV_ALIGN_CENTER, 0, 18);
+    lv_obj_align(stand, LV_ALIGN_CENTER, 0, SC(18, d));
 
     lv_obj_t *base = lv_obj_create(disc);
-    lv_obj_set_size(base, 39, 7);
-    lv_obj_set_style_radius(base, 3, 0);
+    lv_obj_set_size(base, SC(39, d), SC(7, d));
+    lv_obj_set_style_radius(base, SC(3, d), 0);
     lv_obj_set_style_bg_color(base, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(base, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(base, 0, 0);
     lv_obj_clear_flag(base, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(base, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_align(base, LV_ALIGN_CENTER, 0, 31);
+    lv_obj_align(base, LV_ALIGN_CENTER, 0, SC(31, d));
 }
 
 /* An lv_arc, not a plain circle + overlay: its background/indicator split
  * is exactly "thick static ring" + "small arc that can be rotated as one
  * number" with no manual angle math of our own, and lv_arc_set_rotation is
  * a native LVGL primitive - see the file comment. */
-static lv_obj_t *build_outer_ring(lv_obj_t *parent)
+static lv_obj_t *build_outer_ring(lv_obj_t *parent, int d)
 {
     lv_obj_t *ring = lv_arc_create(parent);
-    lv_obj_set_size(ring, RING_DIAM, RING_DIAM);
+    lv_obj_set_size(ring, d, d);
     lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_align(ring, LV_ALIGN_CENTER, 0, 0);
 
     /* Background arc = the ring itself: a full circle, thick and blue. */
     lv_arc_set_bg_angles(ring, 0, 360);
-    lv_obj_set_style_arc_width(ring, RING_WIDTH, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(ring, SC(RING_WIDTH, d), LV_PART_MAIN);
     lv_obj_set_style_arc_color(ring, lv_palette_main(LV_PALETTE_BLUE), LV_PART_MAIN);
     lv_obj_set_style_arc_opa(ring, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_arc_rounded(ring, false, LV_PART_MAIN);
@@ -138,7 +146,7 @@ static lv_obj_t *build_outer_ring(lv_obj_t *parent)
      * give it a soft "glint" look instead of a hard-edged block. */
     lv_arc_set_angles(ring, 0, GLINT_SPAN_DEG);
     lv_obj_set_style_pad_all(ring, 0, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_width(ring, RING_WIDTH, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(ring, SC(RING_WIDTH, d), LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(ring, lv_color_lighten(lv_palette_main(LV_PALETTE_CYAN), 160), LV_PART_INDICATOR);
     lv_obj_set_style_arc_opa(ring, LV_OPA_COVER, LV_PART_INDICATOR);
     lv_obj_set_style_arc_rounded(ring, true, LV_PART_INDICATOR);
@@ -157,10 +165,10 @@ static lv_obj_t *build_outer_ring(lv_obj_t *parent)
 /* Counter-rotating accent. Same one-property animation as the outer ring,
  * turning the opposite way at a different rate - which is what makes the
  * whole thing read as layered rather than as a single spinning circle. */
-static lv_obj_t *build_counter_ring(lv_obj_t *parent)
+static lv_obj_t *build_counter_ring(lv_obj_t *parent, int d)
 {
     lv_obj_t *ring = lv_arc_create(parent);
-    lv_obj_set_size(ring, COUNTER_RING_DIAM, COUNTER_RING_DIAM);
+    lv_obj_set_size(ring, SC(COUNTER_RING_DIAM, d), SC(COUNTER_RING_DIAM, d));
     lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_align(ring, LV_ALIGN_CENTER, 0, 0);
@@ -172,7 +180,7 @@ static lv_obj_t *build_counter_ring(lv_obj_t *parent)
 
     lv_arc_set_angles(ring, 0, COUNTER_SPAN_DEG);
     lv_obj_set_style_pad_all(ring, 0, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_width(ring, COUNTER_RING_WIDTH, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(ring, LV_MAX(2, SC(COUNTER_RING_WIDTH, d)), LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(ring, lv_palette_lighten(LV_PALETTE_CYAN, 2), LV_PART_INDICATOR);
     lv_obj_set_style_arc_opa(ring, LV_OPA_70, LV_PART_INDICATOR);
     lv_obj_set_style_arc_rounded(ring, true, LV_PART_INDICATOR);
@@ -180,16 +188,16 @@ static lv_obj_t *build_counter_ring(lv_obj_t *parent)
     return ring;
 }
 
-static lv_obj_t *build_inner_ring(lv_obj_t *parent)
+static lv_obj_t *build_inner_ring(lv_obj_t *parent, int d)
 {
     lv_obj_t *ring = lv_arc_create(parent);
-    lv_obj_set_size(ring, INNER_RING_DIAM, INNER_RING_DIAM);
+    lv_obj_set_size(ring, SC(INNER_RING_DIAM, d), SC(INNER_RING_DIAM, d));
     lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_align(ring, LV_ALIGN_CENTER, 0, 0);
 
     lv_arc_set_bg_angles(ring, 0, 360);
-    lv_obj_set_style_arc_width(ring, INNER_RING_WIDTH, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(ring, LV_MAX(1, SC(INNER_RING_WIDTH, d)), LV_PART_MAIN);
     lv_obj_set_style_arc_color(ring, lv_palette_main(LV_PALETTE_LIGHT_BLUE), LV_PART_MAIN);
     lv_obj_set_style_arc_opa(ring, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_arc_rounded(ring, false, LV_PART_MAIN);
@@ -205,10 +213,10 @@ static lv_obj_t *build_inner_ring(lv_obj_t *parent)
  * navy, full opacity) on top of it, with the mic icon on top of that. Both
  * are lv_obj circles (radius = half of size), not lv_arc - full filled
  * discs, not strokes. */
-static void build_disc(lv_obj_t *parent)
+static void build_disc(lv_obj_t *parent, int d)
 {
     lv_obj_t *halo = lv_obj_create(parent);
-    lv_obj_set_size(halo, HALO_DIAM, HALO_DIAM);
+    lv_obj_set_size(halo, SC(HALO_DIAM, d), SC(HALO_DIAM, d));
     lv_obj_set_style_radius(halo, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(halo, lv_palette_lighten(LV_PALETTE_BLUE, 4), 0);
     lv_obj_set_style_bg_opa(halo, LV_OPA_40, 0);
@@ -218,7 +226,7 @@ static void build_disc(lv_obj_t *parent)
     lv_obj_align(halo, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t *disc = lv_obj_create(parent);
-    lv_obj_set_size(disc, DISC_DIAM, DISC_DIAM);
+    lv_obj_set_size(disc, SC(DISC_DIAM, d), SC(DISC_DIAM, d));
     lv_obj_set_style_radius(disc, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(disc, lv_palette_darken(LV_PALETTE_BLUE, 3), 0);
     lv_obj_set_style_bg_grad_color(disc, lv_color_hex(0x0A1633), 0);
@@ -229,7 +237,7 @@ static void build_disc(lv_obj_t *parent)
     lv_obj_clear_flag(disc, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_align(disc, LV_ALIGN_CENTER, 0, 0);
 
-    build_mic_icon(disc);
+    build_mic_icon(disc, d);
 }
 
 /* lv_anim_exec_xcb_t is `void(*)(void *, int32_t)` - lv_arc_set_rotation's
@@ -265,10 +273,16 @@ static void start_rotation(lv_obj_t *ring)
 
 lv_obj_t *voice_listening_widget_create(lv_obj_t *parent)
 {
+    return voice_listening_widget_create_sized(parent, RING_DIAM);
+}
+
+lv_obj_t *voice_listening_widget_create_sized(lv_obj_t *parent, int diameter)
+{
+    int d = diameter;
     /* Container is just the outer ring's own bounding box - callers
      * position/size this exactly like they would the ring itself. */
     lv_obj_t *cont = lv_obj_create(parent);
-    lv_obj_set_size(cont, RING_DIAM, RING_DIAM);
+    lv_obj_set_size(cont, d, d);
     lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(cont, 0, 0);
     lv_obj_set_style_pad_all(cont, 0, 0);
@@ -277,10 +291,10 @@ lv_obj_t *voice_listening_widget_create(lv_obj_t *parent)
 
     /* Back to front: outer rotating ring, static inner ring, halo+disc+icon
      * on top - see the file comment for the full layer list. */
-    lv_obj_t *outer_ring = build_outer_ring(cont);
-    lv_obj_t *counter_ring = build_counter_ring(cont);
-    build_inner_ring(cont);
-    build_disc(cont);
+    lv_obj_t *outer_ring = build_outer_ring(cont, d);
+    lv_obj_t *counter_ring = build_counter_ring(cont, d);
+    build_inner_ring(cont, d);
+    build_disc(cont, d);
     start_rotation(outer_ring);
     start_counter_rotation(counter_ring);
 

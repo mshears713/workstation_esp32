@@ -44,6 +44,11 @@ extern "C" {
  */
 lv_obj_t *voice_listening_widget_create(lv_obj_t *parent);
 
+/** 1.3.0: the same widget at `diameter` px (the plain create() is 172). Every
+ *  layer scales with it, and so does the clickable box - which is why HOME
+ *  builds it small instead of shrinking a 172 px one with a transform. */
+lv_obj_t *voice_listening_widget_create_sized(lv_obj_t *parent, int diameter);
+
 /**
  * Recolors the outer ring - blue (pending=false, the default set at
  * creation) or orange (pending=true) - to indicate whether a low-confidence

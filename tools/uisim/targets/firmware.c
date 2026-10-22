@@ -8,6 +8,7 @@
 
 void ws_render(lv_obj_t *scr)
 {
+    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
     lv_obj_t *page = ui_page_create(scr);
     static ui_firmware_page_t fw;
     ui_firmware_page_build(&fw, page, ws_noop_event_cb);
@@ -26,11 +27,5 @@ void ws_render(lv_obj_t *scr)
     };
     ui_firmware_page_apply(&fw, &view);
 
-    static const lv_event_cb_t nav_cbs[UI_NAV_COUNT] = {
-        ws_noop_event_cb, ws_noop_event_cb, ws_noop_event_cb, ws_noop_event_cb,
-    };
-    lv_obj_t *nav[UI_NAV_COUNT];
-    ui_nav_create(scr, nav, nav_cbs);
-    /* FIRMWARE is past the four nav slots: HOME alone, not highlighted. */
-    ui_nav_set_active(nav, UI_NAV_COUNT + 1);
+    ui_back_button_create(scr, ws_noop_event_cb);
 }

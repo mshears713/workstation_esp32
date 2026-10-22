@@ -31,8 +31,10 @@ Seams so far:
 
 | File | What | Seam |
 |---|---|---|
-| `main/ui_kit.c` | page container, panel style, page title, corner nav | plain arguments |
-| `main/ui_home.c` | HOME (the listening widget as the TALK button) | widget setters |
+| `main/ui_kit.c` | page container, panel style, page title, `< HOME` back button | plain arguments |
+| `main/ui_home.c` | HOME 1.3.0: weather column, 104 px mic (TALK), link caption, MENU | `ui_home_weather_t` + `ui_home_apply_weather()`, `ui_home_set_link()` |
+| `main/ui_menu.c` | MENU (1.3.0) | `ui_menu_item_t[]` |
+| `main/weather_icons.c` | the eight weather images (generated) | `weather_icon(key, large)` |
 | `main/voice_listening_widget.c` | the microphone ring | `_set_link`, `_set_notification` |
 | `main/ui_firmware_page.c` | FIRMWARE page | `ui_firmware_view_t` + `ui_firmware_page_apply()` |
 

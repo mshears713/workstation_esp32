@@ -134,3 +134,6 @@
 #define NOTIFICATIONS_BASE_PATH "/api/v1/notifications"
 
 #define REMOTE_BASE_PATH "/api/v1/remote"
+
+/* 1.3.0: HOME's weather, already summarised by the backend (weather_client.c). */
+#define WEATHER_PATH "/api/v1/weather"

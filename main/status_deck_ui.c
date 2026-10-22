@@ -168,6 +168,9 @@
 #include "voice_listening_widget.h"
 #include "ui_kit.h"
 #include "ui_home.h"
+#include "ui_menu.h"
+#include "ui_theme.h"
+#include "weather_client.h"
 #include "ui_firmware_page.h"
 #include "backend_health.h"
 #include "backend_catalog.h"
@@ -847,6 +850,9 @@ typedef enum {
      * own. You look at this page when you are deploying, or working out why
      * a deployment did not land - rare, deliberate, and not worth a corner. */
     APP_PAGE_FIRMWARE,
+    /* 1.3.0: HOME is weather + microphone + MENU, and MENU is how every page
+     * above is reached. Last so the earlier page numbers keep their values. */
+    APP_PAGE_MENU,
     APP_PAGE_COUNT,
 } app_page_t;
 
@@ -856,6 +862,7 @@ static lv_obj_t *page_log;
 static lv_obj_t *page_set;          /* SETTINGS - replaced TALK in the nav */
 static lv_obj_t *page_projects;     /* PROJECTS - reached from SETTINGS */
 static lv_obj_t *page_firmware;     /* FIRMWARE - reached from SETTINGS */
+static lv_obj_t *page_menu;         /* MENU - 1.3.0, reached from HOME */
 
 /* FIRMWARE page labels (ui_firmware_page.h). Refreshed once a second while
  * the page is visible, from firmware_identity.h and ota_service.h - both of
@@ -866,14 +873,9 @@ static ui_firmware_page_t fw_page;
  * genuinely new rows need their own handles. */
 static lv_obj_t *settings_api_label;
 static lv_obj_t *settings_repo_label;
-/* Four corners, five pages: the corner buttons stopped being one-per-page
- * when PROJECTS arrived. Index i still addresses page i for i < this, which is
- * what set_active_page() relies on to highlight the current tab. */
-#define NAV_BUTTON_COUNT UI_NAV_COUNT
-_Static_assert(APP_PAGE_HOME == (int)UI_NAV_HOME && APP_PAGE_SENS == (int)UI_NAV_SENS &&
-               APP_PAGE_LOG == (int)UI_NAV_LOG && APP_PAGE_SET == (int)UI_NAV_SET,
-               "ui_nav_set_active() takes the page number as the nav slot");
-static lv_obj_t *nav_buttons[NAV_BUTTON_COUNT];
+/* 1.3.0: the four corner buttons became MENU on HOME plus this one "< HOME"
+ * button, shown on every page but HOME (ui_back_button_create()). */
+static lv_obj_t *back_button;
 
 /* Command Window overlay (Mission 12): four-button recognition-test grid,
  * hidden by default, shown full-screen over the dashboard for the ~10s
@@ -911,6 +913,9 @@ static lv_obj_t *notification_status_label;
  * just a local in status_deck_ui()) so voice_ui_timer_cb can recolor it via
  * voice_listening_widget_set_notification() every tick. */
 static lv_obj_t *voice_widget;
+/* 1.3.0: HOME's objects - weather column, the widget above (home_ui.mic) and
+ * its link caption. Filled by render_weather() and voice_ui_timer_cb. */
+static ui_home_t home_ui;
 
 /* Notification-playback volume control (small up/down buttons flanking a
  * numeric readout, to the right of the listening ring) - see
@@ -1641,7 +1646,7 @@ static void voice_ui_timer_cb(lv_timer_t *t)
     case BACKEND_HEALTH_UNKNOWN:
     default:                        link = VOICE_WIDGET_LINK_UNKNOWN; break;
     }
-    voice_listening_widget_set_link(voice_widget, link);
+    ui_home_set_link(&home_ui, link);   /* the widget, plus its caption */
 }
 
 /* ---- Button handlers: touch -> app_state -> render + serial log ----- */
@@ -1843,12 +1848,12 @@ static void send_handshake_button_cb(lv_event_t *e)
 static void set_active_page(app_page_t page)
 {
     lv_obj_t *pages[APP_PAGE_COUNT] = {
-        page_home, page_sens, page_log, page_set, page_projects, page_firmware,
+        page_home, page_sens, page_log, page_set, page_projects, page_firmware, page_menu,
     };
     /* 1.2.1: which page was on screen, for the crash breadcrumb. Same
      * order as app_page_t. */
     static const char *const page_names[APP_PAGE_COUNT] = {
-        "HOME", "SENS", "LOG", "SET", "PROJECTS", "FIRMWARE",
+        "HOME", "SENS", "LOG", "SET", "PROJECTS", "FIRMWARE", "MENU",
     };
     diag_set_page(page_names[page]);
     for (int i = 0; i < APP_PAGE_COUNT; i++) {
@@ -1858,9 +1863,12 @@ static void set_active_page(app_page_t page)
             lv_obj_add_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
         }
     }
-    /* Highlight and all-four-on-HOME / HOME-alone-elsewhere visibility:
-     * see ui_nav_set_active(). */
-    ui_nav_set_active(nav_buttons, (int)page);
+    /* The way back is on every page except the one it leads to. */
+    if (page == APP_PAGE_HOME) {
+        lv_obj_add_flag(back_button, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_clear_flag(back_button, LV_OBJ_FLAG_HIDDEN);
+    }
 
     /* Mission 15: the LVGL-builtin FPS/CPU readout (CONFIG_LV_USE_PERF_
      * MONITOR) is normally a permanent overlay on the display's system
@@ -1882,6 +1890,12 @@ static void set_active_page(app_page_t page)
 static void home_nav_button_cb(lv_event_t *e)
 {
     set_active_page(APP_PAGE_HOME);
+}
+
+static void menu_button_cb(lv_event_t *e)
+{
+    (void)e;
+    set_active_page(APP_PAGE_MENU);
 }
 
 static void sens_nav_button_cb(lv_event_t *e)
@@ -2008,8 +2022,62 @@ static void refresh_firmware_page(void)
     ui_firmware_page_apply(&fw_page, &view);
 }
 
+/* ---- Weather (1.3.0): weather_client snapshot -> HOME ----------------
+ * Checked once a second from telemetry_timer_cb, redrawn only when something
+ * visible changes: a new answer, the data crossing the "old" line, or the
+ * reason there is no data. Thirty minutes is three missed polls - one late
+ * answer is normal, three in a row means the numbers on screen deserve a
+ * timestamp. */
+#define WEATHER_STALE_S (30 * 60)
+
+static void render_weather(void)
+{
+    static uint32_t shown_seq = UINT32_MAX;
+    static int shown_mode = -1;   /* 0 loading, 1 no weather, 2 fresh, 3 stale */
+
+    weather_status_t w;
+    weather_client_get(&w);
+    int mode;
+    if (w.valid) {
+        mode = w.age_s > WEATHER_STALE_S ? 3 : 2;
+    } else {
+        backend_health_status_t bh;
+        backend_health_get_status(&bh);
+        mode = (bh.state == BACKEND_HEALTH_DOWN || bh.state == BACKEND_HEALTH_NO_NETWORK) ? 1 : 0;
+    }
+    if (mode == shown_mode && w.seq == shown_seq) {
+        return;
+    }
+    shown_mode = mode;
+    shown_seq = w.seq;
+
+    ui_home_weather_t v = {
+        .valid = w.valid,
+        .status = mode == 1 ? "No weather" : "Loading weather",
+        .location = w.valid ? w.location : NULL,
+        .stale_as_of = mode == 3 ? w.as_of : NULL,
+        .now_temp = w.now_temp,
+        .now_icon = w.now_icon,
+        .now_text = w.now_text,
+        .now_rain = w.now_rain,
+        .tmrw_hi = w.tmrw_hi,
+        .tmrw_lo = w.tmrw_lo,
+        .tmrw_icon = w.tmrw_icon,
+        .tmrw_rain = w.tmrw_rain,
+    };
+    for (int i = 0; i < UI_HOME_SLOTS && i < WEATHER_SLOTS; i++) {
+        v.slot[i].label = w.slot[i].label;
+        v.slot[i].temp = w.slot[i].temp;
+        v.slot[i].icon = w.slot[i].icon;
+        v.slot[i].rain = w.slot[i].rain;
+    }
+    ui_home_apply_weather(&home_ui, &v);
+}
+
 static void telemetry_timer_cb(lv_timer_t *t)
 {
+    render_weather();
+
     /* Only while it is on screen - this runs every second regardless of page,
      * and redrawing five hidden labels is work nobody sees. */
     if (page_firmware != NULL && !lv_obj_has_flag(page_firmware, LV_OBJ_FLAG_HIDDEN)) {
@@ -2253,13 +2321,30 @@ void status_deck_ui(lv_obj_t *scr)
     page_projects = pages_init[APP_PAGE_PROJECTS];
     page_firmware = pages_init[APP_PAGE_FIRMWARE];
     page_set = pages_init[APP_PAGE_SET];
+    page_menu = pages_init[APP_PAGE_MENU];
 
-    /* ---- HOME: nothing but the microphone ---------------------------- */
+    /* 1.3.0 dark look: black behind everything (ui_theme.h). */
+    lv_obj_set_style_bg_color(scr, UI_BG, 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
-    /* One thing: a large microphone that shows whether the workstation is
-     * listening and reachable, and is itself the TALK button - see
-     * ui_home.c. */
-    voice_widget = ui_home_build(page_home, talk_button_cb);
+    /* ---- HOME: weather, the microphone, MENU (1.3.0) ------------------ */
+
+    /* The microphone still shows whether the workstation is listening and
+     * reachable, and is still the TALK button - now a quarter of the screen
+     * beside Orlando's weather. See ui_home.c. */
+    ui_home_build(&home_ui, page_home, talk_button_cb, menu_button_cb);
+    voice_widget = home_ui.mic;
+
+    /* ---- MENU: every other page, one tap from HOME -------------------- */
+
+    static const ui_menu_item_t menu_items[] = {
+        { "SENSORS", sens_nav_button_cb },
+        { "LOG", log_nav_button_cb },
+        { "PROJECTS", projects_nav_button_cb },
+        { "FIRMWARE", firmware_nav_button_cb },
+        { "SETTINGS", set_nav_button_cb },
+    };
+    ui_menu_build(page_menu, menu_items, (int)(sizeof(menu_items) / sizeof(menu_items[0])));
 
     /* ---- SETTINGS: the things HOME used to carry -------------------- */
 
@@ -2590,14 +2675,9 @@ void status_deck_ui(lv_obj_t *scr)
      * (not inside any page) - same size/position the old NET/SND/REC/CLR
      * row used, so the overlays below (already sized to cover it) still
      * cover exactly the same area. */
-    /* Four 96x52 corner buttons - see ui_nav_create() for why corners. */
-    static const lv_event_cb_t nav_cbs[UI_NAV_COUNT] = {
-        [UI_NAV_HOME] = home_nav_button_cb,
-        [UI_NAV_SENS] = sens_nav_button_cb,
-        [UI_NAV_LOG]  = log_nav_button_cb,
-        [UI_NAV_SET]  = set_nav_button_cb,
-    };
-    ui_nav_create(scr, nav_buttons, nav_cbs);
+    /* 1.3.0: one "< HOME" button where the HOME corner always was - see
+     * ui_back_button_create(). MENU on HOME replaced the other three. */
+    back_button = ui_back_button_create(scr, home_nav_button_cb);
 
     /* Command Window overlay (Mission 12): full-screen, built last so it
      * naturally sits on top of the dashboard - render_command_overlay also
@@ -2950,6 +3030,9 @@ void status_deck_ui(lv_obj_t *scr)
     /* Also after wifi_mgr_init - it waits for ONLINE before its first fetch,
      * and stops once the catalog loads. */
     backend_catalog_init();
+    /* 1.3.0: PSRAM-stack task; waits for the first OTA check before it
+     * fetches anything (weather_client.h). */
+    weather_client_init();
 
     render_command_overlay();
     render_recording_overlay();

@@ -1,10 +1,10 @@
-/* Simulator adapter: HOME, built in the order status_deck_ui() builds it -
- * page container, HOME content, then the corner nav on top - with the widget
- * state voice_ui_timer_cb would set from backend_health / notification_client. */
+/* Simulator adapter: HOME (1.3.0), built the way status_deck_ui() builds it -
+ * page container, ui_home_build() - with the weather view render_weather()
+ * fills from weather_client, and the link state voice_ui_timer_cb sets from
+ * backend_health. HOME has no back button, so none is drawn. */
 #include "ws_sim.h"
 #include "ui_kit.h"
 #include "ui_home.h"
-#include "voice_listening_widget.h"
 
 static voice_widget_link_t link_from_fixture(void)
 {
@@ -22,16 +22,32 @@ static voice_widget_link_t link_from_fixture(void)
 
 void ws_render(lv_obj_t *scr)
 {
+    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
     lv_obj_t *page = ui_page_create(scr);
-    lv_obj_t *widget = ui_home_build(page, ws_noop_event_cb);
+    static ui_home_t home;
+    ui_home_build(&home, page, ws_noop_event_cb, ws_noop_event_cb);
 
-    static const lv_event_cb_t nav_cbs[UI_NAV_COUNT] = {
-        ws_noop_event_cb, ws_noop_event_cb, ws_noop_event_cb, ws_noop_event_cb,
+    const char *stale = ws_fx_str("stale_as_of", "");
+    const ui_home_weather_t w = {
+        .valid = ws_fx_bool("weather_valid", true),
+        .status = ws_fx_str("status", "Loading weather"),
+        .location = ws_fx_str("location", "Orlando"),
+        .stale_as_of = stale[0] ? stale : NULL,
+        .now_temp = ws_fx_int("now_temp", 84),
+        .now_icon = ws_fx_str("now_icon", "partly"),
+        .now_text = ws_fx_str("now_text", "Partly cloudy"),
+        .now_rain = ws_fx_int("now_rain", 10),
+        .slot = {
+            { ws_fx_str("slot1_label", "3 PM"), ws_fx_int("slot1_temp", 87), ws_fx_str("slot1_icon", "storm"), ws_fx_int("slot1_rain", 60) },
+            { ws_fx_str("slot2_label", "7 PM"), ws_fx_int("slot2_temp", 79), ws_fx_str("slot2_icon", "partly"), ws_fx_int("slot2_rain", 20) },
+        },
+        .tmrw_hi = ws_fx_int("tmrw_hi", 88),
+        .tmrw_lo = ws_fx_int("tmrw_lo", 73),
+        .tmrw_icon = ws_fx_str("tmrw_icon", "sun"),
+        .tmrw_rain = ws_fx_int("tmrw_rain", 20),
     };
-    lv_obj_t *nav[UI_NAV_COUNT];
-    ui_nav_create(scr, nav, nav_cbs);
-    ui_nav_set_active(nav, UI_NAV_HOME);
+    ui_home_apply_weather(&home, &w);
 
-    voice_listening_widget_set_link(widget, link_from_fixture());
-    voice_listening_widget_set_notification(widget, ws_fx_bool("notification_pending", false));
+    ui_home_set_link(&home, link_from_fixture());
+    voice_listening_widget_set_notification(home.mic, ws_fx_bool("notification_pending", false));
 }

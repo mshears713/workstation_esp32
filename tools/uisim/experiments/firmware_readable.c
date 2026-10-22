@@ -75,10 +75,5 @@ void ws_render(lv_obj_t *scr)
     lv_obj_t *bl = text(btn, "CHECK CLAWBOX NOW", &lv_font_montserrat_20, TEXT_MAIN);
     lv_obj_center(bl);
 
-    static const lv_event_cb_t cbs[UI_NAV_COUNT] = {
-        ws_noop_event_cb, ws_noop_event_cb, ws_noop_event_cb, ws_noop_event_cb,
-    };
-    lv_obj_t *nav[UI_NAV_COUNT];
-    ui_nav_create(scr, nav, cbs);
-    ui_nav_set_active(nav, UI_NAV_COUNT + 1);
+    ui_back_button_create(scr, ws_noop_event_cb);
 }
