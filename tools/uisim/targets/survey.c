@@ -49,7 +49,7 @@ void ws_render(lv_obj_t *scr)
     cfg = (ui_survey_config_t){
         .questions = questions,
         .qr_url = ws_fx_str("qr_url", "https://example.com/feedback"),
-        .qr_caption = ws_fx_str("qr_caption", "Sample link:\nexample.com/feedback"),
+        .qr_caption = ws_fx_str("qr_caption", "Sample link:\nexample.com"),
         .saved_note = ws_fx_str("saved_note", "Saved on this device only (sample mode)."),
         .submit = fake_submit,
         .exit = fake_exit,

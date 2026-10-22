@@ -776,6 +776,180 @@
           "q1_prompt": "On a scale of one to five, how useful was the live demonstration you just watched at our booth today?"
         }
       }
+    },
+    "sensors": {
+      "kind": "page",
+      "description": "SENSORS as a dial cluster (ui_sensors.c + ui_dial.c + ui_sensor_model.c): ACCEL |a| on a 0-2 g dial with a 1 g rest tick (sensor is +-2 g per axis, so |a| can reach ~3.46 g: past 2 g the dial pins amber, the number stays exact), TEMP on the firmware's 60-90 F band, HUMIDITY 0-100 %. Inner ring = recent low..high (10 s accel, 60 s env). State words from the DIAGNOSTICS freshness rules: accel stale after 300 ms, temp+humidity (one AHT30 read) after 3 s. Values in fixtures are illustrative.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_diag_format.c",
+        "main/ui_sensor_model.c",
+        "main/ui_dial.c",
+        "main/ui_sensors.c"
+      ],
+      "headers": [
+        "ui_kit.h",
+        "ui_theme.h",
+        "ui_diag_format.h",
+        "ui_sensor_model.h",
+        "ui_dial.h",
+        "ui_sensors.h"
+      ],
+      "adapter": "tools/uisim/targets/sensors.c",
+      "fields": {
+        "accel": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "failed",
+            "waiting",
+            "live",
+            "stale"
+          ],
+          "default": "live",
+          "doc": "ui_diag_freshness() for the ICM42670: probe not run / init failed / no sample / within 300 ms / older"
+        },
+        "accel_age_ms": {
+          "type": "int",
+          "default": 60,
+          "doc": "now - sensor_last_good_us"
+        },
+        "accel_x100": {
+          "type": "int",
+          "default": 101,
+          "doc": "|a| in centi-g (101 = 1.01 g)"
+        },
+        "accel_lo": {
+          "type": "int",
+          "default": 98,
+          "doc": "lowest |a| in the last 10 s, centi-g"
+        },
+        "accel_hi": {
+          "type": "int",
+          "default": 104,
+          "doc": "highest |a| in the last 10 s"
+        },
+        "env": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "failed",
+            "waiting",
+            "live",
+            "stale"
+          ],
+          "default": "live",
+          "doc": "AHT30 freshness (temperature and humidity share it), stale after 3 s"
+        },
+        "env_age_ms": {
+          "type": "int",
+          "default": 600,
+          "doc": "now - humiture_last_good_us"
+        },
+        "temp_x10": {
+          "type": "int",
+          "default": 763,
+          "doc": "deci-degrees F (763 = 76.3 F)"
+        },
+        "temp_lo": {
+          "type": "int",
+          "default": 760,
+          "doc": "last 60 s low"
+        },
+        "temp_hi": {
+          "type": "int",
+          "default": 765,
+          "doc": "last 60 s high"
+        },
+        "humi_pct": {
+          "type": "int",
+          "default": 48,
+          "doc": "% RH, whole"
+        },
+        "humi_lo": {
+          "type": "int",
+          "default": 47,
+          "doc": "last 60 s low"
+        },
+        "humi_hi": {
+          "type": "int",
+          "default": 49,
+          "doc": "last 60 s high"
+        },
+        "have_range": {
+          "type": "bool",
+          "default": true,
+          "doc": "false: no history yet (first sample just arrived)"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "unknown": {
+          "accel": "unknown",
+          "env": "unknown"
+        },
+        "waiting_first_data": {
+          "accel": "waiting",
+          "env": "waiting"
+        },
+        "first_sample": {
+          "have_range": false
+        },
+        "no_dock_or_failed_env": {
+          "env": "failed"
+        },
+        "imu_failed": {
+          "accel": "failed",
+          "temp_x10": 759,
+          "humi_pct": 51,
+          "humi_lo": 50,
+          "humi_hi": 52
+        },
+        "stale": {
+          "accel": "stale",
+          "accel_age_ms": 4200,
+          "accel_x100": 99,
+          "env": "stale",
+          "env_age_ms": 2520000,
+          "temp_x10": 770,
+          "temp_lo": 768,
+          "temp_hi": 772
+        },
+        "shaking": {
+          "accel_x100": 173,
+          "accel_lo": 41,
+          "accel_hi": 236
+        },
+        "over_scale": {
+          "accel_x100": 287,
+          "accel_lo": 95,
+          "accel_hi": 341,
+          "temp_x10": 1043,
+          "temp_lo": 1031,
+          "temp_hi": 1049,
+          "humi_pct": 100,
+          "humi_lo": 97,
+          "humi_hi": 100
+        },
+        "under_scale": {
+          "accel_x100": 4,
+          "accel_lo": 2,
+          "accel_hi": 100,
+          "temp_x10": -400,
+          "temp_lo": -402,
+          "temp_hi": -395,
+          "humi_pct": 0,
+          "humi_lo": 0,
+          "humi_hi": 3
+        },
+        "long_stale": {
+          "accel": "stale",
+          "accel_age_ms": 1987200000,
+          "accel_x100": 100,
+          "env": "stale",
+          "env_age_ms": 1987200000
+        }
+      }
     }
   }
 }
