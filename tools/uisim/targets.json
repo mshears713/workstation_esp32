@@ -950,6 +950,66 @@
           "env_age_ms": 1987200000
         }
       }
+    },
+    "log": {
+      "kind": "page",
+      "description": "LOG as a phosphor terminal (ui_log.c + ui_log_format.c): every line of the 32-event Black Box reachable a page at a time (NEWER / OLDER soft keys), each line 'time-since-boot TAG message', long messages wrap, faults amber with '!'. NET / RPT / CLR keep their firmware handlers; LVGL's FPS/CPU readout is parked top-right on the device. Scenarios use messages the firmware really writes.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_log_format.c",
+        "main/ui_log.c"
+      ],
+      "headers": [
+        "ui_kit.h",
+        "ui_theme.h",
+        "ui_log_format.h",
+        "ui_log.h"
+      ],
+      "adapter": "tools/uisim/targets/log.c",
+      "fields": {
+        "scenario": {
+          "type": "enum",
+          "values": [
+            "evening",
+            "fresh_boot",
+            "longest",
+            "cleared"
+          ],
+          "default": "evening",
+          "doc": "evening: full 32-line ring with a watchdog boot, outage and failed upload; fresh_boot: 4 lines incl. dock init failure; longest: 31-char messages and the widest time stamps; cleared: after CLR"
+        },
+        "count": {
+          "type": "int",
+          "default": 32,
+          "doc": "lines in the ring (trims the scenario)"
+        },
+        "seq_bump": {
+          "type": "int",
+          "default": 0,
+          "doc": "newest N events arrive only at bump_at_ms"
+        },
+        "bump_at_ms": {
+          "type": "int",
+          "default": 1000,
+          "doc": "when the held-back events are recorded"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "fresh_boot": {
+          "scenario": "fresh_boot"
+        },
+        "longest": {
+          "scenario": "longest"
+        },
+        "cleared": {
+          "scenario": "cleared"
+        },
+        "one_line": {
+          "scenario": "evening",
+          "count": 1
+        }
+      }
     }
   }
 }
