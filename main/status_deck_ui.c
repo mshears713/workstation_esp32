@@ -172,6 +172,8 @@
 #include "ui_theme.h"
 #include "weather_client.h"
 #include "ui_firmware_page.h"
+#include "ui_diagnostics.h"
+#include "esp_wifi.h"
 #include "backend_health.h"
 #include "backend_catalog.h"
 #include "notification_client.h"
@@ -518,6 +520,7 @@ typedef enum {
 
 static portMUX_TYPE sensor_mux = portMUX_INITIALIZER_UNLOCKED;
 static bool sensor_present = false;          /* hardware detected at boot */
+static bool sensor_probed = false;           /* DIAGNOSTICS: probe has run (present or not) */
 static source_status_t sensor_status = SRC_UNKNOWN;
 static volatile bool sensor_have_new_sample = false;
 static float last_accel_g = 0.0f;            /* |acceleration| magnitude, unit: G */
@@ -564,6 +567,7 @@ static void sensor_event_handler(void *arg, sensor_event_base_t base, int32_t ev
 
 static portMUX_TYPE humiture_mux = portMUX_INITIALIZER_UNLOCKED;
 static bool humiture_present = false;        /* hardware detected at boot */
+static bool humiture_probed = false;         /* DIAGNOSTICS: probe has run (present or not) */
 static source_status_t humiture_status = SRC_UNKNOWN;
 static volatile bool temp_have_new_sample = false;
 static volatile bool humi_have_new_sample = false;
@@ -853,6 +857,8 @@ typedef enum {
     /* 1.3.0: HOME is weather + microphone + MENU, and MENU is how every page
      * above is reached. Last so the earlier page numbers keep their values. */
     APP_PAGE_MENU,
+    /* Link, sensor freshness, uptime, internal heap - reached from MENU. */
+    APP_PAGE_DIAG,
     APP_PAGE_COUNT,
 } app_page_t;
 
@@ -863,6 +869,11 @@ static lv_obj_t *page_set;          /* SETTINGS - replaced TALK in the nav */
 static lv_obj_t *page_projects;     /* PROJECTS - reached from SETTINGS */
 static lv_obj_t *page_firmware;     /* FIRMWARE - reached from SETTINGS */
 static lv_obj_t *page_menu;         /* MENU - 1.3.0, reached from HOME */
+static lv_obj_t *page_diag;         /* DIAGNOSTICS - reached from MENU */
+
+/* DIAGNOSTICS page objects (ui_diagnostics.h). Refreshed on entry and once a
+ * second while visible - see refresh_diag_page(). */
+static ui_diagnostics_page_t diag_page;
 
 /* FIRMWARE page labels (ui_firmware_page.h). Refreshed once a second while
  * the page is visible, from firmware_identity.h and ota_service.h - both of
@@ -1405,6 +1416,7 @@ static void render_command_overlay(void)
 
 static void refresh_project_label(void);
 static void refresh_firmware_page(void);
+static void refresh_diag_page(void);
 
 static void render_recording_overlay(void)
 {
@@ -1848,12 +1860,12 @@ static void send_handshake_button_cb(lv_event_t *e)
 static void set_active_page(app_page_t page)
 {
     lv_obj_t *pages[APP_PAGE_COUNT] = {
-        page_home, page_sens, page_log, page_set, page_projects, page_firmware, page_menu,
+        page_home, page_sens, page_log, page_set, page_projects, page_firmware, page_menu, page_diag,
     };
     /* 1.2.1: which page was on screen, for the crash breadcrumb. Same
      * order as app_page_t. */
     static const char *const page_names[APP_PAGE_COUNT] = {
-        "HOME", "SENS", "LOG", "SET", "PROJECTS", "FIRMWARE", "MENU",
+        "HOME", "SENS", "LOG", "SET", "PROJECTS", "FIRMWARE", "MENU", "DIAG",
     };
     diag_set_page(page_names[page]);
     for (int i = 0; i < APP_PAGE_COUNT; i++) {
@@ -1939,6 +1951,13 @@ static void firmware_nav_button_cb(lv_event_t *e)
     set_active_page(APP_PAGE_FIRMWARE);
 }
 
+static void diag_nav_button_cb(lv_event_t *e)
+{
+    (void)e;
+    refresh_diag_page();   /* current on the first frame, not a second later */
+    set_active_page(APP_PAGE_DIAG);
+}
+
 /* Asks the updater to fetch CLAWBOX's manifest now rather than waiting for
  * the next poll. It does NOT force an install - the device still installs
  * only the version CLAWBOX has named as desired, so this button is "look
@@ -2022,6 +2041,68 @@ static void refresh_firmware_page(void)
     ui_firmware_page_apply(&fw_page, &view);
 }
 
+/* DIAGNOSTICS: one snapshot of what the subsystems already track, read on the
+ * LVGL task (telemetry_timer_cb while the page is visible, and on entry).
+ * Nothing new is polled: wifi_mgr / backend_health snapshots are safe from
+ * any task, the sensor timestamps are copied under their existing muxes, and
+ * freshness is derived from those timestamps with the existing thresholds
+ * (ui_diag_freshness) rather than from the logging state machine. The one
+ * new call is esp_wifi_sta_get_ap_info() for RSSI, only while ONLINE - the
+ * same call report_client.c makes. */
+static void refresh_diag_page(void)
+{
+    if (diag_page.q_link == NULL) {
+        return;   /* page not built yet */
+    }
+
+    wifi_mgr_status_t ws;
+    wifi_mgr_get_status(&ws);
+    backend_health_status_t bh;
+    backend_health_get_status(&bh);
+    backend_health_stats_t bs;
+    backend_health_get_stats(&bs);
+
+    portENTER_CRITICAL(&sensor_mux);
+    int64_t accel_last = sensor_last_good_us;
+    portEXIT_CRITICAL(&sensor_mux);
+    portENTER_CRITICAL(&humiture_mux);
+    int64_t env_last = humiture_last_good_us;
+    portEXIT_CRITICAL(&humiture_mux);
+    int64_t now = esp_timer_get_time();
+
+    ui_diag_view_t v = {
+        .wifi = ws.state == WIFI_MGR_ONLINE       ? UI_DIAG_WIFI_ONLINE
+              : ws.state == WIFI_MGR_CONNECTING   ? UI_DIAG_WIFI_JOINING
+              : ws.state == WIFI_MGR_RETRY_WAIT   ? UI_DIAG_WIFI_RETRY
+                                                  : UI_DIAG_WIFI_OFF,
+        .wifi_reason = ws.reason_text,
+        .wifi_attempts = ws.attempt_count,
+        .wifi_retry_s = ws.retry_remaining_s,
+        .api = bh.state == BACKEND_HEALTH_OK         ? UI_DIAG_API_OK
+             : bh.state == BACKEND_HEALTH_DOWN       ? UI_DIAG_API_DOWN
+             : bh.state == BACKEND_HEALTH_NO_NETWORK ? UI_DIAG_API_NO_NET
+                                                     : UI_DIAG_API_UNKNOWN,
+        .api_ever_ok = bs.ever_ok,
+        .api_secs_since_ok = bs.secs_since_ok,
+        .uptime_s = (uint64_t)now / 1000000ULL,
+        .heap_free = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+        .heap_largest = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+        .heap_min = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+    };
+    if (ws.state == WIFI_MGR_ONLINE) {
+        wifi_ap_record_t ap;
+        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+            v.have_rssi = true;
+            v.rssi_dbm = ap.rssi;
+        }
+    }
+    v.accel = ui_diag_freshness(sensor_probed, sensor_present, accel_last, now, SENSOR_STALE_THRESHOLD_US,
+                                &v.accel_age_ms);
+    v.env = ui_diag_freshness(humiture_probed, humiture_present, env_last, now, HUMITURE_STALE_THRESHOLD_US,
+                              &v.env_age_ms);
+    ui_diagnostics_apply(&diag_page, &v);
+}
+
 /* ---- Weather (1.3.0): weather_client snapshot -> HOME ----------------
  * Checked once a second from telemetry_timer_cb, redrawn only when something
  * visible changes: a new answer, the data crossing the "old" line, or the
@@ -2083,6 +2164,9 @@ static void telemetry_timer_cb(lv_timer_t *t)
     if (page_firmware != NULL && !lv_obj_has_flag(page_firmware, LV_OBJ_FLAG_HIDDEN)) {
         refresh_firmware_page();
     }
+    if (page_diag != NULL && !lv_obj_has_flag(page_diag, LV_OBJ_FLAG_HIDDEN)) {
+        refresh_diag_page();
+    }
 
     uint32_t uptime_s = (uint32_t)(esp_timer_get_time() / 1000000ULL);
 
@@ -2143,6 +2227,7 @@ static void sensor_timer_cb(lv_timer_t *t)
  * a known limitation for this mission, not a hidden assumption. */
 static void live_data_deck_init(void)
 {
+    sensor_probed = true;   /* from here on, !sensor_present means the probe failed */
     static sensor_handle_t imu_handle;
     bsp_sensor_config_t cfg = {
         .type = IMU_ID,
@@ -2233,6 +2318,7 @@ static void humiture_timer_cb(lv_timer_t *t)
  * as the ACCEL chart would if the IMU ever failed to probe. */
 static void humiture_deck_init(void)
 {
+    humiture_probed = true;
     static sensor_handle_t humiture_handle;
     bsp_sensor_config_t cfg = {
         .type = HUMITURE_ID,
@@ -2322,6 +2408,7 @@ void status_deck_ui(lv_obj_t *scr)
     page_firmware = pages_init[APP_PAGE_FIRMWARE];
     page_set = pages_init[APP_PAGE_SET];
     page_menu = pages_init[APP_PAGE_MENU];
+    page_diag = pages_init[APP_PAGE_DIAG];
 
     /* 1.3.0 dark look: black behind everything (ui_theme.h). */
     lv_obj_set_style_bg_color(scr, UI_BG, 0);
@@ -2343,6 +2430,9 @@ void status_deck_ui(lv_obj_t *scr)
         { "PROJECTS", projects_nav_button_cb },
         { "FIRMWARE", firmware_nav_button_cb },
         { "SETTINGS", set_nav_button_cb },
+        /* "DIAGNOSTICS" at 20 px fills a 151 px button edge to edge; the
+         * page itself carries the full title. */
+        { "DIAG", diag_nav_button_cb },
     };
     ui_menu_build(page_menu, menu_items, (int)(sizeof(menu_items) / sizeof(menu_items[0])));
 
@@ -2509,6 +2599,10 @@ void status_deck_ui(lv_obj_t *scr)
     /* ---- FIRMWARE: what is running, and what the updater is doing ------ */
 
     ui_firmware_page_build(&fw_page, page_firmware, firmware_check_button_cb);
+
+    /* ---- DIAGNOSTICS: link, sensor freshness, uptime, internal heap ---- */
+
+    ui_diagnostics_build(&diag_page, page_diag);
 
     refresh_firmware_page();
 

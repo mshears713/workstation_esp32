@@ -1,6 +1,6 @@
 #!/bin/sh
-# Host test: compiles the REAL main/report_client.c and main/diag.c with
-# Linux gcc against stubs (stubs/host_stubs.h, host_stubs.c) and runs them
+# Host test: compiles the REAL main/report_client.c, main/diag.c and
+# main/ui_diag_format.c with Linux gcc against stubs (stubs/host_stubs.h, host_stubs.c) and runs them
 # under AddressSanitizer + UBSan. xTaskGetHandle() is stubbed with the same
 # configASSERT as ESP-IDF's FreeRTOS, so the 1.2.1 crash reproduces on the
 # host:  ./run.sh 1.2.1   -> aborts with "strlen(name) < configMAX_TASK_NAME_LEN"
@@ -28,6 +28,12 @@ gcc -std=gnu11 -g -O1 -Wall -Wno-unused-function -fsanitize=address,undefined -f
     "$HERE/test_main.c" "$HERE/host_stubs.c" "$IDF/components/json/cJSON/cJSON.c" \
     -x c "$HERE/diag_wrap.c" -x c "$HERE/rc_wrap.c" \
     -iquote "$SRC" -o "$OUT/hosttest"
+# DIAGNOSTICS page model (main/ui_diag_format.c): plain C, same sanitizers,
+# plus the firmware's -Werror=format-truncation at -O2.
+gcc -std=gnu11 -g -O2 -Wall -Wextra -Werror=format-truncation -fsanitize=address,undefined \
+    -fno-sanitize-recover=undefined -fno-omit-frame-pointer \
+    -I"$REPO/main" "$HERE/test_diag_format.c" "$REPO/main/ui_diag_format.c" -o "$OUT/diagformat"
+"$OUT/diagformat"
 # diag_init() runs once per boot on the device; the test boots it 4 times,
 # so its one PSRAM copy of last_words per boot "leaks" by design here.
 ASAN_OPTIONS=detect_leaks=0 "$OUT/hosttest"

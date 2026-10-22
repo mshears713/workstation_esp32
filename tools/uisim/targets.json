@@ -280,7 +280,7 @@
     },
     "menu": {
       "kind": "page",
-      "description": "MENU (ui_menu.c, 1.3.0): five 151x54 buttons to SENSORS, LOG, PROJECTS, FIRMWARE, SETTINGS (last one full width), the < HOME back button on top.",
+      "description": "MENU (ui_menu.c, 1.3.0): six 151x54 buttons, two to a row, to SENSORS, LOG, PROJECTS, FIRMWARE, SETTINGS, DIAG (the DIAGNOSTICS page), the < HOME back button on top.",
       "sources": [
         "main/ui_kit.c",
         "main/ui_menu.c"
@@ -386,6 +386,226 @@
           "backend_url": "http://clawbox.local:8000",
           "backend_fallback": true,
           "ota_message": "no manifest from CLAWBOX"
+        }
+      }
+    },
+    "diagnostics": {
+      "kind": "page",
+      "description": "DIAGNOSTICS (ui_diagnostics.c + ui_diag_format.c): four square blocks - LINK (Wi-Fi state + RSSI, backend reachability), SENSORS (ICM42670 accel and AHT30 temp/RH freshness), UPTIME (days / h m), INTERNAL HEAP KiB (free, largest block, min since boot). The global < HOME button on top. ALL telemetry values in these fixtures are ILLUSTRATIVE except heap_constrained, which uses the 1.2.0 report's real min/largest.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_diag_format.c",
+        "main/ui_diagnostics.c"
+      ],
+      "headers": [
+        "ui_kit.h",
+        "ui_diag_format.h",
+        "ui_diagnostics.h",
+        "ui_theme.h"
+      ],
+      "adapter": "tools/uisim/targets/diagnostics.c",
+      "fields": {
+        "wifi": {
+          "type": "enum",
+          "values": [
+            "off",
+            "joining",
+            "online",
+            "retry"
+          ],
+          "default": "online",
+          "doc": "wifi_mgr_state_t: DISCONNECTED / CONNECTING / ONLINE / RETRY_WAIT"
+        },
+        "have_rssi": {
+          "type": "bool",
+          "default": true,
+          "doc": "esp_wifi_sta_get_ap_info() answered (only tried while ONLINE)"
+        },
+        "rssi_dbm": {
+          "type": "int",
+          "default": -61,
+          "doc": "wifi_ap_record_t.rssi"
+        },
+        "wifi_reason": {
+          "type": "str",
+          "default": "",
+          "doc": "wifi_mgr reason_text (<= 19 chars): NO AP FOUND / AUTH FAILED / WIFI LOST / RETRYING"
+        },
+        "wifi_attempts": {
+          "type": "int",
+          "default": 1,
+          "doc": "attempt_count"
+        },
+        "wifi_retry_s": {
+          "type": "int",
+          "default": 0,
+          "doc": "retry_remaining_s"
+        },
+        "api": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "ok",
+            "down",
+            "no_net"
+          ],
+          "default": "ok",
+          "doc": "backend_health_state_t"
+        },
+        "api_ever_ok": {
+          "type": "bool",
+          "default": true,
+          "doc": "backend_health_stats_t.ever_ok"
+        },
+        "api_secs_since_ok": {
+          "type": "int",
+          "default": 0,
+          "doc": "backend_health_stats_t.secs_since_ok"
+        },
+        "accel": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "failed",
+            "waiting",
+            "live",
+            "stale"
+          ],
+          "default": "live",
+          "doc": "ui_diag_freshness(): probe not run / init failed / no sample yet / within 300 ms / older"
+        },
+        "accel_age_ms": {
+          "type": "int",
+          "default": 100,
+          "doc": "now - sensor_last_good_us"
+        },
+        "env": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "failed",
+            "waiting",
+            "live",
+            "stale"
+          ],
+          "default": "live",
+          "doc": "same, AHT30 (temp + RH share one timestamp), stale after 3 s"
+        },
+        "env_age_ms": {
+          "type": "int",
+          "default": 800,
+          "doc": "now - humiture_last_good_us"
+        },
+        "uptime_s": {
+          "type": "str",
+          "default": "371553",
+          "doc": "seconds since boot as a decimal string (uint32 range)"
+        },
+        "heap_free": {
+          "type": "int",
+          "default": 42190,
+          "doc": "heap_caps_get_free_size(MALLOC_CAP_INTERNAL), bytes"
+        },
+        "heap_largest": {
+          "type": "int",
+          "default": 18432,
+          "doc": "heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)"
+        },
+        "heap_min": {
+          "type": "int",
+          "default": 9830,
+          "doc": "heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL)"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "backend_down": {
+          "api": "down",
+          "api_secs_since_ok": 134,
+          "rssi_dbm": -78
+        },
+        "backend_never_up": {
+          "api": "down",
+          "api_ever_ok": false,
+          "uptime_s": "312"
+        },
+        "no_network": {
+          "wifi": "off",
+          "have_rssi": false,
+          "api": "no_net",
+          "api_ever_ok": false
+        },
+        "retrying": {
+          "wifi": "retry",
+          "have_rssi": false,
+          "wifi_reason": "AUTH FAILED",
+          "wifi_attempts": 6,
+          "wifi_retry_s": 24,
+          "api": "no_net"
+        },
+        "retrying_long_cause": {
+          "wifi": "retry",
+          "have_rssi": false,
+          "wifi_reason": "XXXXXXXXXXXXXXXXXXX",
+          "wifi_attempts": 41,
+          "wifi_retry_s": 120,
+          "api": "no_net"
+        },
+        "joining": {
+          "wifi": "joining",
+          "have_rssi": false,
+          "wifi_attempts": 3,
+          "api": "no_net"
+        },
+        "booting": {
+          "wifi": "joining",
+          "have_rssi": false,
+          "api": "unknown",
+          "api_ever_ok": false,
+          "accel": "waiting",
+          "env": "waiting",
+          "uptime_s": "9",
+          "heap_free": 31744,
+          "heap_largest": 14336,
+          "heap_min": 28672
+        },
+        "sensor_init_failed": {
+          "accel": "failed",
+          "env": "failed"
+        },
+        "stale_sensors": {
+          "accel": "stale",
+          "accel_age_ms": 4200,
+          "env": "stale",
+          "env_age_ms": 2520000
+        },
+        "long_uptime": {
+          "uptime_s": "31560720",
+          "api": "down",
+          "api_secs_since_ok": 4320000,
+          "env": "stale",
+          "env_age_ms": 2000000000
+        },
+        "uptime_max": {
+          "uptime_s": "4294967295"
+        },
+        "wifi_lost_cached_ok": {
+          "wifi": "off",
+          "api": "ok",
+          "have_rssi": false
+        },
+        "unknown_sources": {
+          "api": "unknown",
+          "api_ever_ok": false,
+          "accel": "unknown",
+          "env": "unknown",
+          "uptime_s": "0"
+        },
+        "heap_constrained": {
+          "heap_free": 9420,
+          "heap_largest": 6144,
+          "heap_min": 1207,
+          "uptime_s": "425"
         }
       }
     }
