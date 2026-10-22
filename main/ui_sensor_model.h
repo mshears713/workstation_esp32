@@ -6,8 +6,8 @@
 
 /**
  * @file
- * @brief SENSORS page model: fixed-point readings, their dial scales, a small
- *        recent-history ring per sensor, and the text the page shows.
+ * @brief SENSORS page model: fixed-point readings, their dial scales and the
+ *        text the page shows.
  * @details Plain C (snprintf only - no LVGL, no ESP-IDF), so the firmware, the
  *          simulator adapter and tools/hosttest share one set of rules.
  *          Freshness comes from ui_diag_freshness() (ui_diag_format.h) with the
@@ -24,6 +24,7 @@
  *                   converts once). Dial 60-90 F: the indoor band the old
  *                   chart used (Mission 19). Outside it the dial pins.
  *            HUMI   whole percent RH, 0-100.
+ *          The trend under each dial is drawn on the same scale.
  */
 #pragma once
 
@@ -44,28 +45,17 @@ typedef struct {
     int32_t scale_hi;
     int32_t rest;         /* a reference tick (1 g at rest) or INT32_MIN for none */
     int decimals;         /* fixed-point decimals: 2, 1, 0 */
-    uint32_t window_s;    /* how much history the recent-range band covers */
+    uint16_t history;     /* trend points: 100 at 10 Hz = 10 s, 60 at 1 Hz = 60 s */
 } ui_sens_info_t;
 
 const ui_sens_info_t *ui_sens_info(ui_sens_id_t id);
 
-/** Ring of the last `cap` samples. The caller owns `buf` (PSRAM in the
- *  firmware). Samples arrive at the sensor's acquisition rate, so cap fixes
- *  the time window: 100 at 10 Hz = 10 s (ACCEL), 60 at 1 Hz = 60 s (env). */
-typedef struct {
-    int32_t *buf;
-    uint16_t cap;
-    uint16_t len;
-    uint16_t head;   /* next write index */
-} ui_sens_hist_t;
-
-void ui_sens_hist_init(ui_sens_hist_t *h, int32_t *buf, uint16_t cap);
-void ui_sens_hist_push(ui_sens_hist_t *h, int32_t v);
-/** Lowest and highest sample held; false while empty. */
-bool ui_sens_hist_range(const ui_sens_hist_t *h, int32_t *lo, int32_t *hi);
-
 /** "1.01", "76.3", "48" - the number alone, sign kept, never clamped. */
 void ui_sens_fmt_value(ui_sens_id_t id, int32_t v, char *b, size_t n);
+
+/** Short age for a state word under a 100 px dial: "<1 s", "4 s", "42 m",
+ *  "3 h", "23 d" (whole units, rounded down). */
+void ui_sens_fmt_age(uint64_t ms, char *b, size_t n);
 
 /** Where on its dial a value sits, 0..1000 (per mille), clamped; *pinned
  *  says it was outside the dial (-1 below, +1 above, 0 inside). */

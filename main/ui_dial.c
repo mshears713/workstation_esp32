@@ -7,14 +7,16 @@
 /**
  * @file
  * @brief One instrument dial - see ui_dial.h.
- * @details Three lv_arc objects share the face's geometry: track, fill and the
- *          recent-range band. All have their knob removed and are not
- *          clickable - this is a gauge, not a control. The sweep runs from
- *          150 degrees (lower left) clockwise to 30 degrees (lower right),
- *          leaving the bottom 120 degrees open for the scale ends.
+ * @details Two lv_arc objects share the face's geometry: the track and the
+ *          fill. Both have their knob removed and are not clickable - this is
+ *          a gauge, not a control. The sweep runs from 150 degrees (lower
+ *          left) clockwise to 30 degrees (lower right), leaving the bottom 120
+ *          degrees open for the scale ends.
  */
 
 #include "ui_dial.h"
+
+#include <string.h>
 
 #define SWEEP 240
 #define ROT 150
@@ -67,8 +69,6 @@ void ui_dial_create(ui_dial_t *d, lv_obj_t *parent, const ui_dial_spec_t *spec)
     int ring = s - 6;                          /* 3 px of face outside the arc */
     d->track = arc_layer(d->face, ring, w, spec->color, true);
     d->fill = arc_layer(d->face, ring, w, spec->color, false);
-    /* The band rides just inside the arc, thin, so it never hides the fill. */
-    d->band = arc_layer(d->face, ring - 2 * w - 4, 4, DIAL_TICK, false);
 
     d->tick = NULL;
     if (spec->tick_pos >= 0) {
@@ -99,20 +99,17 @@ void ui_dial_create(ui_dial_t *d, lv_obj_t *parent, const ui_dial_spec_t *spec)
     d->hi = text(d->face, spec->hi_text ? spec->hi_text : "", &lv_font_montserrat_12, DIAL_DIM);
     lv_obj_align(d->hi, LV_ALIGN_BOTTOM_RIGHT, -s / 5, -1);
 
-    d->name = NULL;
-    if (spec->name) {
-        d->name = text(parent, spec->name, &lv_font_montserrat_14, DIAL_DIM);
-        lv_obj_align_to(d->name, d->face, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
-    }
+    d->name = text(parent, spec->name ? spec->name : "", &lv_font_montserrat_14, DIAL_DIM);
+    lv_obj_align_to(d->name, d->face, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
     d->word = text(parent, "", &lv_font_montserrat_14, DIAL_DIM);
-    lv_obj_align_to(d->word, d->name ? d->name : d->face, LV_ALIGN_OUT_BOTTOM_MID, 0, d->name ? 0 : 2);
+    lv_obj_align_to(d->word, d->name, LV_ALIGN_OUT_BOTTOM_MID, 0, 0);
 }
 
 void ui_dial_apply(ui_dial_t *d, const ui_dial_spec_t *spec, const ui_dial_state_t *st)
 {
     lv_color_t c = st->current ? spec->color : DIAL_TICK;
     /* Off the dial: the fill runs to the end and turns amber, and the scale
-     * end it ran past lights up - the number beside it stays exact. */
+     * end it ran past lights up - the number in the middle stays exact. */
     if (st->current && st->pinned) {
         c = DIAL_AMBER;
     }
@@ -122,32 +119,25 @@ void ui_dial_apply(ui_dial_t *d, const ui_dial_spec_t *spec, const ui_dial_state
     lv_obj_set_style_text_color(d->lo, st->pinned < 0 ? DIAL_AMBER : DIAL_DIM, 0);
     lv_obj_set_style_text_color(d->hi, st->pinned > 0 ? DIAL_AMBER : DIAL_DIM, 0);
 
-    if (st->have_band) {
-        int32_t a = st->band_lo * SWEEP / 1000, b = st->band_hi * SWEEP / 1000;
-        if (b - a < 3) {           /* a steady reading still shows a sliver */
-            b = a + 3 > SWEEP ? SWEEP : a + 3;
-            a = b - 3;
-        }
-        lv_arc_set_angles(d->band, (lv_value_precise_t)a, (lv_value_precise_t)b);
-        lv_obj_set_style_arc_opa(d->band, LV_OPA_COVER, LV_PART_INDICATOR);
-    } else {
-        lv_obj_set_style_arc_opa(d->band, LV_OPA_TRANSP, LV_PART_INDICATOR);
-    }
-
     lv_label_set_text(d->value, st->value);
     lv_obj_set_style_text_color(d->value, st->current ? DIAL_TEXT : DIAL_DIM, 0);
-    /* A long reading ("-40.0", "104.0") steps down a size rather than
-     * running into the arc. */
-    lv_obj_set_style_text_font(d->value, spec->value_font, 0);
-    lv_obj_update_layout(d->value);
-    if (lv_obj_get_width(d->value) > spec->size - 2 * spec->arc_w - 16 && spec->value_font != &lv_font_montserrat_20) {
-        lv_obj_set_style_text_font(d->value, &lv_font_montserrat_20, 0);
+    /* A long reading ("-40.0", "104.3") steps down a size rather than
+     * running into the arc. Decided by length, not measured width: a live
+     * number must not jump between sizes as its digits change. */
+    size_t len = strlen(st->value);
+    bool long_reading = len > 4 || st->value[0] == '-';
+    lv_obj_set_style_text_font(d->value, long_reading ? &lv_font_montserrat_20 : spec->value_font, 0);
+    bool unit = st->unit && st->unit[0];
+    lv_label_set_text(d->unit, unit ? st->unit : "");
+    if (unit) {
+        lv_obj_clear_flag(d->unit, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(d->unit, LV_OBJ_FLAG_HIDDEN);
     }
-    lv_label_set_text(d->unit, st->unit ? st->unit : "");
-    lv_obj_align(d->value, LV_ALIGN_CENTER, 0, st->unit && st->unit[0] ? -6 : 0);
-    lv_obj_align_to(d->unit, d->value, LV_ALIGN_OUT_BOTTOM_MID, 0, -2);
+    lv_obj_align(d->value, LV_ALIGN_CENTER, 0, unit ? -7 : 0);
+    lv_obj_align_to(d->unit, d->value, LV_ALIGN_OUT_BOTTOM_MID, 0, 0);
 
     lv_label_set_text(d->word, st->word ? st->word : "");
     lv_obj_set_style_text_color(d->word, st->word_color, 0);
-    lv_obj_align_to(d->word, d->name ? d->name : d->face, LV_ALIGN_OUT_BOTTOM_MID, 0, d->name ? 0 : 2);
+    lv_obj_align_to(d->word, d->name, LV_ALIGN_OUT_BOTTOM_MID, 0, 0);
 }

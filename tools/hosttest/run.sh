@@ -34,6 +34,11 @@ gcc -std=gnu11 -g -O2 -Wall -Wextra -Werror=format-truncation -fsanitize=address
     -fno-sanitize-recover=undefined -fno-omit-frame-pointer \
     -I"$REPO/main" "$HERE/test_diag_format.c" "$REPO/main/ui_diag_format.c" -o "$OUT/diagformat"
 "$OUT/diagformat"
+# SENSORS page model (main/ui_sensor_model.c): same flags.
+gcc -std=gnu11 -g -O2 -Wall -Wextra -Werror=format-truncation -fsanitize=address,undefined \
+    -fno-sanitize-recover=undefined -fno-omit-frame-pointer \
+    -I"$REPO/main" "$HERE/test_sensor_model.c" "$REPO/main/ui_sensor_model.c" -o "$OUT/sensormodel"
+"$OUT/sensormodel"
 # diag_init() runs once per boot on the device; the test boots it 4 times,
 # so its one PSRAM copy of last_words per boot "leaks" by design here.
 ASAN_OPTIONS=detect_leaks=0 "$OUT/hosttest"

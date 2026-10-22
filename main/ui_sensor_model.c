@@ -14,7 +14,7 @@
 #include <stdio.h>
 
 static const ui_sens_info_t info[UI_SENS_COUNT] = {
-    [UI_SENS_ACCEL] = { "ACCEL", "g", 0, 200, 100, 2, 10 },
+    [UI_SENS_ACCEL] = { "ACCEL", "g", 0, 200, 100, 2, 100 },
     [UI_SENS_TEMP]  = { "TEMP", "\xC2\xB0" "F", 600, 900, INT32_MIN, 1, 60 },
     [UI_SENS_HUMI]  = { "HUMIDITY", "%", 0, 100, INT32_MIN, 0, 60 },
 };
@@ -22,43 +22,6 @@ static const ui_sens_info_t info[UI_SENS_COUNT] = {
 const ui_sens_info_t *ui_sens_info(ui_sens_id_t id)
 {
     return &info[id < UI_SENS_COUNT ? id : 0];
-}
-
-void ui_sens_hist_init(ui_sens_hist_t *h, int32_t *buf, uint16_t cap)
-{
-    h->buf = buf;
-    h->cap = buf ? cap : 0;
-    h->len = 0;
-    h->head = 0;
-}
-
-void ui_sens_hist_push(ui_sens_hist_t *h, int32_t v)
-{
-    if (h->cap == 0) {
-        return;
-    }
-    h->buf[h->head] = v;
-    h->head = (uint16_t)((h->head + 1) % h->cap);
-    if (h->len < h->cap) {
-        h->len++;
-    }
-}
-
-bool ui_sens_hist_range(const ui_sens_hist_t *h, int32_t *lo, int32_t *hi)
-{
-    if (h->len == 0) {
-        return false;
-    }
-    /* The newest len samples end just before head. */
-    int32_t a = h->buf[(h->head + h->cap - 1) % h->cap], b = a;
-    for (uint16_t i = 0; i < h->len; i++) {
-        int32_t v = h->buf[(h->head + h->cap - 1 - i) % h->cap];
-        a = v < a ? v : a;
-        b = v > b ? v : b;
-    }
-    *lo = a;
-    *hi = b;
-    return true;
 }
 
 void ui_sens_fmt_value(ui_sens_id_t id, int32_t v, char *b, size_t n)
@@ -73,6 +36,22 @@ void ui_sens_fmt_value(ui_sens_id_t id, int32_t v, char *b, size_t n)
         snprintf(b, n, "%s%llu.%llu", sign, (unsigned long long)(m / 10), (unsigned long long)(m % 10));
     } else {
         snprintf(b, n, "%s%llu", sign, (unsigned long long)m);
+    }
+}
+
+void ui_sens_fmt_age(uint64_t ms, char *b, size_t n)
+{
+    uint64_t s = ms / 1000u;
+    if (s < 1u) {
+        snprintf(b, n, "<1 s");
+    } else if (s < 60u) {
+        snprintf(b, n, "%u s", (unsigned)s);
+    } else if (s < 3600u) {
+        snprintf(b, n, "%u m", (unsigned)(s / 60u));
+    } else if (s < 86400u) {
+        snprintf(b, n, "%u h", (unsigned)(s / 3600u));
+    } else {
+        snprintf(b, n, "%llu d", (unsigned long long)(s / 86400u));
     }
 }
 

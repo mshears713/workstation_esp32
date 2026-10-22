@@ -7,13 +7,12 @@
 /**
  * @file
  * @brief One instrument dial (gallery concept 06 Dial Cluster). Pure LVGL.
- * @details A 240-degree flat arc on a dark face: the outer arc fills to the
- *          current reading, a thin inner ring spans the recent low-high, a
- *          short tick marks a reference value (1 g at rest), and the scale's
- *          ends are printed in the gap at the bottom. The number sits in the
- *          middle; the name and a state word go underneath. Positions are
- *          per mille of the sweep (0..1000) so the dial knows nothing about
- *          units - ui_sensor_model.c does that.
+ * @details A 240-degree flat arc on a dark face that fills to the reading, a
+ *          short tick at a reference value (1 g at rest), the scale's ends in
+ *          the open bottom of the sweep, the number in the middle, and a name
+ *          and state word underneath. Positions are per mille of the sweep
+ *          (0..1000), so the dial knows nothing about units -
+ *          ui_sensor_model.c does that.
  */
 #pragma once
 
@@ -40,7 +39,6 @@ typedef struct {
     lv_obj_t *face;
     lv_obj_t *track;      /* full sweep, dark */
     lv_obj_t *fill;       /* 0 .. reading */
-    lv_obj_t *band;       /* recent low .. high, thin inner ring */
     lv_obj_t *tick;       /* reference mark (lv_line) or NULL */
     lv_obj_t *value;
     lv_obj_t *unit;
@@ -53,8 +51,8 @@ typedef struct {
 
 typedef struct {
     int x, y, size, arc_w;           /* the face's box in the parent */
-    const lv_font_t *value_font;
-    const char *name;                /* under the dial; NULL = none (caller labels it) */
+    const lv_font_t *value_font;     /* steps down to 20 when a reading is too wide */
+    const char *name;                /* under the dial */
     const char *lo_text, *hi_text;   /* scale ends, printed in the bottom gap */
     int32_t tick_pos;                /* per mille, or -1 for no reference tick */
     lv_color_t color;                /* the reading's colour when current */
@@ -66,8 +64,6 @@ typedef struct {
     bool have_fill;      /* false: no reading to show, track only */
     int32_t pos;         /* per mille */
     int pinned;          /* -1 / +1: the reading is off the dial at that end */
-    bool have_band;
-    int32_t band_lo, band_hi;   /* per mille */
     const char *word;    /* "LIVE", "STALE 4 s" ... */
     lv_color_t word_color;
     bool current;        /* false: drawn in grey - a held or absent reading */

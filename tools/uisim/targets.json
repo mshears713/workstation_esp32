@@ -779,7 +779,7 @@
     },
     "sensors": {
       "kind": "page",
-      "description": "SENSORS as a dial cluster (ui_sensors.c + ui_dial.c + ui_sensor_model.c): ACCEL |a| on a 0-2 g dial with a 1 g rest tick (sensor is +-2 g per axis, so |a| can reach ~3.46 g: past 2 g the dial pins amber, the number stays exact), TEMP on the firmware's 60-90 F band, HUMIDITY 0-100 %. Inner ring = recent low..high (10 s accel, 60 s env). State words from the DIAGNOSTICS freshness rules: accel stale after 300 ms, temp+humidity (one AHT30 read) after 3 s. Values in fixtures are illustrative.",
+      "description": "SENSORS as a dial cluster (ui_sensors.c + ui_dial.c + ui_sensor_model.c): ACCEL |a| on a 0-2 g dial with a 1 g rest tick (sensor is +-2 g per axis, so |a| can reach ~3.46 g: past 2 g the dial pins amber, the number stays exact), TEMP on the firmware's 60-90 F band, HUMIDITY 0-100 %. Trend line under each dial on the dial's scale (100 pts = 10 s accel, 60 pts = 60 s env; synthesized in fixtures). State words from the DIAGNOSTICS freshness rules: accel stale after 300 ms, temp+humidity (one AHT30 read) after 3 s. Values in fixtures are illustrative.",
       "sources": [
         "main/ui_kit.c",
         "main/ui_diag_format.c",
@@ -876,10 +876,10 @@
           "default": 49,
           "doc": "last 60 s high"
         },
-        "have_range": {
-          "type": "bool",
-          "default": true,
-          "doc": "false: no history yet (first sample just arrived)"
+        "history_permille": {
+          "type": "int",
+          "default": 1000,
+          "doc": "how much of the trend window has samples (1000 = full; small just after boot)"
         }
       },
       "fixtures": {
@@ -893,7 +893,7 @@
           "env": "waiting"
         },
         "first_sample": {
-          "have_range": false
+          "history_permille": 10
         },
         "no_dock_or_failed_env": {
           "env": "failed"
