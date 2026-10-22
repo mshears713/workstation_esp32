@@ -1010,6 +1010,153 @@
           "count": 1
         }
       }
+    },
+    "settings": {
+      "kind": "page",
+      "description": "SETTINGS, Hazard Industrial (ui_settings.c): API and WI-FI as solid status blocks with words from ui_diag_format.c (no network beats a cached API OK), hazard tape around anything not OK, latency as the last 3 s probe's; volume 0-100 in tens on 60x50 keys with a ten-cell meter; GO repository (backend catalog label <= 12 chars, '...' loading, 'NONE' empty) on prev/next keys; PROJECTS and FIRMWARE links beside the shell's HOME; uptime in the bottom hazard band.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_diag_format.c",
+        "main/ui_settings.c"
+      ],
+      "headers": [
+        "ui_kit.h",
+        "ui_theme.h",
+        "ui_diag_format.h",
+        "ui_settings.h"
+      ],
+      "adapter": "tools/uisim/targets/settings.c",
+      "fields": {
+        "uptime_s": {
+          "type": "int",
+          "default": 2537,
+          "doc": "seconds since boot"
+        },
+        "wifi": {
+          "type": "enum",
+          "values": [
+            "off",
+            "joining",
+            "online",
+            "retry"
+          ],
+          "default": "online",
+          "doc": "wifi_mgr_state_t"
+        },
+        "ip_octet": {
+          "type": "str",
+          "default": ".57",
+          "doc": "last octet of the station IP, with its dot"
+        },
+        "wifi_attempts": {
+          "type": "int",
+          "default": 1,
+          "doc": "attempt_count"
+        },
+        "wifi_reason": {
+          "type": "str",
+          "default": "",
+          "doc": "NO AP FOUND / AUTH FAILED / WIFI LOST / RETRYING"
+        },
+        "wifi_retry_s": {
+          "type": "int",
+          "default": 0,
+          "doc": "retry_remaining_s"
+        },
+        "api": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "ok",
+            "down",
+            "no_net"
+          ],
+          "default": "ok",
+          "doc": "backend_health_state_t"
+        },
+        "api_ms": {
+          "type": "int",
+          "default": 38,
+          "doc": "latency_ms of the last successful probe"
+        },
+        "api_ever_ok": {
+          "type": "bool",
+          "default": true,
+          "doc": "backend answered at least once this boot"
+        },
+        "api_secs_since_ok": {
+          "type": "int",
+          "default": 0,
+          "doc": "since the last success"
+        },
+        "volume": {
+          "type": "int",
+          "default": 70,
+          "doc": "audio_playback volume 0..100 (default 70, steps of 10)"
+        },
+        "repo": {
+          "type": "str",
+          "default": "workstation",
+          "doc": "backend_catalog_repo_label(): <= 12 chars, '...' before load, 'NONE' if empty"
+        },
+        "repo_count": {
+          "type": "int",
+          "default": 4,
+          "doc": "repositories in the catalog"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "backend_down": {
+          "api": "down",
+          "api_secs_since_ok": 134
+        },
+        "backend_never_up": {
+          "api": "down",
+          "api_ever_ok": false,
+          "uptime_s": 312
+        },
+        "wifi_retry": {
+          "wifi": "retry",
+          "wifi_reason": "AUTH FAILED",
+          "wifi_retry_s": 24,
+          "wifi_attempts": 6,
+          "api": "no_net"
+        },
+        "wifi_lost_cached_ok": {
+          "wifi": "retry",
+          "wifi_reason": "WIFI LOST",
+          "wifi_retry_s": 12,
+          "api": "ok"
+        },
+        "connecting": {
+          "uptime_s": 6,
+          "wifi": "joining",
+          "wifi_attempts": 1,
+          "api": "unknown",
+          "api_ever_ok": false,
+          "repo": "...",
+          "repo_count": 0
+        },
+        "wifi_off": {
+          "wifi": "off",
+          "api": "no_net"
+        },
+        "catalog_empty": {
+          "repo": "NONE",
+          "repo_count": 0
+        },
+        "volume_min": {
+          "volume": 0
+        },
+        "worst_case": {
+          "uptime_s": 31560720,
+          "api_ms": 1250,
+          "volume": 100,
+          "repo": "WWWWWWWWWWWW",
+          "repo_count": 9
+        }
+      }
     }
   }
 }
