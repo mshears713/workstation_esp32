@@ -12,8 +12,9 @@
 /* The spec asked for a scrollable list. Five destinations fit on one screen
  * as 150x54 buttons, which is better at arm's length than a list you have to
  * scroll: every page is one look and one tap away, and the buttons are as
- * big as the corner nav ones they replace. Pages added later (Weather,
- * Spotify) take the sixth slot, then this becomes a list.
+ * big as the corner nav ones they replace. The sixth slot went to DIAG; past
+ * six, a second page reached by a key in the title band ("MORE >") keeps
+ * every button full size instead of shrinking them into a list.
  *
  *    y  58..112   row 1
  *    y 118..172   row 2
@@ -24,9 +25,29 @@
 #define MENU_GAP 6
 #define MENU_BTN_W 151
 
-void ui_menu_build(lv_obj_t *page, const ui_menu_item_t *items, int count)
+void ui_menu_build(lv_obj_t *page, const char *title, const ui_menu_item_t *items, int count,
+                   const ui_menu_item_t *corner)
 {
-    ui_page_title(page, "MENU");
+    ui_page_title(page, title);
+
+    if (corner) {
+        /* Title band, right end: the same 52 px height as HOME on the left. */
+        lv_obj_t *k = lv_button_create(page);
+        lv_obj_set_size(k, 96, 52);
+        lv_obj_set_pos(k, 320 - 2 - 96, 2);
+        lv_obj_set_style_bg_color(k, UI_PANEL, 0);
+        lv_obj_set_style_border_width(k, 2, 0);
+        lv_obj_set_style_border_color(k, UI_ACCENT, 0);
+        lv_obj_set_style_radius(k, 10, 0);
+        if (corner->cb) {
+            lv_obj_add_event_cb(k, corner->cb, LV_EVENT_CLICKED, NULL);
+        }
+        lv_obj_t *l = lv_label_create(k);
+        lv_label_set_text(l, corner->label);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_color(l, UI_TEXT, 0);
+        lv_obj_center(l);
+    }
 
     for (int i = 0; i < count && i < 6; i++) {
         bool alone = (i == count - 1) && (count % 2 == 1);

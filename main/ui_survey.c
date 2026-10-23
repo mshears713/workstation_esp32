@@ -398,7 +398,7 @@ static void build_question(void)
 {
     int qi = current_q();
     const ui_survey_question_t *q = question(qi);
-    char kicker[24];
+    char kicker[40];   /* sized for two full ints: -Werror=format-truncation in the firmware build */
     snprintf(kicker, sizeof(kicker), "Question %d of %d", qi + 1, UI_SURVEY_QUESTIONS);
     header(kicker, PAPER_GREY, qi + 1);
 

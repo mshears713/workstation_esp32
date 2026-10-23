@@ -98,10 +98,16 @@ static void signal_build(ui_diag_signal_t *s, lv_obj_t *q, int y, const char *na
     lv_obj_set_pos(n, 7, y);
     lv_obj_update_layout(n);
     s->detail = text(q, "", &lv_font_montserrat_14, UI_TEXT_DIM);
-    lv_obj_set_size(s->detail, Q_W - 14 - lv_obj_get_width(n) - 8, 16);
+    /* Placed from the name, not aligned to the block's right edge: the edge
+     * moves in when the block's border thickens for a caution, which took
+     * the gap to "AUTH FAILED" from 8 px to 4 (the UI-suite tight-gap check
+     * caught it). 8 px keeps the two reading as name and detail, and still
+     * leaves the longest reason, "AUTH FAILED", its full 95 px. */
+    int dx = 7 + lv_obj_get_width(n) + 8;
+    lv_obj_set_size(s->detail, Q_W - dx - 5, 16);
     lv_label_set_long_mode(s->detail, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_style_text_align(s->detail, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_align(s->detail, LV_ALIGN_TOP_RIGHT, -7, y);
+    lv_obj_set_pos(s->detail, dx, y);
     s->word = text(q, "", &lv_font_montserrat_20, D_TXT);
     lv_obj_set_pos(s->word, 7, y + 16);
 }

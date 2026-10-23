@@ -280,7 +280,7 @@
     },
     "menu": {
       "kind": "page",
-      "description": "MENU (ui_menu.c, 1.3.0): six 151x54 buttons, two to a row, to SENSORS, LOG, PROJECTS, FIRMWARE, SETTINGS, DIAG (the DIAGNOSTICS page), the < HOME back button on top.",
+      "description": "MENU (ui_menu.c): six 151x54 buttons, two to a row (SENSORS, LOG, PROJECTS, FIRMWARE, SETTINGS, DIAG) with MORE > in the title band; page=more: the second page of experiments (MESSAGES, MUSIC, FACE, SURVEY) with < MENU. The < HOME back button on top.",
       "sources": [
         "main/ui_kit.c",
         "main/ui_menu.c"
@@ -291,9 +291,22 @@
         "ui_theme.h"
       ],
       "adapter": "tools/uisim/targets/menu.c",
-      "fields": {},
+      "fields": {
+        "page": {
+          "type": "enum",
+          "values": [
+            "main",
+            "more"
+          ],
+          "default": "main",
+          "doc": "first or second menu page"
+        }
+      },
       "fixtures": {
-        "default": {}
+        "default": {},
+        "more": {
+          "page": "more"
+        }
       }
     },
     "firmware": {

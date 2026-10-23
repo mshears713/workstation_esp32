@@ -173,6 +173,15 @@
 #include "weather_client.h"
 #include "ui_firmware_page.h"
 #include "ui_diagnostics.h"
+#include "ui_sensors.h"
+#include "ui_log.h"
+#include "ui_settings.h"
+#include "ui_recording.h"
+#include "ui_notify.h"
+#include "ui_survey.h"
+#include "ui_music.h"
+#include "ui_music_mock.h"
+#include "ui_companion.h"
 #include "esp_wifi.h"
 #include "backend_health.h"
 #include "backend_catalog.h"
@@ -286,7 +295,7 @@ static const char *event_type_name(event_type_t t)
 /* Mission 15 made this equal to EVENT_HISTORY_LEN (8 then). 1.2.0 grows the
  * recorder to 32 but keeps the panel at the newest 8: the full history goes
  * out in the device report, where there is room to read it. */
-#define EVENT_DISPLAY_LINES 8
+#define EVENT_DISPLAY_LINES EVENT_HISTORY_LEN   /* UI suite: LOG pages through all of it */
 
 typedef struct {
     event_type_t type;
@@ -296,6 +305,12 @@ typedef struct {
 
 static event_record_t *event_history;   /* EVENT_HISTORY_LEN records, PSRAM */
 static int event_history_used = 0;
+/* Events recorded since boot (keeps rising past the ring): LOG uses it to keep
+ * a paged-back view steady while new lines arrive. */
+static uint32_t event_seq = 0;
+/* The LOG page's view of the ring, rebuilt on each render. PSRAM, beside the
+ * ring it points into. */
+static ui_log_entry_t *log_entries;
 
 static void event_history_alloc(void)
 {
@@ -309,6 +324,7 @@ static void event_history_alloc(void)
          * Black Box working anyway rather than dereferencing NULL. */
         event_history = heap_caps_calloc(EVENT_HISTORY_LEN, sizeof(event_record_t), MALLOC_CAP_8BIT);
     }
+    log_entries = heap_caps_calloc(EVENT_HISTORY_LEN, sizeof(ui_log_entry_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 }
 
 static void event_history_push(event_type_t type, const char *message)
@@ -327,6 +343,7 @@ static void event_history_push(event_type_t type, const char *message)
     if (event_history_used < EVENT_HISTORY_LEN) {
         event_history_used++;
     }
+    event_seq++;
 }
 
 /* forward declared: defined in the Rendering section below */
@@ -831,9 +848,20 @@ static uint32_t handshake_sequence = 0;
 
 /* ---- UI widgets (set once in status_deck_ui) ------------------------- */
 
-static lv_obj_t *telemetry_label;
-static lv_obj_t *conn_label;
-static lv_obj_t *log_label;
+/* UI suite pages (ui_sensors.c, ui_log.c, ui_settings.c, ui_notify.c) and
+ * overlays (ui_recording.c, ui_notify.c). */
+/* One block, allocated in PSRAM by status_deck_ui() before anything is
+ * built: ~0.9 KB of object handles that internal RAM - the ceiling on this
+ * board - does not have to hold. NULL until then; code that can run before
+ * the UI exists checks it. */
+static struct {
+    ui_sensors_page_t sens;
+    ui_log_page_t log;
+    ui_settings_page_t settings;
+    ui_notify_page_t notify;
+    ui_recording_t rec;
+    ui_notify_overlay_t notif;
+} *ui;
 
 /* Mission 14: three pages behind a bottom nav bar, replacing the single
  * crowded dashboard - see the file header comment. Each page is a plain
@@ -859,6 +887,9 @@ typedef enum {
     APP_PAGE_MENU,
     /* Link, sensor freshness, uptime, internal heap - reached from MENU. */
     APP_PAGE_DIAG,
+    /* UI suite: MENU's second page, and the notification card stack. */
+    APP_PAGE_MORE,
+    APP_PAGE_NOTIFY,
     APP_PAGE_COUNT,
 } app_page_t;
 
@@ -870,6 +901,9 @@ static lv_obj_t *page_projects;     /* PROJECTS - reached from SETTINGS */
 static lv_obj_t *page_firmware;     /* FIRMWARE - reached from SETTINGS */
 static lv_obj_t *page_menu;         /* MENU - 1.3.0, reached from HOME */
 static lv_obj_t *page_diag;         /* DIAGNOSTICS - reached from MENU */
+static lv_obj_t *page_more;         /* MENU's second page */
+static lv_obj_t *page_notify;       /* MESSAGES card stack - from MORE */
+static lv_obj_t *app_screen;        /* where experiments open full-screen */
 
 /* DIAGNOSTICS page objects (ui_diagnostics.h). Refreshed on entry and once a
  * second while visible - see refresh_diag_page(). */
@@ -879,11 +913,6 @@ static ui_diagnostics_page_t diag_page;
  * the page is visible, from firmware_identity.h and ota_service.h - both of
  * which are explicitly safe to read from any task, this one included. */
 static ui_firmware_page_t fw_page;
-/* SETTINGS reuses telemetry_label / conn_label / volume_label - the same
- * objects HOME used to own, just reparented to this page. Only the two
- * genuinely new rows need their own handles. */
-static lv_obj_t *settings_api_label;
-static lv_obj_t *settings_repo_label;
 /* 1.3.0: the four corner buttons became MENU on HOME plus this one "< HOME"
  * button, shown on every page but HOME (ui_back_button_create()). */
 static lv_obj_t *back_button;
@@ -895,30 +924,10 @@ static lv_obj_t *cmd_overlay;
 static lv_obj_t *cmd_status_label;
 static lv_obj_t *cmd_buttons[VOICE_COMMAND_COUNT];
 
-/* Voice-triggered recording overlay (Mission 13): shared by SEND and NOTE -
- * mic ownership is exclusive, so only one can ever be mid-recording at a
- * time - see render_recording_overlay() below. */
-static lv_obj_t *recording_overlay;
-static lv_obj_t *recording_title;
-static lv_obj_t *recording_progress;      /* elapsed/target bar, bounded captures only */
-static lv_obj_t *recording_send_btn;       /* hidden for auto-stop captures - see render_recording_overlay */
-static lv_obj_t *recording_repo_ctrl;      /* wide repository chooser along the bottom - GO only */
-static lv_obj_t *recording_repo_label;
-static lv_obj_t *recording_project_ctrl;   /* project selector on the recording overlay - NOTE only */
-static lv_obj_t *recording_project_label;
-/* The PROJECTS page's own copy of the same selection, plus its cue. */
+/* The PROJECTS page's selection and its cue (the recording overlay shows the
+ * same selection through ui_recording.c). */
 static lv_obj_t *projects_page_label;
 static lv_obj_t *projects_page_cue;
-static lv_obj_t *recording_dot;
-static lv_obj_t *recording_status_label;
-
-/* Notification-playback overlay: same shape as the recording overlay
- * (reads voice_status_t.last_result directly - run_notification_command()
- * blocks for the whole fetch+play+ack cycle) plus a STOP button, since
- * playback runs long enough (5-20s) to be worth interrupting - see
- * render_notification_overlay() below. */
-static lv_obj_t *notification_overlay;
-static lv_obj_t *notification_status_label;
 
 /* HOME page's animated listening ring - kept as a file-scope handle (not
  * just a local in status_deck_ui()) so voice_ui_timer_cb can recolor it via
@@ -928,42 +937,25 @@ static lv_obj_t *voice_widget;
  * its link caption. Filled by render_weather() and voice_ui_timer_cb. */
 static ui_home_t home_ui;
 
-/* Notification-playback volume control (small up/down buttons flanking a
- * numeric readout, to the right of the listening ring) - see
- * volume_up_button_cb/volume_down_button_cb below. */
-static lv_obj_t *volume_label;
+/* Notifications handled this boot, newest first, for the card stack's
+ * "earlier" cards: the device keeps no other history of them. PSRAM. */
+#define NOTIFY_HISTORY_LEN 4
+typedef struct {
+    ui_notify_outcome_t outcome;
+    uint32_t uptime_s;
+    char text[NOTIFICATION_TEXT_LEN];
+    char reason[48];
+    bool has_text;
+} notify_done_t;
+static notify_done_t *notify_history;
+static int notify_history_used;
+/* The message text the card stack and the playback overlay show (PSRAM). */
+static char *notify_front_text;
+static char *notify_playing_text;
 
-/* Project selector (VAN1/VAN2/GEN/NONE), to the left of the listening ring -
- * a scroller matching the volume control's own up/label/down shape (current
- * selection in the center, arrows above/below step through the four
- * options) rather than four separate buttons - see
- * project_up_button_cb/project_down_button_cb below. */
-static lv_obj_t *project_label;
-
-/* SENS page (Mission 15): three stacked trend charts - acceleration
- * (unchanged from Mission 06), temperature and humidity (new, see the
- * Environment Deck comment above). All three are LVGL-owned ring buffers:
- * point_count fixes each at its history length and UPDATE_MODE_SHIFT pushes
- * the oldest value out on every new one, same "bounded ring" pattern as
- * event_history[]. No numeric tick marks - LVGL 9's lv_chart dropped the v8
- * axis-tick-label API, and a companion lv_scale widget doesn't fit next to
- * a ~40px-tall chart at this display width - so each chart gets a one-line
- * caption above it instead, stating the unit and the fixed axis range.
- * Mission 19 adds a live numeric readout to the left of each chart
- * (*_value_label) - unlike the caption, this updates every acquisition
- * tick from the same snapshot already used to push the chart's next point,
- * in sensor_timer_cb/humiture_timer_cb. */
+/* SENS trends: the charts live in ui_sensors.c (LVGL-owned ring buffers),
+ * fed a point per acquisition. */
 #define SENSOR_HISTORY_LEN 100 /* ~10s of history at the 100ms acquisition cadence */
-static lv_obj_t *chart;
-static lv_chart_series_t *accel_series;
-static lv_obj_t *accel_value_label;
-
-static lv_obj_t *temp_chart;
-static lv_chart_series_t *temp_series;
-static lv_obj_t *temp_value_label;
-static lv_obj_t *humi_chart;
-static lv_chart_series_t *humi_series;
-static lv_obj_t *humi_value_label;
 
 /* ---- Device report (1.2.0) -------------------------------------------
  * Fills the parts of a report only this task owns - the Black Box ring and
@@ -1065,28 +1057,20 @@ static void diag_report_schedule(uint32_t uptime_s)
 
 /* ---- Rendering: UI reads app_state / event_history, never the reverse - */
 
-/* Renders the newest EVENT_DISPLAY_LINES of event_history - as of Mission
- * 15 that's all of EVENT_HISTORY_LEN, so this shows the recorder's full
- * retained history, not a truncated view of it. Builds with snprintf + a
- * clamped running offset rather than strcat, so it cannot overflow buf
- * regardless of how long a line's text gets. */
+/* LOG (UI suite): hands the whole ring to ui_log.c, which pages through it.
+ * The entries point into event_history, which only this task changes. */
 static void render_event_log(void)
 {
-    char buf[EVENT_DISPLAY_LINES * (EVENT_MSG_LEN + 8)];
-    size_t off = 0;
-    int shown = event_history_used < EVENT_DISPLAY_LINES ? event_history_used : EVENT_DISPLAY_LINES;
-    if (event_history == NULL) {
-        shown = 0;
+    if (ui == NULL || ui->log.list == NULL) {
+        return;   /* page not built yet (boot-time events) */
     }
-    for (int i = 0; i < shown && off < sizeof(buf); i++) {
-        int n = snprintf(buf + off, sizeof(buf) - off, "%s%3lus %s",
-                          i == 0 ? "" : "\n",
-                          (unsigned long)event_history[i].uptime_s, event_history[i].message);
-        if (n > 0) {
-            off += (size_t)n < sizeof(buf) - off ? (size_t)n : sizeof(buf) - off - 1;
-        }
+    int n = (event_history && log_entries) ? event_history_used : 0;
+    for (int i = 0; i < n; i++) {
+        log_entries[i].type = (int)event_history[i].type;
+        log_entries[i].uptime_s = event_history[i].uptime_s;
+        log_entries[i].message = event_history[i].message;
     }
-    lv_label_set_text(log_label, shown ? buf : "(no events yet)");
+    ui_log_show(&ui->log, log_entries, n, event_seq);
 }
 
 static void log_sensor_event(const char *text)
@@ -1094,87 +1078,43 @@ static void log_sensor_event(const char *text)
     log_event(EVT_SENSOR, text);
 }
 
-/* Renders only current truth (state, IP, attempt/retry count) - the "how
- * did we get here" story lives in the Black Box event log via
- * wifi_ui_timer_cb below, not duplicated here. Compact (right column of the
- * HOME page's top row, alongside telemetry_label on the left as of Mission
- * 15): full IP shortened to its last octet - the network prefix is implied
- * and this is evidence the device is on *some* address, not a substitute
- * for the Black Box/serial log if the exact IP ever matters. */
-/* SETTINGS is a passive page: everything on it is read from somewhere else,
- * so it only has to be re-read, never pushed to. Driven off the same 500ms
- * timer as the Wi-Fi row - nothing here changes faster than that, and the
- * page is hidden most of the time anyway. */
-static void render_settings_panel(void)
+/* SETTINGS (UI suite, ui_settings.c): everything on it is read from
+ * somewhere else, so it is only re-read - on the 500 ms Wi-Fi timer while it
+ * is on screen, and straight after one of its own keys. */
+static void refresh_settings_page(void)
 {
-    if (!settings_api_label) {
+    if (ui == NULL || page_set == NULL || ui->settings.vol_value == NULL) {
         return;
     }
-
+    wifi_mgr_status_t ws;
+    wifi_mgr_get_status(&ws);
     backend_health_status_t bh;
     backend_health_get_status(&bh);
-    char buf[48];
-    switch (bh.state) {
-    case BACKEND_HEALTH_OK:
-        snprintf(buf, sizeof(buf), "API %lums", (unsigned long)bh.latency_ms);
-        lv_obj_set_style_text_color(settings_api_label, lv_palette_main(LV_PALETTE_GREEN), 0);
-        break;
-    case BACKEND_HEALTH_DOWN:
-        snprintf(buf, sizeof(buf), "API DOWN");
-        lv_obj_set_style_text_color(settings_api_label, lv_palette_main(LV_PALETTE_RED), 0);
-        break;
-    case BACKEND_HEALTH_NO_NETWORK:
-        snprintf(buf, sizeof(buf), "API --");
-        lv_obj_set_style_text_color(settings_api_label, lv_palette_main(LV_PALETTE_GREY), 0);
-        break;
-    default:
-        snprintf(buf, sizeof(buf), "API ?");
-        lv_obj_set_style_text_color(settings_api_label, lv_palette_main(LV_PALETTE_GREY), 0);
-        break;
-    }
-    lv_label_set_text(settings_api_label, buf);
-
-    if (settings_repo_label) {
-        lv_label_set_text(settings_repo_label, backend_catalog_repo_label());
-    }
-}
-
-static void render_wifi_panel(void)
-{
-    wifi_mgr_status_t st;
-    wifi_mgr_get_status(&st);
-
-    /* 40, not 24: GCC's -Werror=format-truncation reasons from the
-     * declared size of wifi_mgr_status_t's ip_addr[16]/reason_text[20]
-     * fields, not their actual runtime contents (always short in
-     * practice), so it wants a buffer sized for their theoretical worst
-     * case. The on-screen text stays just as compact either way - this
-     * only changes how big the stack buffer is, not what gets rendered. */
-    char buf[40];
-    lv_color_t color = lv_palette_main(LV_PALETTE_GREY);
-    switch (st.state) {
-    case WIFI_MGR_ONLINE: {
-        const char *last_octet = strrchr(st.ip_addr, '.');
-        snprintf(buf, sizeof(buf), "WIFI: OK *%s", last_octet ? last_octet : st.ip_addr);
-        color = lv_palette_main(LV_PALETTE_GREEN);
-        break;
-    }
-    case WIFI_MGR_CONNECTING:
-        snprintf(buf, sizeof(buf), "WIFI: CONN #%lu", (unsigned long)st.attempt_count);
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    case WIFI_MGR_RETRY_WAIT:
-        snprintf(buf, sizeof(buf), "WIFI: %s %lus",
-                 st.reason_text[0] ? st.reason_text : "RETRY", (unsigned long)st.retry_remaining_s);
-        color = lv_palette_main(LV_PALETTE_RED);
-        break;
-    case WIFI_MGR_DISCONNECTED:
-    default:
-        snprintf(buf, sizeof(buf), "WIFI: OFF");
-        break;
-    }
-    lv_label_set_text(conn_label, buf);
-    lv_obj_set_style_text_color(conn_label, color, 0);
+    backend_health_stats_t bs;
+    backend_health_get_stats(&bs);
+    const char *octet = strrchr(ws.ip_addr, '.');
+    ui_settings_view_t v = {
+        .uptime_s = (uint32_t)(esp_timer_get_time() / 1000000ULL),
+        .wifi = ws.state == WIFI_MGR_ONLINE       ? UI_DIAG_WIFI_ONLINE
+              : ws.state == WIFI_MGR_CONNECTING   ? UI_DIAG_WIFI_JOINING
+              : ws.state == WIFI_MGR_RETRY_WAIT   ? UI_DIAG_WIFI_RETRY
+                                                  : UI_DIAG_WIFI_OFF,
+        .ip_octet = octet ? octet : ws.ip_addr,
+        .wifi_attempts = ws.attempt_count,
+        .wifi_reason = ws.reason_text,
+        .wifi_retry_s = ws.retry_remaining_s,
+        .api = bh.state == BACKEND_HEALTH_OK         ? UI_DIAG_API_OK
+             : bh.state == BACKEND_HEALTH_DOWN       ? UI_DIAG_API_DOWN
+             : bh.state == BACKEND_HEALTH_NO_NETWORK ? UI_DIAG_API_NO_NET
+                                                     : UI_DIAG_API_UNKNOWN,
+        .api_latency_ms = bh.latency_ms,
+        .api_ever_ok = bs.ever_ok,
+        .api_secs_since_ok = bs.secs_since_ok,
+        .volume = audio_playback_get_volume(),
+        .repo = backend_catalog_repo_label(),
+        .repo_count = backend_catalog_repo_count(),
+    };
+    ui_settings_apply(&ui->settings, &v);
 }
 
 /* LVGL-task drain of wifi_pending, populated by wifi_status_changed_cb on
@@ -1216,8 +1156,9 @@ static void wifi_ui_timer_cb(lv_timer_t *t)
     }
     report_try_pending();
 
-    render_wifi_panel();
-    render_settings_panel();
+    if (page_set != NULL && !lv_obj_has_flag(page_set, LV_OBJ_FLAG_HIDDEN)) {
+        refresh_settings_page();
+    }
 }
 
 /* Mission 15: no more on-screen HS status label (dropped from HOME along
@@ -1418,195 +1359,159 @@ static void refresh_project_label(void);
 static void refresh_firmware_page(void);
 static void refresh_diag_page(void);
 
+/* Recording overlay (UI suite, ui_recording.c): voice_control says whether
+ * a capture is on and which command it is, audio_capture what the mic and
+ * uploader are doing, wifi_mgr / backend_health feed the rail. Shown and
+ * hidden exactly when it was before: while SEND/NOTE/GO is active. */
 static void render_recording_overlay(void)
 {
-    voice_status_t vst;
-    voice_control_get_status(&vst);
-
-    bool show = (vst.state == VOICE_STATE_SEND_ACTIVE || vst.state == VOICE_STATE_NOTE_ACTIVE ||
-                 vst.state == VOICE_STATE_GRAPH_ACTIVE);
-    if (show) {
-        lv_obj_clear_flag(recording_overlay, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(recording_overlay);
-    } else {
-        lv_obj_add_flag(recording_overlay, LV_OBJ_FLAG_HIDDEN);
+    if (ui == NULL) {
         return;
     }
-
-    /* vst.last_command is a VOICE_COMMAND_NAME_LEN (32-byte) field - GCC's
-     * -Wformat-truncation sizes buffers against that declared capacity, not
-     * the short "SEND"/"NOTE"/"GO"/"YES" values it actually ever holds, so
-     * these need enough room for the worst case the compiler can see, not
-     * just the worst case that can happen at runtime. */
-    audio_cap_status_t ast_early;
-    audio_capture_get_status(&ast_early);
-
-    char title_buf[48];
-    if (ast_early.uploader_behind) {
-        /* The title, not the counter: the counter is genuinely frozen while
-         * the mic waits for a free buffer, and a long explanation appended
-         * to it would run into the project selector at the left edge. */
-        snprintf(title_buf, sizeof(title_buf), "WAITING ON BACKEND");
-        lv_obj_set_style_text_color(recording_title, lv_palette_main(LV_PALETTE_ORANGE), 0);
-    } else {
-        snprintf(title_buf, sizeof(title_buf), "RECORDING %s", vst.last_command);
-        lv_obj_set_style_text_color(recording_title, lv_color_white(), 0);
+    voice_status_t vst;
+    voice_control_get_status(&vst);
+    bool show = (vst.state == VOICE_STATE_SEND_ACTIVE || vst.state == VOICE_STATE_NOTE_ACTIVE ||
+                 vst.state == VOICE_STATE_GRAPH_ACTIVE);
+    if (!show) {
+        ui_recording_hide(&ui->rec);
+        return;
     }
-    lv_label_set_text(recording_title, title_buf);
-
-    /* One scroller slot, two different lists depending on the command:
-     * NOTE picks an AI-OS project, GO picks a GitHub repository. SEND is
-     * deliberately a quick capture with no selector at all (issue #3).
-     *
-     * Sharing the widget rather than building a second one keeps the
-     * crowded overlay from getting worse, and the two are never wanted at
-     * the same time - a capture is one command or the other. */
-    if (vst.state == VOICE_STATE_NOTE_ACTIVE) {
-        lv_obj_clear_flag(recording_project_ctrl, LV_OBJ_FLAG_HIDDEN);
-        refresh_project_label();
-    } else {
-        lv_obj_add_flag(recording_project_ctrl, LV_OBJ_FLAG_HIDDEN);
-    }
-
-    if (vst.state == VOICE_STATE_GRAPH_ACTIVE) {
-        lv_obj_clear_flag(recording_repo_ctrl, LV_OBJ_FLAG_HIDDEN);
-        lv_label_set_text(recording_repo_label, backend_catalog_repo_label());
-    } else {
-        lv_obj_add_flag(recording_repo_ctrl, LV_OBJ_FLAG_HIDDEN);
-    }
-
-    /* SEND ends a recording early. On a capture that ends itself there is
-     * nothing to end - the button is clutter, and on GO it also sits exactly
-     * where the repository chooser belongs. Driven off the target duration
-     * rather than the command, so it follows whatever a command's duration
-     * is set to rather than needing to be kept in sync by hand. */
-    bool auto_stop = ast_early.duration_target_ms > 0 &&
-                     ast_early.duration_target_ms <= AUTO_STOP_MAX_MS;
-    if (auto_stop) {
-        lv_obj_add_flag(recording_send_btn, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_clear_flag(recording_send_btn, LV_OBJ_FLAG_HIDDEN);
-    }
-
-    if (auto_stop && ast_early.state == AUDIO_CAP_RECORDING) {
-        int32_t pct = (int32_t)((ast_early.elapsed_ms * 1000ULL) / ast_early.duration_target_ms);
-        lv_bar_set_value(recording_progress, pct > 1000 ? 1000 : pct, LV_ANIM_OFF);
-        lv_obj_clear_flag(recording_progress, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(recording_progress, LV_OBJ_FLAG_HIDDEN);
-    }
-
     audio_cap_status_t ast;
     audio_capture_get_status(&ast);
+    wifi_mgr_status_t ws;
+    wifi_mgr_get_status(&ws);
+    backend_health_status_t bh;
+    backend_health_get_status(&bh);
 
-    char status_buf[64]; /* see title_buf's comment above on why this must exceed 56 */
-    lv_color_t color = lv_palette_main(LV_PALETTE_BLUE);
-    bool recording = false;
+    ui_rec_phase_t phase;
     switch (ast.state) {
-    case AUDIO_CAP_ARMING:
-        snprintf(status_buf, sizeof(status_buf), "ARMING...");
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    case AUDIO_CAP_RECORDING: {
-        uint32_t s = ast.elapsed_ms / 1000;
-        /* Stall is shown in the title above, so this stays a clean timer.
-         * On a bounded capture the target comes with it - "00:07 of 15s"
-         * tells the operator how long they have left to talk, which on an
-         * auto-stopping capture is the thing they actually need to know. */
-        if (ast.duration_target_ms > 0 && ast.duration_target_ms <= AUTO_STOP_MAX_MS) {
-            snprintf(status_buf, sizeof(status_buf), "%02u:%02u of %lus",
-                     (unsigned)(s / 60), (unsigned)(s % 60),
-                     (unsigned long)(ast.duration_target_ms / 1000));
-        } else {
-            snprintf(status_buf, sizeof(status_buf), "%02u:%02u", (unsigned)(s / 60), (unsigned)(s % 60));
-        }
-        color = ast.uploader_behind ? lv_palette_main(LV_PALETTE_ORANGE)
-                                    : lv_palette_main(LV_PALETTE_RED);
-        recording = true;
-        break;
-    }
+    case AUDIO_CAP_ARMING:    phase = UI_REC_ARMING; break;
+    case AUDIO_CAP_RECORDING: phase = UI_REC_RECORDING; break;
     case AUDIO_CAP_COMPLETE:
-    case AUDIO_CAP_UPLOADING:
-        snprintf(status_buf, sizeof(status_buf), "UPLOADING...");
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    case AUDIO_CAP_READY:
-        snprintf(status_buf, sizeof(status_buf), "%s SENT", vst.last_command);
-        color = lv_palette_main(LV_PALETTE_GREEN);
-        break;
-    case AUDIO_CAP_CANCELLED:
-        snprintf(status_buf, sizeof(status_buf), "%s CANCELLED", vst.last_command);
-        color = lv_palette_main(LV_PALETTE_RED);
-        break;
-    case AUDIO_CAP_FAILED:
-        if (strcmp(ast.fail_reason, "ENDPOINT NOT SET") == 0) {
-            snprintf(status_buf, sizeof(status_buf), "%s READY - ENDPOINT NOT SET", vst.last_command);
-        } else {
-            snprintf(status_buf, sizeof(status_buf), "UPLOAD FAILED: %s", ast.fail_reason);
-        }
-        color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
+    case AUDIO_CAP_UPLOADING: phase = UI_REC_UPLOADING; break;
+    case AUDIO_CAP_READY:     phase = UI_REC_READY; break;
+    case AUDIO_CAP_CANCELLED: phase = UI_REC_CANCELLED; break;
+    case AUDIO_CAP_FAILED:    phase = UI_REC_FAILED; break;
     case AUDIO_CAP_IDLE:
     default:
-        if (vst.last_result[0] != '\0') {
-            /* The capture is over and the audio state is back to IDLE, but
-             * voice_control is still holding the overlay up to show what
-             * happened. This is the payoff moment - "GO ISSUE #13" - and it
-             * used to be swallowed by the "STARTING..." fallback below,
-             * leaving the outcome visible only in the serial log. */
-            snprintf(status_buf, sizeof(status_buf), "%s", vst.last_result);
-            bool bad = strstr(vst.last_result, "FAILED") != NULL ||
-                       strstr(vst.last_result, "CANCELLED") != NULL ||
-                       strstr(vst.last_result, "NOT ") != NULL ||
-                       strstr(vst.last_result, "NO ") != NULL;
-            color = bad ? lv_palette_main(LV_PALETTE_ORANGE)
-                        : lv_palette_main(LV_PALETTE_GREEN);
-        } else {
-            /* Genuinely still starting: the command is set but the audio
-             * worker has not picked the request up yet. */
-            snprintf(status_buf, sizeof(status_buf), "STARTING...");
-        }
+        /* Over, with voice_control holding the result up; or genuinely
+         * still starting (the worker has not picked the request up). */
+        phase = vst.last_result[0] != '\0' ? UI_REC_RESULT : UI_REC_STARTING;
         break;
     }
-    lv_label_set_text(recording_status_label, status_buf);
-    lv_obj_set_style_text_color(recording_status_label, color, 0);
-
-    if (recording) {
-        lv_obj_clear_flag(recording_dot, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(recording_dot, LV_OBJ_FLAG_HIDDEN);
-    }
+    ui_rec_view_t v = {
+        .command = vst.last_command,
+        .phase = phase,
+        .elapsed_ms = ast.elapsed_ms,
+        .target_ms = ast.duration_target_ms,
+        .uploader_behind = ast.uploader_behind,
+        .fail_reason = ast.fail_reason,
+        .result = vst.last_result,
+        .selector = vst.state == VOICE_STATE_NOTE_ACTIVE  ? backend_catalog_project_label()
+                  : vst.state == VOICE_STATE_GRAPH_ACTIVE ? backend_catalog_repo_label()
+                                                          : NULL,
+        .wifi = ws.state == WIFI_MGR_ONLINE ? UI_DIAG_WIFI_ONLINE
+              : ws.state == WIFI_MGR_CONNECTING ? UI_DIAG_WIFI_JOINING
+              : ws.state == WIFI_MGR_RETRY_WAIT ? UI_DIAG_WIFI_RETRY : UI_DIAG_WIFI_OFF,
+        .api = bh.state == BACKEND_HEALTH_OK ? UI_DIAG_API_OK
+             : bh.state == BACKEND_HEALTH_DOWN ? UI_DIAG_API_DOWN
+             : bh.state == BACKEND_HEALTH_NO_NETWORK ? UI_DIAG_API_NO_NET : UI_DIAG_API_UNKNOWN,
+    };
+    ui_recording_apply(&ui->rec, &v);
 }
 
 /* Notification-playback overlay - see the static globals' comment above.
  * Same current-truth-from-voice_status_t reasoning as render_recording_overlay:
  * run_notification_command() blocks for the whole fetch+play+ack cycle. */
+static void refresh_notify_page(void);
+
+/* Records one finished playback for the card stack's "earlier" cards. */
+static void notify_history_push(ui_notify_outcome_t outcome, const char *text, const char *reason)
+{
+    if (notify_history == NULL) {
+        return;
+    }
+    int keep = notify_history_used < NOTIFY_HISTORY_LEN - 1 ? notify_history_used : NOTIFY_HISTORY_LEN - 1;
+    for (int i = keep; i > 0; i--) {
+        notify_history[i] = notify_history[i - 1];
+    }
+    notify_done_t *d = &notify_history[0];
+    d->outcome = outcome;
+    d->uptime_s = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+    d->has_text = text && text[0];
+    strlcpy(d->text, d->has_text ? text : "", sizeof(d->text));
+    strlcpy(d->reason, reason ? reason : "", sizeof(d->reason));
+    if (notify_history_used < NOTIFY_HISTORY_LEN) {
+        notify_history_used++;
+    }
+}
+
+/* Notification playback overlay (UI suite, ui_notify.c). voice_control's
+ * last_result is the only progress signal (run_notification_command() blocks
+ * for the whole fetch+play+ack), mapped to FETCH -> PLAY -> ACK steps. The
+ * message text is the one notification_client loaded for the front message,
+ * kept from the moment playback starts (the front moves on after the ack). */
 static void render_notification_overlay(void)
 {
+    if (ui == NULL) {
+        return;
+    }
+    static bool active, recorded;
+    char *text = notify_playing_text;
+    if (text == NULL) {
+        return;
+    }
     voice_status_t vst;
     voice_control_get_status(&vst);
 
     if (vst.state != VOICE_STATE_NOTIFICATION_ACTIVE) {
-        lv_obj_add_flag(notification_overlay, LV_OBJ_FLAG_HIDDEN);
+        active = false;
+        ui_notify_overlay_hide(&ui->notif);
         return;
     }
-    lv_obj_clear_flag(notification_overlay, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(notification_overlay);
-
-    lv_color_t color = lv_palette_main(LV_PALETTE_ORANGE);
-    if (strcmp(vst.last_result, "NOTIFICATION DELIVERED") == 0) {
-        color = lv_palette_main(LV_PALETTE_GREEN);
-    } else if (strcmp(vst.last_result, "NOTIFICATION FETCHING") == 0 ||
-               strcmp(vst.last_result, "FETCHING") == 0 ||
-               strcmp(vst.last_result, "PLAYING") == 0) {
-        color = lv_palette_main(LV_PALETTE_BLUE);
-    } else if (strncmp(vst.last_result, "NOTIFICATION FETCH FAILED", 26) == 0 ||
-               strcmp(vst.last_result, "NOTIFICATION PLAYBACK STOPPED") == 0 ||
-               strcmp(vst.last_result, "NOTIFICATION PLAYED - ACK FAILED") == 0) {
-        color = lv_palette_main(LV_PALETTE_RED);
+    notification_status_t nst;
+    notification_client_get_status(&nst);
+    if (!active) {
+        active = true;
+        recorded = false;
+        bool same = strcmp(nst.notification_id, vst.active_request_id) == 0 && nst.text_state == 1;
+        if (same) {
+            notification_client_get_text(text, NOTIFICATION_TEXT_LEN);
+        } else {
+            text[0] = '\0';
+        }
     }
-    lv_label_set_text(notification_status_label, vst.last_result);
-    lv_obj_set_style_text_color(notification_status_label, color, 0);
+
+    const char *r = vst.last_result;
+    ui_notify_pb_view_t v = { .text = text[0] ? text : NULL, .remaining = nst.pending ? nst.count : 0 };
+    bool done = true;
+    if (strcmp(r, "FETCHING") == 0 || strcmp(r, "NOTIFICATION FETCHING") == 0) {
+        v.phase = UI_NOTIFY_PB_FETCHING;
+        done = false;
+    } else if (strcmp(r, "PLAYING") == 0) {
+        v.phase = UI_NOTIFY_PB_PLAYING;
+        done = false;
+    } else if (strcmp(r, "NOTIFICATION DELIVERED") == 0) {
+        v.phase = UI_NOTIFY_PB_DONE;
+        v.outcome = UI_NOTIFY_DELIVERED;
+    } else if (strcmp(r, "NOTIFICATION PLAYED - ACK FAILED") == 0) {
+        v.phase = UI_NOTIFY_PB_DONE;
+        v.outcome = UI_NOTIFY_ACK_FAILED;
+    } else if (strcmp(r, "NOTIFICATION PLAYBACK STOPPED") == 0) {
+        v.phase = UI_NOTIFY_PB_DONE;
+        v.outcome = UI_NOTIFY_STOPPED;
+    } else {
+        /* "NOTIFICATION FETCH FAILED: <reason>" and anything unexpected */
+        v.phase = UI_NOTIFY_PB_DONE;
+        v.outcome = UI_NOTIFY_FETCH_FAILED;
+        v.reason = r;
+    }
+    if (done && !recorded) {
+        recorded = true;
+        notify_history_push(v.outcome, text, v.outcome == UI_NOTIFY_FETCH_FAILED ? r : NULL);
+        refresh_notify_page();
+    }
+    ui_notify_overlay_apply(&ui->notif, &v);
 }
 
 /* LVGL-task drain of voice_pending, populated by voice_status_changed_cb on
@@ -1643,7 +1548,7 @@ static void voice_ui_timer_cb(lv_timer_t *t)
 
     /* Backend reachability, shown through the widget rather than another
      * status row - see voice_listening_widget_set_link(). Wi-Fi state is
-     * rendered separately by render_wifi_panel(); this is deliberately a
+     * shown separately on SETTINGS and DIAGNOSTICS; this is deliberately a
      * different signal, because the two fail independently and "router is
      * fine, uvicorn is not running" was previously indistinguishable from
      * a healthy console. Another cheap struct read, not a network call:
@@ -1747,27 +1652,20 @@ static void report_button_cb(lv_event_t *e)
  * coarse enough that a single tap is felt, fine enough that the full 0-100
  * range takes a reasonable number of taps; a fixed choice, not a
  * measured/tested one, same as PLAYBACK_VOLUME_DEFAULT itself
- * (audio_playback.c). Refreshes volume_label immediately so the readout
+ * (audio_playback.c). Refreshes SETTINGS immediately so the readout
  * never lags behind what audio_playback_get_volume() would report. */
 #define VOLUME_STEP 10
-
-static void refresh_volume_label(void)
-{
-    if (volume_label) {   /* lives on SETTINGS now, not HOME */
-        lv_label_set_text_fmt(volume_label, "%d", audio_playback_get_volume());
-    }
-}
 
 static void volume_up_button_cb(lv_event_t *e)
 {
     audio_playback_set_volume(audio_playback_get_volume() + VOLUME_STEP);
-    refresh_volume_label();
+    refresh_settings_page();
 }
 
 static void volume_down_button_cb(lv_event_t *e)
 {
     audio_playback_set_volume(audio_playback_get_volume() - VOLUME_STEP);
-    refresh_volume_label();
+    refresh_settings_page();
 }
 
 /* Project selector (Mission 20 side control), now driven by the catalog the
@@ -1782,12 +1680,6 @@ static void volume_down_button_cb(lv_event_t *e)
 static void refresh_project_label(void)
 {
     const char *text = backend_catalog_project_label();
-    if (project_label) {
-        lv_label_set_text(project_label, text);
-    }
-    if (recording_project_label) {
-        lv_label_set_text(recording_project_label, text);
-    }
     if (projects_page_label) {
         lv_label_set_text(projects_page_label, text);
     }
@@ -1803,13 +1695,15 @@ static void refresh_project_label(void)
 static void recording_repo_next_cb(lv_event_t *e)
 {
     backend_catalog_repo_next();
-    lv_label_set_text(recording_repo_label, backend_catalog_repo_label());
+    refresh_settings_page();
+    render_recording_overlay();
 }
 
 static void recording_repo_prev_cb(lv_event_t *e)
 {
     backend_catalog_repo_prev();
-    lv_label_set_text(recording_repo_label, backend_catalog_repo_label());
+    refresh_settings_page();
+    render_recording_overlay();
 }
 
 static void project_up_button_cb(lv_event_t *e)
@@ -1824,6 +1718,32 @@ static void project_down_button_cb(lv_event_t *e)
     (void)e;
     backend_catalog_project_prev();
     refresh_project_label();
+}
+
+/* The recording overlay's one chooser: the project during a NOTE, the
+ * repository during a GO (they were two overlapping widgets before). */
+static void rec_sel_prev_cb(lv_event_t *e)
+{
+    voice_status_t vst;
+    voice_control_get_status(&vst);
+    if (vst.state == VOICE_STATE_GRAPH_ACTIVE) {
+        recording_repo_prev_cb(e);
+    } else {
+        project_down_button_cb(e);
+        render_recording_overlay();
+    }
+}
+
+static void rec_sel_next_cb(lv_event_t *e)
+{
+    voice_status_t vst;
+    voice_control_get_status(&vst);
+    if (vst.state == VOICE_STATE_GRAPH_ACTIVE) {
+        recording_repo_next_cb(e);
+    } else {
+        project_up_button_cb(e);
+        render_recording_overlay();
+    }
 }
 
 /* SEND control. Ships the last ACCEL_SAMPLE_COUNT accelerometer readings
@@ -1861,11 +1781,12 @@ static void set_active_page(app_page_t page)
 {
     lv_obj_t *pages[APP_PAGE_COUNT] = {
         page_home, page_sens, page_log, page_set, page_projects, page_firmware, page_menu, page_diag,
+        page_more, page_notify,
     };
     /* 1.2.1: which page was on screen, for the crash breadcrumb. Same
      * order as app_page_t. */
     static const char *const page_names[APP_PAGE_COUNT] = {
-        "HOME", "SENS", "LOG", "SET", "PROJECTS", "FIRMWARE", "MENU", "DIAG",
+        "HOME", "SENS", "LOG", "SET", "PROJECTS", "FIRMWARE", "MENU", "DIAG", "MORE", "NOTIFY",
     };
     diag_set_page(page_names[page]);
     for (int i = 0; i < APP_PAGE_COUNT; i++) {
@@ -1958,6 +1879,113 @@ static void diag_nav_button_cb(lv_event_t *e)
     set_active_page(APP_PAGE_DIAG);
 }
 
+static void more_nav_button_cb(lv_event_t *e)
+{
+    (void)e;
+    set_active_page(APP_PAGE_MORE);
+}
+
+static void notify_nav_button_cb(lv_event_t *e)
+{
+    (void)e;
+    refresh_notify_page();
+    set_active_page(APP_PAGE_NOTIFY);
+}
+
+/* PLAY on the front card: the same fetch/play/ack a spoken YES runs. */
+static void notify_play_cb(lv_event_t *e)
+{
+    (void)e;
+    voice_control_play_notification();
+}
+
+/* ---- Experiments (UI suite): built full-screen on open, deleted on close,
+ * so they cost nothing while unused. Each returns to MORE. ---------------- */
+
+/* SURVEY: sample questions; "saved" means kept on this device - one serial
+ * log line per response and a Black Box line. Nothing is sent anywhere. */
+static uint32_t survey_responses;
+
+static bool survey_submit(const int *a, uint32_t *no, void *ctx)
+{
+    (void)ctx;
+    *no = ++survey_responses;
+    ESP_LOGI(TAG, "SURVEY,%lu,%d,%d,%d (sample questions; kept on device only)", (unsigned long)*no, a[0], a[1],
+             a[2]);
+    char msg[EVENT_MSG_LEN];
+    snprintf(msg, sizeof(msg), "SURVEY RESPONSE #%lu", (unsigned long)*no);
+    log_event(EVT_SYSTEM, msg);
+    return true;
+}
+
+static void experiment_closed(void *unused)
+{
+    (void)unused;
+    set_active_page(APP_PAGE_MORE);
+}
+
+static void survey_exit(void *ctx)
+{
+    (void)ctx;
+    ui_survey_close();
+    experiment_closed(NULL);
+}
+
+static const ui_survey_config_t survey_cfg = {
+    .questions = ui_survey_sample_questions,
+    .qr_url = "https://example.com/feedback",        /* SAMPLE until the real link is decided */
+    .qr_caption = "Sample link:\nexample.com",
+    .saved_note = "Saved on this device only (sample mode).",
+    .submit = survey_submit,
+    .exit = survey_exit,
+    .idle_reset_s = 90,
+    .thanks_reset_s = 30,
+};
+
+static void survey_open_cb(lv_event_t *e)
+{
+    (void)e;
+    ui_survey_open(app_screen, &survey_cfg);
+}
+
+/* MUSIC: simulated - the mock answers, nothing reaches a laptop. */
+static ui_music_mock_t music_mock;
+
+static void music_exit(void *ctx)
+{
+    (void)ctx;
+    ui_music_mock_stop(&music_mock);
+    ui_music_close();
+    experiment_closed(NULL);
+}
+
+static void music_open_cb(lv_event_t *e)
+{
+    (void)e;
+    ui_music_mock_init(&music_mock);
+    ui_music_open(app_screen, &music_mock.view, ui_music_mock_command, music_exit, &music_mock);
+}
+
+/* FACE: the companion eyes. */
+static void face_exit(void *ctx)
+{
+    (void)ctx;
+    ui_companion_close();
+    experiment_closed(NULL);
+}
+
+static void face_open_cb(lv_event_t *e)
+{
+    (void)e;
+    static const ui_companion_config_t cfg = {
+        .style = UI_COMPANION_STYLE_ROBO,
+        .mood = UI_COMPANION_MOOD_NEUTRAL,
+        .doze_s = 60,
+        .exit = face_exit,
+    };
+    ui_companion_open(app_screen, &cfg);
+}
+
 /* Asks the updater to fetch CLAWBOX's manifest now rather than waiting for
  * the next poll. It does NOT force an install - the device still installs
  * only the version CLAWBOX has named as desired, so this button is "look
@@ -2033,10 +2061,11 @@ static void refresh_firmware_page(void)
         .backend_fallback = device_config_backend_on_fallback(),
         .slot = firmware_running_partition_label(),
         .pending_verify = firmware_is_pending_verify(),
-        .ota_state = ota_service_state_label(o.state),
+        .ota_state = (ui_fw_state_t)o.state,   /* ui_fw_state_t mirrors ota_state_t */
         .ota_message = o.message,
-        .ota_downloading = (o.state == OTA_STATE_DOWNLOADING),
+        .desired_version = o.desired_version,
         .ota_progress_pct = o.progress_pct,
+        .rolled_back = o.rolled_back,
     };
     ui_firmware_page_apply(&fw_page, &view);
 }
@@ -2101,6 +2130,42 @@ static void refresh_diag_page(void)
     v.env = ui_diag_freshness(humiture_probed, humiture_present, env_last, now, HUMITURE_STALE_THRESHOLD_US,
                               &v.env_age_ms);
     ui_diagnostics_apply(&diag_page, &v);
+}
+
+/* MESSAGES card stack: notification_client's snapshot (count, front id and
+ * its text) plus this boot's outcomes. */
+static void refresh_notify_page(void)
+{
+    if (ui == NULL || ui->notify.card == NULL) {
+        return;
+    }
+    static ui_notify_done_t done[NOTIFY_HISTORY_LEN];
+    notification_status_t nst;
+    notification_client_get_status(&nst);
+    if (notify_front_text) {
+        notification_client_get_text(notify_front_text, NOTIFICATION_TEXT_LEN);
+    }
+    backend_health_status_t bh;
+    backend_health_get_status(&bh);
+    for (int i = 0; i < notify_history_used && notify_history; i++) {
+        done[i].outcome = notify_history[i].outcome;
+        done[i].uptime_s = notify_history[i].uptime_s;
+        done[i].text = notify_history[i].has_text ? notify_history[i].text : NULL;
+        done[i].reason = notify_history[i].reason[0] ? notify_history[i].reason : NULL;
+    }
+    ui_notify_view_t v = {
+        .link = !nst.polled ? UI_NOTIFY_LINK_UNKNOWN
+              : bh.state == BACKEND_HEALTH_OK ? UI_NOTIFY_LINK_OK
+              : bh.state == BACKEND_HEALTH_NO_NETWORK ? UI_NOTIFY_LINK_NO_NET
+              : bh.state == BACKEND_HEALTH_DOWN ? UI_NOTIFY_LINK_DOWN : UI_NOTIFY_LINK_UNKNOWN,
+        .pending = nst.pending ? nst.count : 0,
+        .front_text = nst.text_state == 1 && notify_front_text && notify_front_text[0] ? notify_front_text : NULL,
+        .front_text_failed = nst.text_state == 2,
+        .done = done,
+        .done_count = notify_history_used,
+        .now_s = (uint32_t)(esp_timer_get_time() / 1000000ULL),
+    };
+    ui_notify_apply(&ui->notify, &v);
 }
 
 /* ---- Weather (1.3.0): weather_client snapshot -> HOME ----------------
@@ -2169,19 +2234,57 @@ static void telemetry_timer_cb(lv_timer_t *t)
     }
 
     uint32_t uptime_s = (uint32_t)(esp_timer_get_time() / 1000000ULL);
-
-    char buf[16];
-    snprintf(buf, sizeof(buf), "UP %02u:%02u", (unsigned)(uptime_s / 60), (unsigned)(uptime_s % 60));
-    lv_label_set_text(telemetry_label, buf);
+    if (page_notify != NULL && !lv_obj_has_flag(page_notify, LV_OBJ_FLAG_HIDDEN)) {
+        refresh_notify_page();   /* "4 min ago" and the queue move on their own */
+    }
 
     diag_tick();
     diag_report_schedule(uptime_s);
 }
 
-/* ---- Sensor/chart: fast timer, matched to SENSOR_ACQUIRE_PERIOD_MS --- */
+/* ---- SENS (UI suite): dials from the same freshness rules as DIAGNOSTICS -
+ * Read on the LVGL task: the sensor timestamps are copied under their
+ * existing muxes, values were fixed-pointed when they arrived. */
+static int32_t sens_accel_x100, sens_temp_x10, sens_humi_pct;
+static bool sens_have_accel, sens_have_env;
+
+static void refresh_sens_page(void)
+{
+    if (ui == NULL || ui->sens.chart[0] == NULL) {
+        return;
+    }
+    portENTER_CRITICAL(&sensor_mux);
+    int64_t accel_last = sensor_last_good_us;
+    portEXIT_CRITICAL(&sensor_mux);
+    portENTER_CRITICAL(&humiture_mux);
+    int64_t env_last = humiture_last_good_us;
+    portEXIT_CRITICAL(&humiture_mux);
+    int64_t now = esp_timer_get_time();
+    ui_sensors_view_t v = { 0 };
+    v.r[UI_SENS_ACCEL].src = ui_diag_freshness(sensor_probed, sensor_present, accel_last, now,
+                                               SENSOR_STALE_THRESHOLD_US, &v.r[UI_SENS_ACCEL].age_ms);
+    v.r[UI_SENS_ACCEL].have_value = sens_have_accel;
+    v.r[UI_SENS_ACCEL].value = sens_accel_x100;
+    ui_diag_src_t env = ui_diag_freshness(humiture_probed, humiture_present, env_last, now,
+                                          HUMITURE_STALE_THRESHOLD_US, &v.r[UI_SENS_TEMP].age_ms);
+    v.r[UI_SENS_TEMP].src = v.r[UI_SENS_HUMI].src = env;
+    v.r[UI_SENS_HUMI].age_ms = v.r[UI_SENS_TEMP].age_ms;
+    v.r[UI_SENS_TEMP].have_value = v.r[UI_SENS_HUMI].have_value = sens_have_env;
+    v.r[UI_SENS_TEMP].value = sens_temp_x10;
+    v.r[UI_SENS_HUMI].value = sens_humi_pct;
+    ui_sensors_apply(&ui->sens, &v);
+}
+
+/* ---- Sensor: fast timer, matched to SENSOR_ACQUIRE_PERIOD_MS ---------- */
 
 static void sensor_timer_cb(lv_timer_t *t)
 {
+    /* The dials redraw at 5 Hz while SENS is on screen: fast enough to see
+     * a shake and to turn STALE within its 300 ms threshold's next tick. */
+    static int ticks;
+    if (page_sens != NULL && !lv_obj_has_flag(page_sens, LV_OBJ_FLAG_HIDDEN) && (++ticks & 1) == 0) {
+        refresh_sens_page();
+    }
     if (!sensor_present) {
         return;
     }
@@ -2194,16 +2297,12 @@ static void sensor_timer_cb(lv_timer_t *t)
     portEXIT_CRITICAL(&sensor_mux);
 
     if (got_sample) {
-        lv_chart_set_next_value(chart, accel_series, (int32_t)lroundf(accel_snapshot * 100));
+        sens_accel_x100 = ui_sens_fixed(UI_SENS_ACCEL, accel_snapshot);
+        sens_have_accel = true;
+        if (ui) {
+            ui_sensors_push(&ui->sens, UI_SENS_ACCEL, sens_accel_x100);
+        }
         accel_samples_push(accel_snapshot);
-        /* Mission 19: live numeric readout, left of the chart - updated
-         * whenever a fresh sample lands, same as the chart point next to
-         * it; left showing the last real value (not blanked) while stale,
-         * same "last confirmed evidence" convention render_wifi_panel etc.
-         * use for their own current-truth reads. */
-        char accel_buf[8];
-        snprintf(accel_buf, sizeof(accel_buf), "%.2fg", (double)accel_snapshot);
-        lv_label_set_text(accel_value_label, accel_buf);
         if (sensor_status == SRC_UNKNOWN) {
             sensor_status = SRC_CURRENT;
             log_sensor_event("FIRST DATA");
@@ -2279,19 +2378,21 @@ static void humiture_timer_cb(lv_timer_t *t)
 
     if (got_temp) {
         /* AHT30 reports plain Celsius (see the Environment Deck comment) -
-         * converted to Fahrenheit here, once, and reused for both the
-         * chart point and the value label so they can never disagree. */
+         * converted to Fahrenheit here, once, for the dial and its trend. */
         float temp_f = temp_snapshot * 9.0f / 5.0f + 32.0f;
-        lv_chart_set_next_value(temp_chart, temp_series, (int32_t)lroundf(temp_f));
-        char temp_buf[12];
-        snprintf(temp_buf, sizeof(temp_buf), "%.1fF", (double)temp_f);
-        lv_label_set_text(temp_value_label, temp_buf);
+        sens_temp_x10 = ui_sens_fixed(UI_SENS_TEMP, temp_f);
+        if (ui) {
+            ui_sensors_push(&ui->sens, UI_SENS_TEMP, sens_temp_x10);
+        }
     }
     if (got_humi) {
-        lv_chart_set_next_value(humi_chart, humi_series, (int32_t)lroundf(humi_snapshot));
-        char humi_buf[8];
-        snprintf(humi_buf, sizeof(humi_buf), "%.0f%%", (double)humi_snapshot);
-        lv_label_set_text(humi_value_label, humi_buf);
+        sens_humi_pct = ui_sens_fixed(UI_SENS_HUMI, humi_snapshot);
+        if (ui) {
+            ui_sensors_push(&ui->sens, UI_SENS_HUMI, sens_humi_pct);
+        }
+    }
+    if (got_temp || got_humi) {
+        sens_have_env = true;
     }
 
     if (got_temp || got_humi) {
@@ -2352,6 +2453,10 @@ static void humiture_deck_init(void)
 void status_deck_ui(lv_obj_t *scr)
 {
     event_history_alloc();
+    ui = heap_caps_calloc(1, sizeof(*ui), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (ui == NULL) {
+        ui = heap_caps_calloc(1, sizeof(*ui), MALLOC_CAP_8BIT);   /* no PSRAM: keep working */
+    }
     blackbox_boot_update();
 
     /* Widgets don't exist yet: record only, render once they do. */
@@ -2409,6 +2514,12 @@ void status_deck_ui(lv_obj_t *scr)
     page_set = pages_init[APP_PAGE_SET];
     page_menu = pages_init[APP_PAGE_MENU];
     page_diag = pages_init[APP_PAGE_DIAG];
+    page_more = pages_init[APP_PAGE_MORE];
+    page_notify = pages_init[APP_PAGE_NOTIFY];
+    app_screen = scr;
+    notify_history = heap_caps_calloc(NOTIFY_HISTORY_LEN, sizeof(notify_done_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    notify_front_text = heap_caps_calloc(1, NOTIFICATION_TEXT_LEN, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    notify_playing_text = heap_caps_calloc(1, NOTIFICATION_TEXT_LEN, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
     /* 1.3.0 dark look: black behind everything (ui_theme.h). */
     lv_obj_set_style_bg_color(scr, UI_BG, 0);
@@ -2434,116 +2545,29 @@ void status_deck_ui(lv_obj_t *scr)
          * page itself carries the full title. */
         { "DIAG", diag_nav_button_cb },
     };
-    ui_menu_build(page_menu, menu_items, (int)(sizeof(menu_items) / sizeof(menu_items[0])));
+    static const ui_menu_item_t more_key = { "MORE " LV_SYMBOL_RIGHT, more_nav_button_cb };
+    ui_menu_build(page_menu, "MENU", menu_items, (int)(sizeof(menu_items) / sizeof(menu_items[0])), &more_key);
 
-    /* ---- SETTINGS: the things HOME used to carry -------------------- */
+    /* UI suite: the second page - the card stack and three experiments. */
+    static const ui_menu_item_t more_items[] = {
+        { "MESSAGES", notify_nav_button_cb },
+        { "MUSIC", music_open_cb },
+        { "FACE", face_open_cb },
+        { "SURVEY", survey_open_cb },
+    };
+    static const ui_menu_item_t menu_key = { LV_SYMBOL_LEFT " MENU", menu_button_cb };
+    ui_menu_build(page_more, "MORE", more_items, (int)(sizeof(more_items) / sizeof(more_items[0])), &menu_key);
 
-    ui_page_title(page_set, "SETTINGS");
+    static const ui_notify_actions_t notify_actions = { notify_play_cb };
+    ui_notify_build(&ui->notify, page_notify, &notify_actions);
 
-    /* Took over the nav slot TALK vacated. Everything here was previously
-     * competing with the microphone for space on HOME: uptime, Wi-Fi,
-     * volume, and the selector that used to show project names.
-     *
-     * The repository row is the one genuinely new thing. HOME's old +/-
-     * scroller showed the AI-OS project list (VAN1/VAN2/GEN) which was
-     * easy to mistake for the GitHub repositories - they are different
-     * lists for different commands. This one shows the actual repositories,
-     * fetched from the backend (backend_catalog.h), so what is on screen is
-     * what a GO capture would file against. The project selector now lives
-     * only on the NOTE recording screen, where it is actually used. */
-    ui_page_panel(page_set, 58, 40);    /* status:  uptime / API / Wi-Fi */
-    ui_page_panel(page_set, 104, 48);    /* volume */
-    ui_page_panel(page_set, 158, 48);   /* repository GO files to */
+    /* ---- SETTINGS (UI suite, ui_settings.c): Hazard Industrial blocks ---- */
 
-    telemetry_label = lv_label_create(page_set);
-    lv_obj_align(telemetry_label, LV_ALIGN_TOP_LEFT, 14, 70);
-
-    conn_label = lv_label_create(page_set);
-    lv_obj_align(conn_label, LV_ALIGN_TOP_RIGHT, -14, 70);
-    lv_label_set_text(conn_label, "WIFI: OFF");
-
-    /* The widget on HOME carries backend reachability as motion and colour,
-     * which is right for a glance across a room but says nothing about
-     * latency. Spelling it out here is what a settings page is for. */
-    settings_api_label = lv_label_create(page_set);
-    lv_obj_align(settings_api_label, LV_ALIGN_TOP_MID, 0, 70);
-    lv_label_set_text(settings_api_label, "API: ?");
-
-    lv_obj_t *vol_caption = lv_label_create(page_set);
-    lv_label_set_text(vol_caption, "VOLUME");
-    lv_obj_align(vol_caption, LV_ALIGN_TOP_LEFT, 14, 120);
-
-    lv_obj_t *vol_down = lv_btn_create(page_set);
-    lv_obj_set_size(vol_down, 46, 34);
-    lv_obj_align(vol_down, LV_ALIGN_TOP_LEFT, 130, 111);
-    lv_obj_add_event_cb(vol_down, volume_down_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *vol_down_label = lv_label_create(vol_down);
-    lv_label_set_text(vol_down_label, "-");
-    lv_obj_set_style_text_font(vol_down_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(vol_down_label);
-
-    volume_label = lv_label_create(page_set);
-    lv_obj_set_style_text_font(volume_label, &lv_font_montserrat_20, 0);
-    lv_obj_align(volume_label, LV_ALIGN_TOP_LEFT, 192, 114);
-
-    lv_obj_t *vol_up = lv_btn_create(page_set);
-    lv_obj_set_size(vol_up, 46, 34);
-    lv_obj_align(vol_up, LV_ALIGN_TOP_RIGHT, -14, 111);
-    lv_obj_add_event_cb(vol_up, volume_up_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *vol_up_label = lv_label_create(vol_up);
-    lv_label_set_text(vol_up_label, "+");
-    lv_obj_set_style_text_font(vol_up_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(vol_up_label);
-
-    lv_obj_t *repo_caption = lv_label_create(page_set);
-    lv_label_set_text(repo_caption, "GO FILES TO");
-    lv_obj_align(repo_caption, LV_ALIGN_TOP_LEFT, 14, 174);
-
-    lv_obj_t *set_repo_prev = lv_btn_create(page_set);
-    lv_obj_set_size(set_repo_prev, 46, 34);
-    lv_obj_align(set_repo_prev, LV_ALIGN_TOP_LEFT, 130, 165);
-    lv_obj_add_event_cb(set_repo_prev, recording_repo_prev_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *set_repo_prev_label = lv_label_create(set_repo_prev);
-    lv_label_set_text(set_repo_prev_label, "<");
-    lv_obj_set_style_text_font(set_repo_prev_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(set_repo_prev_label);
-
-    settings_repo_label = lv_label_create(page_set);
-    lv_obj_align(settings_repo_label, LV_ALIGN_TOP_LEFT, 186, 174);
-    lv_label_set_text(settings_repo_label, "...");
-
-    lv_obj_t *set_repo_next = lv_btn_create(page_set);
-    lv_obj_set_size(set_repo_next, 46, 34);
-    lv_obj_align(set_repo_next, LV_ALIGN_TOP_RIGHT, -14, 165);
-    lv_obj_add_event_cb(set_repo_next, recording_repo_next_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *set_repo_next_label = lv_label_create(set_repo_next);
-    lv_label_set_text(set_repo_next_label, ">");
-    lv_obj_set_style_text_font(set_repo_next_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(set_repo_next_label);
-
-    /* Sits below the three panels (which end at y=206) rather than replacing
-     * any of them. SETTINGS is where you go to look at how the workstation is
-     * configured, and which projects it knows about is exactly that. */
-    lv_obj_t *projects_btn = lv_btn_create(page_set);
-    lv_obj_set_size(projects_btn, 148, 28);
-    lv_obj_align(projects_btn, LV_ALIGN_TOP_LEFT, 8, 208);
-    lv_obj_add_event_cb(projects_btn, projects_nav_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *projects_btn_label = lv_label_create(projects_btn);
-    lv_label_set_text(projects_btn_label, "PROJECTS >");
-    lv_obj_center(projects_btn_label);
-
-    /* Shares the row PROJECTS used to have to itself. Firmware identity
-     * belongs next to it for the same reason: both answer "what is this
-     * workstation set up to do right now", which is what SETTINGS is for. */
-    lv_obj_t *firmware_btn = lv_btn_create(page_set);
-    lv_obj_set_size(firmware_btn, 148, 28);
-    lv_obj_align(firmware_btn, LV_ALIGN_TOP_RIGHT, -8, 208);
-    lv_obj_add_event_cb(firmware_btn, firmware_nav_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *firmware_btn_label = lv_label_create(firmware_btn);
-    lv_label_set_text(firmware_btn_label, "FIRMWARE >");
-    lv_obj_center(firmware_btn_label);
-
-    refresh_volume_label();
+    static const ui_settings_actions_t settings_actions = {
+        volume_down_button_cb, volume_up_button_cb, recording_repo_prev_cb, recording_repo_next_cb,
+        projects_nav_button_cb, firmware_nav_button_cb,
+    };
+    ui_settings_build(&ui->settings, page_set, &settings_actions);
 
     /* ---- PROJECTS: browse the AI-OS list, and read the cues ----------- */
 
@@ -2606,163 +2630,35 @@ void status_deck_ui(lv_obj_t *scr)
 
     refresh_firmware_page();
 
-    /* ---- SENS: three stacked trend charts, each a third of the page ----- */
+    /* ---- SENS (UI suite, ui_sensors.c): three dials with their trends ---- */
 
-    ui_page_title(page_sens, "SENSORS");
-
-    ui_page_panel(page_sens, 58, 150);
-
-    /* Band layout: 144 / 3 = 48px each, inside y=48..192 to clear the
-     * corner nav buttons. Same
-     * for all three - ACCEL (y 0-60), TEMP (y 60-120), HUMIDITY (y
-     * 120-180). Caption stays centered above the row (quantity, unit, fixed
-     * axis range - see the chart globals' comment for why a caption
-     * substitutes for real tick labels); below it, a live numeric reading
-     * (48px, left) sits beside the chart (250px, right) instead of the
-     * chart alone spanning the full 304px width. */
-    lv_obj_t *accel_caption = lv_label_create(page_sens);
-    lv_label_set_text(accel_caption, "ACCEL (G)  0.50 - 1.50");
-    lv_obj_align(accel_caption, LV_ALIGN_TOP_MID, 0, 64);
-
-    accel_value_label = lv_label_create(page_sens);
-    lv_label_set_text(accel_value_label, "--");
-    lv_obj_align(accel_value_label, LV_ALIGN_TOP_LEFT, 8, 90);
-
-    /* Acceleration-magnitude trend line, zoomed to 0.50-1.50g (was a fixed
-     * 0.00-4.00g). At rest the board reads ~1.00g regardless of
-     * orientation (gravity) and real movement/shaking is usually a modest
-     * excursion around that, not a swing across several g - the old 4g-
-     * wide range buried that movement in a few flat-looking pixels. This
-     * range is still fixed/static, not autoscaling, so a genuinely hard
-     * shake can still peg or clip at an edge - a known, accepted limit of
-     * a static range, same tradeoff as before, just recentered on the
-     * value that actually matters. */
-    chart = lv_chart_create(page_sens);
-    lv_obj_set_size(chart, 250, 32);
-    lv_obj_align(chart, LV_ALIGN_TOP_LEFT, 62, 78);
-    lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
-    lv_chart_set_point_count(chart, SENSOR_HISTORY_LEN);
-    lv_chart_set_update_mode(chart, LV_CHART_UPDATE_MODE_SHIFT);
-    lv_chart_set_axis_range(chart, LV_CHART_AXIS_PRIMARY_Y, 50, 150);
-    accel_series = lv_chart_add_series(chart, lv_palette_main(LV_PALETTE_BLUE), LV_CHART_AXIS_PRIMARY_Y);
-
-    /* Mission 19: Fahrenheit, not Celsius - range narrowed to 60-90F (a
-     * realistic indoor band) from the old 0-50C, same "zoom to where the
-     * real signal lives" reasoning as ACCEL's 0.50-1.50g range above.
-     * humiture_timer_cb converts the AHT30's plain-Celsius reading (see the
-     * Environment Deck comment on sensor_data_t's "dCelsius" field being
-     * mislabeled) to F before pushing it here or into temp_value_label. */
-    lv_obj_t *temp_caption = lv_label_create(page_sens);
-    lv_label_set_text(temp_caption, "TEMP (F)  60 - 90");
-    lv_obj_align(temp_caption, LV_ALIGN_TOP_MID, 0, 111);
-
-    temp_value_label = lv_label_create(page_sens);
-    lv_label_set_text(temp_value_label, "--");
-    lv_obj_align(temp_value_label, LV_ALIGN_TOP_LEFT, 8, 137);
-
-    temp_chart = lv_chart_create(page_sens);
-    lv_obj_set_size(temp_chart, 250, 32);
-    lv_obj_align(temp_chart, LV_ALIGN_TOP_LEFT, 62, 125);
-    lv_chart_set_type(temp_chart, LV_CHART_TYPE_LINE);
-    lv_chart_set_point_count(temp_chart, HUMITURE_HISTORY_LEN);
-    lv_chart_set_update_mode(temp_chart, LV_CHART_UPDATE_MODE_SHIFT);
-    lv_chart_set_axis_range(temp_chart, LV_CHART_AXIS_PRIMARY_Y, 60, 90);
-    temp_series = lv_chart_add_series(temp_chart, lv_palette_main(LV_PALETTE_ORANGE), LV_CHART_AXIS_PRIMARY_Y);
-
-    lv_obj_t *humi_caption = lv_label_create(page_sens);
-    lv_label_set_text(humi_caption, "HUMIDITY (%)  0 - 100");
-    lv_obj_align(humi_caption, LV_ALIGN_TOP_MID, 0, 158);
-
-    humi_value_label = lv_label_create(page_sens);
-    lv_label_set_text(humi_value_label, "--");
-    lv_obj_align(humi_value_label, LV_ALIGN_TOP_LEFT, 8, 184);
-
-    humi_chart = lv_chart_create(page_sens);
-    lv_obj_set_size(humi_chart, 250, 32);
-    lv_obj_align(humi_chart, LV_ALIGN_TOP_LEFT, 62, 172);
-    lv_chart_set_type(humi_chart, LV_CHART_TYPE_LINE);
-    lv_chart_set_point_count(humi_chart, HUMITURE_HISTORY_LEN);
-    lv_chart_set_update_mode(humi_chart, LV_CHART_UPDATE_MODE_SHIFT);
-    lv_chart_set_axis_range(humi_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 100);
-    humi_series = lv_chart_add_series(humi_chart, lv_palette_main(LV_PALETTE_CYAN), LV_CHART_AXIS_PRIMARY_Y);
+    ui_sensors_build(&ui->sens, page_sens);
 
     /* ---- LOG: Black Box panel (as tall as the page allows) + NET/SND/CLR */
 
-    ui_page_title(page_log, "LOG");
+    /* ---- LOG (UI suite, ui_log.c): the whole Black Box, a page at a time -- */
 
-    /* No "EVENT LOG" title label inside the panel (Mission 05 had one) -
-     * the panel's content is self-evident without it. Shows all
-     * EVENT_DISPLAY_LINES == EVENT_HISTORY_LEN records the black box
-     * retains (Mission 15 grew this panel to fill nearly the whole page,
-     * leaving just enough room below for the button row - see
-     * EVENT_DISPLAY_LINES's comment). */
-    lv_obj_t *log_panel = lv_obj_create(page_log);
-    lv_obj_set_size(log_panel, 304, 84);
-    lv_obj_align(log_panel, LV_ALIGN_TOP_MID, 0, 58);
-    ui_panel_style(log_panel);
-    lv_obj_set_style_pad_all(log_panel, 6, 0);
-
-    log_label = lv_label_create(log_panel);
-    lv_obj_align(log_label, LV_ALIGN_TOP_LEFT, 0, 0);
-
-    /* NET/SND/CLR (Mission 15): NET and SND moved here from HOME, next to
-     * CLR - same button callbacks the old shared bottom row used. Mission
-     * 19 widens this row to the full 304px content width and left-packs
-     * the buttons (FLEX_ALIGN_START, was SPACE_EVENLY, and each button
-     * narrowed 68px -> 54px) to leave room on the right for the FPS/CPU
-     * label reparented in below. 1.2.0: SND (the dormant handshake) became
-     * RPT, the device report - same slot, same size. */
-    lv_obj_t *log_btn_row = lv_obj_create(page_log);
-    lv_obj_set_size(log_btn_row, 304, 44);
-    lv_obj_align(log_btn_row, LV_ALIGN_TOP_MID, 0, 154);
-    lv_obj_set_style_pad_all(log_btn_row, 2, 0);
-    lv_obj_set_style_pad_column(log_btn_row, 5, 0);
-    lv_obj_clear_flag(log_btn_row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(log_btn_row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(log_btn_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    static const struct {
-        const char *label;
-        lv_event_cb_t cb;
-    } log_buttons[] = {
-        { "NET", net_button_cb },
-        { "RPT", report_button_cb },
-        { "CLR", clear_log_button_cb },
-    };
-    for (size_t i = 0; i < sizeof(log_buttons) / sizeof(log_buttons[0]); i++) {
-        lv_obj_t *btn = lv_btn_create(log_btn_row);
-        lv_obj_set_size(btn, 54, 44);
-        lv_obj_add_event_cb(btn, log_buttons[i].cb, LV_EVENT_CLICKED, NULL);
+    static const ui_log_actions_t log_actions = { net_button_cb, report_button_cb, clear_log_button_cb };
+    ui_log_build(&ui->log, page_log, &log_actions);
 #if DIAG_TEST_CRASH
-        if (log_buttons[i].cb == report_button_cb) {
-            lv_obj_add_event_cb(btn, report_button_hold_cb, LV_EVENT_PRESSED, NULL);
-            lv_obj_add_event_cb(btn, report_button_hold_cb, LV_EVENT_PRESSING, NULL);
+    /* commissioning hook: RPT held 5 s (see report_button_hold_cb) */
+    for (uint32_t i = 0; i < lv_obj_get_child_count(page_log); i++) {
+        lv_obj_t *c = lv_obj_get_child(page_log, (int32_t)i);
+        if (lv_obj_get_event_count(c) && lv_obj_get_child_count(c) == 1 &&
+            strcmp(lv_label_get_text(lv_obj_get_child(c, 0)), "RPT") == 0) {
+            lv_obj_add_event_cb(c, report_button_hold_cb, LV_EVENT_PRESSED, NULL);
+            lv_obj_add_event_cb(c, report_button_hold_cb, LV_EVENT_PRESSING, NULL);
         }
+    }
 #endif
 
-        lv_obj_t *btn_label = lv_label_create(btn);
-        lv_label_set_text(btn_label, log_buttons[i].label);
-        lv_obj_center(btn_label);
-    }
-
-    /* Mission 19: reparent the built-in FPS/CPU label into this same row,
-     * as its 4th flex child, instead of leaving it in LVGL's own fixed
-     * bottom-right corner of the whole display (CONFIG_LV_PERF_MONITOR_
-     * ALIGN_BOTTOM_RIGHT) - which for LOG specifically landed in the nav
-     * bar's band below this page, not next to these buttons. Safe to do
-     * exactly once here: bsp_display_start() (called from main.c before
-     * status_deck_ui() runs) already triggered lv_display_create(), which
-     * unconditionally shows the performance monitor once at boot, so
-     * disp->perf_label already exists by this point - see the
-     * lv_display_private.h include above for why reaching into it is
-     * necessary and accepted. Reparenting a plain lv_obj_t label doesn't
-     * disturb the FPS/CPU auto-update observer bound to it in lv_sysmon.c
-     * (it tracks the label object itself, not its parent), so it keeps
-     * updating right where it now sits, and set_active_page()'s existing
-     * show/hide-on-page-switch calls keep working unchanged too. */
+    /* Mission 19's FPS/CPU readout, now parked in the LOG header's slot
+     * (ui_log.c) instead of the old button row. Same reasoning and the same
+     * private-struct access as before - see the lv_display_private.h include. */
     lv_display_t *disp = lv_display_get_default();
     if (disp != NULL && disp->perf_label != NULL) {
-        lv_obj_set_parent(disp->perf_label, log_btn_row);
+        lv_obj_set_parent(disp->perf_label, ui->log.perf_slot);
+        lv_obj_align(disp->perf_label, LV_ALIGN_RIGHT_MID, 0, 0);
     }
 
     /* ---- Nav bar: HOME/SENS/LOG/TALK, always on screen, own row on `scr`
@@ -2862,226 +2758,21 @@ void status_deck_ui(lv_obj_t *scr)
     lv_label_set_text(cmd_status_label, "");
     lv_obj_align(cmd_status_label, LV_ALIGN_BOTTOM_MID, 0, -8);
 
-    /* Shared SEND/NOTE recording overlay (Mission 13) - same full-screen
-     * style as cmd_overlay above, own content: a title naming which command
-     * is active, ID, a recording dot + elapsed timer (or ARMING/UPLOADING/
-     * result text - see render_recording_overlay()), and a real touchable
-     * STOP button. */
-    recording_overlay = lv_obj_create(scr);
-    lv_obj_set_size(recording_overlay, 320, 240);
-    lv_obj_align(recording_overlay, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(recording_overlay, lv_palette_darken(LV_PALETTE_BLUE_GREY, 4), 0);
-    lv_obj_set_style_bg_opa(recording_overlay, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(recording_overlay, 0, 0);
-    lv_obj_set_style_border_width(recording_overlay, 0, 0);
-    lv_obj_clear_flag(recording_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(recording_overlay, LV_OBJ_FLAG_HIDDEN);
+    /* SEND/NOTE/GO recording overlay (UI suite, ui_recording.c): the timer,
+     * a health rail, CANCEL/SEND and the project/repository chooser. */
+    static const ui_rec_actions_t rec_actions = {
+        recording_cancel_button_cb, recording_stop_button_cb, rec_sel_prev_cb, rec_sel_next_cb,
+    };
+    ui_recording_build(&ui->rec, scr, &rec_actions);
 
-    /* The overlay in four bands, none of them overlapping. It used to be
-     * loosely stacked, which was survivable until the panel-styling pass gave
-     * the counter an opaque backing panel - that panel is created after the
-     * selector and the buttons, so it drew straight over them. What follows is
-     * laid out as bands with explicit coordinates for that reason: this is a
-     * 320x240 screen with five things that all have to be visible at once
-     * during a NOTE, and "roughly centered" is not good enough.
-     *
-     *    y   4.. 24   title
-     *    y  28..120   counter panel: dot, timer, progress bar
-     *    y 126..172   the selector slot - project for NOTE, repo for GO
-     *    y 178..232   the action row: CANCEL, and SEND when it applies
-     *
-     * The counter panel is created FIRST so it sits behind everything, which
-     * is what its own comment always claimed and what the ordering did not
-     * actually do. */
-    lv_obj_t *rec_panel = lv_obj_create(recording_overlay);
-    lv_obj_set_size(rec_panel, 304, 92);
-    lv_obj_align(rec_panel, LV_ALIGN_TOP_LEFT, 8, 28);
-    ui_panel_style(rec_panel);
-
-    recording_title = lv_label_create(recording_overlay);
-    lv_label_set_text(recording_title, "RECORDING");
-    lv_obj_set_style_text_font(recording_title, &lv_font_montserrat_20, 0);
-    lv_obj_align(recording_title, LV_ALIGN_TOP_MID, 0, 4);
-
-    /* CANCEL - discards the recording instead of sending it
-     * (recording_cancel_button_cb -> audio_capture_cancel()). Red for "this
-     * throws it away," in deliberate contrast with SEND's green beside it -
-     * the two should never look like variants of the same action. Left of
-     * SEND, and it keeps that spot when SEND is hidden rather than sliding to
-     * the middle: the destructive button should not move under your thumb
-     * depending on which command is running. */
-    lv_obj_t *cancel_btn = lv_btn_create(recording_overlay);
-    lv_obj_set_size(cancel_btn, 140, 54);
-    lv_obj_align(cancel_btn, LV_ALIGN_TOP_LEFT, 12, 178);
-    lv_obj_set_style_bg_color(cancel_btn, lv_palette_main(LV_PALETTE_RED), 0);
-    lv_obj_add_event_cb(cancel_btn, recording_cancel_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *cancel_label = lv_label_create(cancel_btn);
-    lv_label_set_text(cancel_label, "CANCEL");
-    lv_obj_center(cancel_label);
-
-    /* Small filled circle, shown only while actually RECORDING - see
-     * render_recording_overlay(). A real shape rather than a Unicode glyph
-     * so it renders regardless of which characters the bundled font covers.
-     * Y offset moved from the original -10 to +15 to leave room for the
-     * CANCEL button above without crowding it. */
-    recording_dot = lv_obj_create(recording_overlay);
-    lv_obj_set_size(recording_dot, 14, 14);
-    lv_obj_set_style_radius(recording_dot, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(recording_dot, lv_palette_main(LV_PALETTE_RED), 0);
-    lv_obj_set_style_border_width(recording_dot, 0, 0);
-    lv_obj_clear_flag(recording_dot, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_align(recording_dot, LV_ALIGN_TOP_LEFT, 30, 46);
-
-    /* Project selector, same up/label/down shape as the HOME control so it
-     * reads as the same thing in a second place - and it is: both drive
-     * the same catalog selection, there is only ever one selection.
-     *
-     * Sits at the overlay's left edge (x 6..44), which is the only region
-     * clear of everything else here: CANCEL spans x 90..230, the REC dot
-     * sits at x~113-127, the counter is centered, and SEND occupies the
-     * bottom from y=164. Hidden unless a NOTE is recording, see
-     * render_recording_overlay(). */
-    recording_project_ctrl = lv_obj_create(recording_overlay);
-    lv_obj_set_size(recording_project_ctrl, 304, 46);
-    lv_obj_align(recording_project_ctrl, LV_ALIGN_TOP_LEFT, 8, 126);
-    ui_panel_style(recording_project_ctrl);
-    lv_obj_add_flag(recording_project_ctrl, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_t *rec_project_prev = lv_btn_create(recording_project_ctrl);
-    lv_obj_set_size(rec_project_prev, 52, 40);
-    lv_obj_align(rec_project_prev, LV_ALIGN_LEFT_MID, 3, 0);
-    lv_obj_add_event_cb(rec_project_prev, project_down_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *rec_project_prev_label = lv_label_create(rec_project_prev);
-    lv_label_set_text(rec_project_prev_label, "<");
-    lv_obj_set_style_text_font(rec_project_prev_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(rec_project_prev_label);
-
-    recording_project_label = lv_label_create(recording_project_ctrl);
-    lv_obj_set_style_text_font(recording_project_label, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(recording_project_label, lv_color_white(), 0);
-    lv_obj_align(recording_project_label, LV_ALIGN_CENTER, 0, 0);
-    lv_label_set_text(recording_project_label, "...");
-
-    lv_obj_t *rec_project_next = lv_btn_create(recording_project_ctrl);
-    lv_obj_set_size(rec_project_next, 52, 40);
-    lv_obj_align(rec_project_next, LV_ALIGN_RIGHT_MID, -3, 0);
-    lv_obj_add_event_cb(rec_project_next, project_up_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *rec_project_next_label = lv_label_create(rec_project_next);
-    lv_label_set_text(rec_project_next_label, ">");
-    lv_obj_set_style_text_font(rec_project_next_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(rec_project_next_label);
-
-    /* Repository chooser for GO, in the same slot and the same shape as the
-     * project selector above. They are never both wanted - a capture is one
-     * command or the other - and making them look identical is honest about
-     * that: one row that says "and this one goes to...". */
-    recording_repo_ctrl = lv_obj_create(recording_overlay);
-    lv_obj_set_size(recording_repo_ctrl, 304, 46);
-    lv_obj_align(recording_repo_ctrl, LV_ALIGN_TOP_LEFT, 8, 126);
-    ui_panel_style(recording_repo_ctrl);
-    lv_obj_add_flag(recording_repo_ctrl, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_t *repo_prev = lv_btn_create(recording_repo_ctrl);
-    lv_obj_set_size(repo_prev, 52, 40);
-    lv_obj_align(repo_prev, LV_ALIGN_LEFT_MID, 3, 0);
-    lv_obj_add_event_cb(repo_prev, recording_repo_prev_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *repo_prev_label = lv_label_create(repo_prev);
-    lv_label_set_text(repo_prev_label, "<");
-    lv_obj_set_style_text_font(repo_prev_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(repo_prev_label);
-
-    recording_repo_label = lv_label_create(recording_repo_ctrl);
-    lv_obj_set_style_text_font(recording_repo_label, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(recording_repo_label, lv_color_white(), 0);
-    lv_obj_align(recording_repo_label, LV_ALIGN_CENTER, 0, 0);
-    lv_label_set_text(recording_repo_label, "...");
-
-    lv_obj_t *repo_next = lv_btn_create(recording_repo_ctrl);
-    lv_obj_set_size(repo_next, 52, 40);
-    lv_obj_align(repo_next, LV_ALIGN_RIGHT_MID, -3, 0);
-    lv_obj_add_event_cb(repo_next, recording_repo_next_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *repo_next_label = lv_label_create(repo_next);
-    lv_label_set_text(repo_next_label, ">");
-    lv_obj_set_style_text_font(repo_next_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(repo_next_label);
-
-    /* Fills the space SEND vacated on an auto-stopping capture, and earns
-     * it: on a 15s capture that ends itself, how much time is left is the
-     * only thing the operator can still act on. A number alone makes you
-     * read and subtract; a bar is glanceable. Hidden on NOTE, where there
-     * is no target to fill toward. */
-    recording_progress = lv_bar_create(recording_overlay);
-    lv_obj_set_size(recording_progress, 260, 14);
-    lv_obj_align(recording_progress, LV_ALIGN_TOP_MID, 0, 94);
-    lv_obj_set_style_radius(recording_progress, 8, 0);
-    lv_obj_set_style_bg_color(recording_progress, lv_palette_darken(LV_PALETTE_BLUE_GREY, 2), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(recording_progress, lv_palette_main(LV_PALETTE_RED), LV_PART_INDICATOR);
-    lv_obj_set_style_radius(recording_progress, 8, LV_PART_INDICATOR);
-    lv_bar_set_range(recording_progress, 0, 1000);
-    lv_bar_set_value(recording_progress, 0, LV_ANIM_OFF);
-    lv_obj_add_flag(recording_progress, LV_OBJ_FLAG_HIDDEN);
-
-    recording_status_label = lv_label_create(recording_overlay);
-    lv_label_set_text(recording_status_label, "");
-    lv_obj_set_style_text_font(recording_status_label, &lv_font_montserrat_32, 0);
-    lv_obj_align(recording_status_label, LV_ALIGN_TOP_MID, 8, 48);
-
-    /* SEND, relabeled/recolored from the original STOP - still the same
-     * audio_capture_stop() underneath (ending the recording here is also
-     * what sends it, see recording_stop_button_cb's comment), green/
-     * "ready to press" now instead of red/stop-styled, since CANCEL above
-     * took over the "this is the destructive one" red styling. */
-    lv_obj_t *send_btn = lv_btn_create(recording_overlay);
-    recording_send_btn = send_btn;
-    lv_obj_set_size(send_btn, 140, 54);
-    lv_obj_align(send_btn, LV_ALIGN_TOP_RIGHT, -12, 178);
-    lv_obj_set_style_bg_color(send_btn, lv_palette_main(LV_PALETTE_GREEN), 0);
-    lv_obj_add_event_cb(send_btn, recording_stop_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *send_label = lv_label_create(send_btn);
-    lv_label_set_text(send_label, "SEND");
-    lv_obj_set_style_text_font(send_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(send_label);
-
-    /* Notification-playback overlay - same full-screen style as the others,
-     * a STOP button like the recording overlay's since playback runs long
-     * enough (5-20s) to be worth interrupting - see
-     * render_notification_overlay() and notification_stop_button_cb(). */
-    notification_overlay = lv_obj_create(scr);
-    lv_obj_set_size(notification_overlay, 320, 240);
-    lv_obj_align(notification_overlay, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(notification_overlay, lv_palette_darken(LV_PALETTE_BLUE_GREY, 4), 0);
-    lv_obj_set_style_bg_opa(notification_overlay, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(notification_overlay, 0, 0);
-    lv_obj_set_style_border_width(notification_overlay, 0, 0);
-    lv_obj_clear_flag(notification_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(notification_overlay, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_t *notification_title = lv_label_create(notification_overlay);
-    lv_label_set_text(notification_title, "NOTIFICATION");
-    lv_obj_set_style_text_font(notification_title, &lv_font_montserrat_20, 0);
-    lv_obj_align(notification_title, LV_ALIGN_TOP_MID, 0, 8);
-
-    notification_status_label = lv_label_create(notification_overlay);
-    lv_label_set_text(notification_status_label, "");
-    lv_obj_set_style_text_font(notification_status_label, &lv_font_montserrat_20, 0);
-    lv_obj_align(notification_status_label, LV_ALIGN_CENTER, 0, -10);
-
-    lv_obj_t *notification_stop_btn = lv_btn_create(notification_overlay);
-    lv_obj_set_size(notification_stop_btn, 220, 56);
-    lv_obj_align(notification_stop_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
-    lv_obj_set_style_bg_color(notification_stop_btn, lv_palette_main(LV_PALETTE_RED), 0);
-    lv_obj_add_event_cb(notification_stop_btn, notification_stop_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *notification_stop_label = lv_label_create(notification_stop_btn);
-    lv_label_set_text(notification_stop_label, "STOP");
-    lv_obj_set_style_text_font(notification_stop_label, &lv_font_montserrat_20, 0);
-    lv_obj_center(notification_stop_label);
+    /* Notification playback overlay (UI suite, ui_notify.c). */
+    ui_notify_overlay_build(&ui->notif, scr, notification_stop_button_cb);
 
     render_event_log();
 
     live_data_deck_init();
     humiture_deck_init();
 
-    render_wifi_panel();
     wifi_mgr_init(wifi_status_changed_cb, NULL);
 
     /* 1.2.0: the report worker replaces the handshake worker here - the

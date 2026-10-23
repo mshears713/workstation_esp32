@@ -38,9 +38,36 @@ Seams so far:
 | `main/voice_listening_widget.c` | the microphone ring | `_set_link`, `_set_notification` |
 | `main/ui_firmware_page.c` | FIRMWARE page | `ui_firmware_view_t` + `ui_firmware_page_apply()` |
 
-Still inside `status_deck_ui.c` (not renderable yet): SENS, LOG, SETTINGS, PROJECTS, and the
-command, recording and notification overlays. Extract one **when you're about to work on it**. Don't
-extract them all in advance.
+| `main/ui_diagnostics.c` + `ui_diag_format.c` | DIAGNOSTICS (four blocks) | `ui_diag_view_t` |
+| `main/ui_sensors.c` + `ui_dial.c` + `ui_sensor_model.c` | SENSORS dial cluster with trends | `ui_sensors_view_t`, `ui_sensors_push()` |
+| `main/ui_log.c` + `ui_log_format.c` | LOG phosphor terminal, pages the whole Black Box | `ui_log_show(entries, n, seq)` |
+| `main/ui_settings.c` | SETTINGS, Hazard Industrial | `ui_settings_view_t` |
+| `main/ui_recording.c` | SEND/NOTE/GO recording overlay with health rail | `ui_rec_view_t` |
+| `main/ui_notify.c` | MESSAGES card stack + notification playback overlay | `ui_notify_view_t`, `ui_notify_pb_view_t` |
+| `main/ui_firmware_page.c` + `ui_fw_timeline.c` | FIRMWARE as a stage timeline | `ui_firmware_view_t` |
+| `main/ui_survey.c` + `ui_paper.c` | EXPERIMENT: event survey kiosk (Calm Paper) | open/close + `ui_survey_preview()` |
+| `main/ui_music.c` + `ui_music_mock.c` | EXPERIMENT: laptop music remote, simulated | `ui_music_view_t` |
+| `main/ui_companion.c` | EXPERIMENT: Friendly Companion eyes | open/close, moods, reactions |
+
+Still inside `status_deck_ui.c` (not renderable): PROJECTS and the command overlay. The plain-C
+models (`ui_*_format.c`, `ui_sensor_model.c`, `ui_fw_timeline.c`) are also host-tested by
+`tools/hosttest/run.sh` under ASan/UBSan.
+
+## Interaction tests and the firmware compiler
+
+`tools/uisim/tests/<target>_flow.sh` drive the real event handlers with simulated taps
+(`ws-ui render NAME --tap X,Y@MS`) and assert on the texts in the resulting widget tree, including
+cases that must NOT change state (a tap on a disabled key, the rail of an overlay). Run them from the
+repo root: `bash tools/uisim/tests/survey_flow.sh /home/mshears/lvgl-sim-dev/bin/ws-ui`.
+
+The simulator compiles with the host gcc, which does not report everything the firmware's xtensa
+gcc 14 does at `-Og` (a 24-byte `snprintf` buffer rendered cleanly and failed the firmware build on
+`-Werror=format-truncation`). Before a full build, compile just the files you touched with the real
+toolchain and flags - seconds, from the existing build directory:
+
+```bash
+bash tools/uisim/fw_compile.sh main/ui_survey.c main/status_deck_ui.c
+```
 
 ## Adding a target
 

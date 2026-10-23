@@ -55,6 +55,11 @@ for m in '"image %lu > slot' '"cannot fetch image"' '"out of memory"' '"hash mis
     grep -qF "$m" "$REPO/main/ota_service.c" || { echo "FW TIMELINE FAIL: ota_service.c no longer says $m"; exit 1; }
 done
 echo "FW TIMELINE: ota_service.c messages present"
+# notification_client.c's json_string_field() is static: copy its exact text out.
+sed -n '/^static bool json_string_field(/,/^}/p' "$REPO/main/notification_client.c" > "$OUT/json_string_field.inc"
+gcc -std=gnu11 -g -O2 -Wall -Wextra -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+    -fno-omit-frame-pointer -I"$OUT" "$HERE/test_notify_text.c" -o "$OUT/notifytext"
+"$OUT/notifytext"
 # diag_init() runs once per boot on the device; the test boots it 4 times,
 # so its one PSRAM copy of last_words per boot "leaks" by design here.
 ASAN_OPTIONS=detect_leaks=0 "$OUT/hosttest"

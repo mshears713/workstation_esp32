@@ -144,6 +144,7 @@ static volatile mic_owner_t s_mic_owner = MIC_OWNER_LISTENING;
  * acts on the request, so a press that arrives while a command window is
  * already open is not lost - it just waits for the next opportunity. */
 static volatile bool s_manual_wake_requested = false;
+static volatile bool s_play_notification_requested = false;   /* NOTIFY card's PLAY */
 
 /* Same pattern, for a command chosen by tapping its tile in the command
  * window rather than saying it. Set on the LVGL task, consumed by
@@ -911,6 +912,17 @@ static void detect_task(void *arg)
             continue;
         }
 
+        if (!in_command_window && s_play_notification_requested) {
+            s_play_notification_requested = false;
+            notification_status_t nst;
+            notification_client_get_status(&nst);
+            if (nst.pending) {
+                notify(VOICE_STATE_LISTENING, "PLAY (TAP)");
+                run_notification_command(nst.notification_id);   /* the YES path */
+            }
+            continue;
+        }
+
         if (!in_command_window && (res->wakeup_state == WAKENET_DETECTED || s_manual_wake_requested)) {
             bool manual = s_manual_wake_requested;
             s_manual_wake_requested = false;
@@ -1083,6 +1095,11 @@ void voice_control_get_status(voice_status_t *out)
 void voice_control_manual_wake(void)
 {
     s_manual_wake_requested = true;
+}
+
+void voice_control_play_notification(void)
+{
+    s_play_notification_requested = true;
 }
 
 void voice_control_manual_command(voice_command_id_t id)

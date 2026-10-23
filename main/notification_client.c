@@ -81,6 +81,14 @@ static int s_json_len;
 /* Audio download buffer - allocated once at init (PSRAM, same
  * heap_caps_malloc/MALLOC_CAP_SPIRAM choice audio_capture.c makes for its
  * own capture buffer), reused by every fetch_audio() call. */
+/* Detail fetch (the front message's text): its own buffer, in PSRAM, so it
+ * never shares s_json_buf with the fetch/ack calls on detect_task. */
+#define DETAIL_BUF_LEN 2048
+static char *s_detail_buf;
+static int s_detail_len;
+static char s_detail_id[NOTIFICATION_ID_LEN];   /* id the text belongs to */
+static char *s_text;                             /* front message text, PSRAM, under s_mux */
+
 static uint8_t *s_audio_buf = NULL;
 static size_t s_audio_len;
 static bool s_audio_buf_available = false;
@@ -112,9 +120,112 @@ static esp_err_t audio_download_event_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
+static esp_err_t detail_event_handler(esp_http_client_event_t *evt)
+{
+    if (evt->event_id == HTTP_EVENT_ON_DATA && !esp_http_client_is_chunked_response(evt->client)) {
+        int room = DETAIL_BUF_LEN - 1 - s_detail_len;
+        int copy_len = evt->data_len < room ? evt->data_len : room;
+        if (copy_len > 0) {
+            memcpy(s_detail_buf + s_detail_len, evt->data, (size_t)copy_len);
+            s_detail_len += copy_len;
+            s_detail_buf[s_detail_len] = '\0';
+        }
+    }
+    return ESP_OK;
+}
+
+/* The value of "key": "..." in `json`, unescaped into out (truncated to
+ * fit). No allocation: a JSON parser here would take its nodes from
+ * internal RAM. \uXXXX outside ASCII becomes '?' (the fonts are ASCII). */
+static bool json_string_field(const char *json, const char *key, char *out, size_t out_len)
+{
+    char pat[40];
+    snprintf(pat, sizeof(pat), "\"%s\"", key);
+    const char *p = strstr(json, pat);
+    if (!p) {
+        return false;
+    }
+    p += strlen(pat);
+    while (*p == ' ' || *p == ':') {
+        p++;
+    }
+    if (*p != '"') {
+        return false;                 /* null, or not a string */
+    }
+    p++;
+    size_t o = 0;
+    while (*p && *p != '"') {
+        char c = *p++;
+        if (c == '\\' && *p) {
+            char e = *p++;
+            c = e == 'n' ? ' ' : e == 't' ? ' ' : e;
+            if (e == 'u') {
+                c = '?';
+                for (int i = 0; i < 4 && *p; i++) {
+                    p++;
+                }
+            }
+        }
+        if (o + 1 < out_len) {
+            out[o++] = c;
+        }
+    }
+    out[o] = '\0';
+    return *p == '"';                 /* false if the body was cut off mid-string */
+}
+
+/* GET {base}/{id} for the front message's spoken_message. Poll task only,
+ * once per new front id. */
+static void fetch_text(const char *id)
+{
+    char text[NOTIFICATION_TEXT_LEN] = "";
+    uint8_t state = 2;
+    if (s_detail_buf) {
+        char url[192];
+        snprintf(url, sizeof(url), "%s%s/%s", BACKEND_BASE_URL, NOTIFICATIONS_BASE_PATH, id);
+        esp_http_client_config_t config = {
+            .url = url,
+            .method = HTTP_METHOD_GET,
+            .timeout_ms = NOTIFICATION_REQUEST_TIMEOUT_MS,
+            .event_handler = detail_event_handler,
+        };
+        esp_http_client_handle_t client = esp_http_client_init(&config);
+        if (client) {
+            s_detail_len = 0;
+            s_detail_buf[0] = '\0';
+            esp_err_t err = esp_http_client_perform(client);
+            int status = esp_http_client_get_status_code(client);
+            esp_http_client_cleanup(client);
+            if (err == ESP_OK && status == 200 &&
+                json_string_field(s_detail_buf, "spoken_message", text, sizeof(text)) && text[0]) {
+                state = 1;
+            } else {
+                ESP_LOGI(TAG, "text for %s not loaded (err=%s status=%d len=%d)", id,
+                         esp_err_to_name(err), status, s_detail_len);
+            }
+        }
+    }
+    portENTER_CRITICAL(&s_mux);
+    if (strcmp(s_status.notification_id, id) == 0) {   /* still the front one */
+        if (s_text) {
+            strncpy(s_text, text, NOTIFICATION_TEXT_LEN - 1);
+            s_text[NOTIFICATION_TEXT_LEN - 1] = '\0';
+        }
+        s_status.text_state = s_text ? state : 2;
+    }
+    portEXIT_CRITICAL(&s_mux);
+}
+
 static void set_status(bool pending, int count, const char *notification_id)
 {
     portENTER_CRITICAL(&s_mux);
+    s_status.polled = true;
+    if (!notification_id || strcmp(s_status.notification_id, notification_id) != 0) {
+        if (s_text) {
+            s_text[0] = '\0';         /* a different front message: its text is not known yet */
+        }
+        s_status.text_state = 0;
+    }
     s_status.pending = pending;
     s_status.count = count;
     if (notification_id) {
@@ -181,7 +292,16 @@ static void poll_once(void)
     const char *notification_id = (pending && cJSON_IsString(id_item)) ? id_item->valuestring : NULL;
 
     set_status(pending, count, notification_id);
+    char want[NOTIFICATION_ID_LEN] = "";
+    if (notification_id && strcmp(notification_id, s_detail_id) != 0) {
+        strncpy(want, notification_id, sizeof(want) - 1);
+    }
     cJSON_Delete(root);
+    if (want[0]) {
+        /* Only the poll task fetches text, so s_detail_id needs no lock. */
+        strncpy(s_detail_id, want, sizeof(s_detail_id) - 1);
+        fetch_text(want);
+    }
 }
 
 static void poll_task(void *arg)
@@ -215,6 +335,12 @@ void notification_client_init(void)
                  NOTIFICATION_AUDIO_SAMPLE_RATE_HZ, NOTIFICATION_AUDIO_BITS_PER_SAMPLE, NOTIFICATION_AUDIO_CHANNELS);
     }
 
+    s_detail_buf = heap_caps_malloc(DETAIL_BUF_LEN, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_text = heap_caps_calloc(1, NOTIFICATION_TEXT_LEN, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_detail_buf) {
+        ESP_LOGW(TAG, "no PSRAM for notification text; cards will say it was not loaded");
+    }
+
     xTaskCreate(poll_task, "notif_poll", 4096, NULL, 4, NULL);
 }
 
@@ -222,6 +348,18 @@ void notification_client_get_status(notification_status_t *out)
 {
     portENTER_CRITICAL(&s_mux);
     *out = s_status;
+    portEXIT_CRITICAL(&s_mux);
+}
+
+void notification_client_get_text(char *out, size_t out_len)
+{
+    portENTER_CRITICAL(&s_mux);
+    if (s_text && s_status.text_state == 1) {
+        strncpy(out, s_text, out_len - 1);
+        out[out_len - 1] = '\0';
+    } else {
+        out[0] = '\0';
+    }
     portEXIT_CRITICAL(&s_mux);
 }
 

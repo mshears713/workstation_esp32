@@ -30,7 +30,7 @@ typedef struct {
     lv_event_cb_t net, rpt, clr;   /* the existing LOG commands */
 } ui_log_actions_t;
 
-#define UI_LOG_MAX_PAGES 32
+#define UI_LOG_MAX_PAGES 12   /* 32 events at >= 3 lines a page: at most 11 pages */
 
 typedef struct {
     lv_obj_t *list;          /* the lines live here, rebuilt on every show */

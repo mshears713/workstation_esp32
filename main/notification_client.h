@@ -33,6 +33,9 @@ extern "C" {
 #endif
 
 #define NOTIFICATION_ID_LEN 40
+/* The front message's spoken_message, cut to fit (the card shows ~170
+ * characters; the full message is what PLAY says). */
+#define NOTIFICATION_TEXT_LEN 192
 
 /* Fixed format of the audio notification_client_fetch_audio() returns -
  * matches app/voice/tts.py's OpenAI response_format="pcm" output exactly
@@ -47,6 +50,11 @@ typedef struct {
     bool pending;
     int count;                                /* how many notifications are pending, 0 if none */
     char notification_id[NOTIFICATION_ID_LEN]; /* oldest pending notification's id; "" if none */
+    /* Whether that one's text (GET {base}/{id} -> spoken_message, fetched
+     * once per new id) is known: 0 not tried yet, 1 loaded, 2 could not load.
+     * The text itself: notification_client_get_text(). */
+    uint8_t text_state;
+    bool polled;                              /* /pending has answered at least once */
 } notification_status_t;
 
 /** Starts the background poll task. Call once, from any task. */
@@ -54,6 +62,9 @@ void notification_client_init(void);
 
 /** Thread-safe snapshot of the most recent poll result. */
 void notification_client_get_status(notification_status_t *out);
+/** The front notification's text into `out` ("" unless text_state is 1).
+ *  Kept out of notification_status_t, in PSRAM, so status reads stay small. */
+void notification_client_get_text(char *out, size_t out_len);
 
 /**
  * Blocking: re-polls GET {base}/pending immediately and updates the same

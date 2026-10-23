@@ -21,9 +21,12 @@ typedef struct {
     lv_event_cb_t cb;
 } ui_menu_item_t;
 
-/** Builds MENU into `page`: title, then `count` (up to 6) buttons two to a
- *  row; an odd last one spans the full width. */
-void ui_menu_build(lv_obj_t *page, const ui_menu_item_t *items, int count);
+/** Builds a menu page into `page`: `title`, then `count` (up to 6) buttons
+ *  two to a row (an odd last one spans the full width). `corner` (may be
+ *  NULL) is a key in the title band's right end - "MORE >" on the first
+ *  page, "< MENU" on the second - so six full-size buttons stay six. */
+void ui_menu_build(lv_obj_t *page, const char *title, const ui_menu_item_t *items, int count,
+                   const ui_menu_item_t *corner);
 
 #ifdef __cplusplus
 }
