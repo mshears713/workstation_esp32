@@ -1157,6 +1157,195 @@
           "repo_count": 9
         }
       }
+    },
+    "recording": {
+      "kind": "page",
+      "description": "SEND / NOTE / GO recording overlay, Health Rail (ui_recording.c): rail NET / API / MIC / UPL computed from the same view as the main area; big timer ('of 15s' for SEND/GO, 'cap 20:00' + SEND for NOTE), progress bar on bounded captures, 'MIC PAUSED - WAITING ON BACKEND' when the uploader is behind; outcome card after; NOTE project / GO repo chooser while capturing; CANCEL only while arming/recording (when audio_capture honours it), SEND only for NOTE. Rail is display-only.",
+      "sources": [
+        "main/ui_recording.c"
+      ],
+      "headers": [
+        "ui_recording.h",
+        "ui_diag_format.h"
+      ],
+      "adapter": "tools/uisim/targets/recording.c",
+      "fields": {
+        "command": {
+          "type": "enum",
+          "values": [
+            "SEND",
+            "NOTE",
+            "GO"
+          ],
+          "default": "SEND",
+          "doc": "voice_status_t.last_command"
+        },
+        "phase": {
+          "type": "enum",
+          "values": [
+            "starting",
+            "arming",
+            "recording",
+            "uploading",
+            "ready",
+            "cancelled",
+            "failed",
+            "result"
+          ],
+          "default": "recording",
+          "doc": "audio_cap state mapped as render_recording_overlay did; result = audio IDLE with voice last_result held"
+        },
+        "elapsed_ms": {
+          "type": "int",
+          "default": 7000,
+          "doc": "audio_cap_status_t.elapsed_ms"
+        },
+        "target_ms": {
+          "type": "int",
+          "default": 15000,
+          "doc": "duration_target_ms: 15000 SEND/GO, 1200000 NOTE"
+        },
+        "uploader_behind": {
+          "type": "bool",
+          "default": false,
+          "doc": "recording loop stalled waiting for a buffer"
+        },
+        "fail_reason": {
+          "type": "str",
+          "default": "",
+          "doc": "audio fail_reason, <= 23 chars, e.g. UPLOAD TIMEOUT / ENDPOINT NOT SET"
+        },
+        "result": {
+          "type": "str",
+          "default": "",
+          "doc": "voice last_result: SENT / NOTE SENT / ISSUE #13 / CANCELLED / NO ENDPOINT SET / FAILED: <reason> / DID NOT FINISH"
+        },
+        "selector": {
+          "type": "str",
+          "default": "",
+          "doc": "project (NOTE) or repo (GO) label, <= 12 chars"
+        },
+        "wifi": {
+          "type": "enum",
+          "values": [
+            "off",
+            "joining",
+            "online",
+            "retry"
+          ],
+          "default": "online",
+          "doc": "wifi_mgr state"
+        },
+        "api": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "ok",
+            "down",
+            "no_net"
+          ],
+          "default": "ok",
+          "doc": "backend_health state"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "send_starting": {
+          "phase": "starting",
+          "elapsed_ms": 0
+        },
+        "send_arming": {
+          "phase": "arming",
+          "elapsed_ms": 0
+        },
+        "send_near_end": {
+          "elapsed_ms": 14800
+        },
+        "note_recording": {
+          "command": "NOTE",
+          "elapsed_ms": 221000,
+          "target_ms": 1200000,
+          "selector": "Van Build 2"
+        },
+        "note_long_name": {
+          "command": "NOTE",
+          "elapsed_ms": 1199000,
+          "target_ms": 1200000,
+          "selector": "WWWWWWWWWWWW"
+        },
+        "note_stalled": {
+          "command": "NOTE",
+          "elapsed_ms": 95000,
+          "target_ms": 1200000,
+          "selector": "Van Build 2",
+          "uploader_behind": true
+        },
+        "go_recording": {
+          "command": "GO",
+          "elapsed_ms": 4000,
+          "selector": "workstation"
+        },
+        "wifi_drop_mid_capture": {
+          "command": "NOTE",
+          "elapsed_ms": 61000,
+          "target_ms": 1200000,
+          "selector": "GEN",
+          "wifi": "retry",
+          "api": "no_net"
+        },
+        "uploading": {
+          "command": "NOTE",
+          "phase": "uploading",
+          "elapsed_ms": 221000,
+          "target_ms": 1200000
+        },
+        "ready": {
+          "command": "NOTE",
+          "phase": "ready",
+          "elapsed_ms": 221000,
+          "target_ms": 1200000
+        },
+        "result_sent": {
+          "phase": "result",
+          "result": "SENT"
+        },
+        "result_issue": {
+          "command": "GO",
+          "phase": "result",
+          "result": "ISSUE #13"
+        },
+        "cancelled": {
+          "command": "NOTE",
+          "phase": "cancelled",
+          "target_ms": 1200000
+        },
+        "failed": {
+          "command": "NOTE",
+          "phase": "failed",
+          "fail_reason": "UPLOAD TIMEOUT",
+          "target_ms": 1200000,
+          "api": "down"
+        },
+        "endpoint_not_set": {
+          "phase": "failed",
+          "fail_reason": "ENDPOINT NOT SET"
+        },
+        "result_failed_long": {
+          "command": "GO",
+          "phase": "result",
+          "result": "FAILED: CHUNK HTTP 503 RETRY"
+        },
+        "result_did_not_finish": {
+          "command": "NOTE",
+          "phase": "result",
+          "result": "DID NOT FINISH",
+          "target_ms": 1200000
+        },
+        "result_mic_reopen": {
+          "phase": "result",
+          "result": "MIC REOPEN FAILED"
+        }
+      }
     }
   }
 }
