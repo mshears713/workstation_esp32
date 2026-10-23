@@ -298,13 +298,15 @@
     },
     "firmware": {
       "kind": "page",
-      "description": "FIRMWARE page (ui_firmware_page.c): version, build time, backend address, OTA slot and probation state, updater status line, CHECK CLAWBOX NOW button; the < HOME back button.",
+      "description": "FIRMWARE as a timeline (ui_firmware_page.c + ui_fw_timeline.c): running version and slot (CONFIRMED / ON PROBATION); CHECK - GET - VERIFY - BOOT - HEALTH - KEPT from ota_service's state, a FAILED placed on its stage by ota_service's own message (unknown messages point at no stage); download percent is the updater's measured one; the health gate shows its 90 s limit, not an invented countdown; backend address (FB = fallback) and build time; CHECK NOW asks CLAWBOX again, never forces an install.",
       "sources": [
         "main/ui_kit.c",
+        "main/ui_fw_timeline.c",
         "main/ui_firmware_page.c"
       ],
       "headers": [
         "ui_firmware_page.h",
+        "ui_fw_timeline.h",
         "ui_kit.h",
         "ui_theme.h"
       ],
@@ -318,7 +320,7 @@
         "built_at": {
           "type": "str",
           "default": "Sep 23 2026 15:06:22",
-          "doc": "firmware_built_at(): __DATE__ __TIME__ of the build"
+          "doc": "firmware_built_at()"
         },
         "backend_url": {
           "type": "str",
@@ -333,12 +335,12 @@
         "slot": {
           "type": "str",
           "default": "ota_1",
-          "doc": "running partition label: ota_0 / ota_1"
+          "doc": "running partition label"
         },
         "pending_verify": {
           "type": "bool",
           "default": false,
-          "doc": "image still on probation (health gate not passed)"
+          "doc": "image still on probation"
         },
         "ota_state": {
           "type": "enum",
@@ -353,39 +355,108 @@
             "failed"
           ],
           "default": "idle",
-          "doc": "ota_service_state_label()"
+          "doc": "ota_status_t.state"
         },
         "ota_message": {
           "type": "str",
           "default": "up to date (1.2.2+2d189af)",
-          "doc": "ota_status_t.message (<= 79 chars)"
+          "doc": "ota_status_t.message (<= 79 chars), ota_service.c's strings"
+        },
+        "desired_version": {
+          "type": "str",
+          "default": "1.2.2+2d189af",
+          "doc": "ota_status_t.desired_version"
         },
         "ota_progress_pct": {
           "type": "int",
           "default": 0,
-          "doc": "0-100, shown while ota_state is downloading"
+          "doc": "0-100 while downloading (bytes written / size)"
+        },
+        "rolled_back": {
+          "type": "bool",
+          "default": false,
+          "doc": "this boot came after a failed image"
         }
       },
       "fixtures": {
         "default": {},
-        "probation": {
-          "pending_verify": true,
-          "ota_state": "validating",
-          "ota_message": "new image on probation, validating"
+        "checking": {
+          "ota_state": "checking",
+          "ota_message": ""
+        },
+        "update_ready": {
+          "ota_state": "update ready",
+          "ota_message": "desired 1.2.3+9f3c1aa",
+          "desired_version": "1.2.3+9f3c1aa"
         },
         "downloading": {
           "ota_state": "downloading",
           "ota_progress_pct": 42,
-          "ota_message": "1.2.3+9f3c1aa -> ota_0"
+          "ota_message": "1.2.3+9f3c1aa -> ota_0",
+          "desired_version": "1.2.3+9f3c1aa"
         },
-        "failed": {
+        "verifying": {
+          "ota_state": "verifying",
+          "ota_message": "checking hash",
+          "desired_version": "1.2.3+9f3c1aa"
+        },
+        "rebooting": {
+          "ota_state": "rebooting",
+          "ota_message": "installed 1.2.3+9f3c1aa, rebooting",
+          "desired_version": "1.2.3+9f3c1aa"
+        },
+        "probation": {
+          "pending_verify": true,
+          "ota_state": "validating",
+          "ota_message": "new image on probation, validating",
+          "version": "1.2.3+9f3c1aa",
+          "slot": "ota_0"
+        },
+        "kept": {
+          "ota_state": "idle",
+          "ota_message": "image marked valid",
+          "version": "1.2.3+9f3c1aa",
+          "slot": "ota_0"
+        },
+        "failed_download": {
           "ota_state": "failed",
-          "ota_message": "hash mismatch, not installing"
+          "ota_message": "cannot fetch image",
+          "desired_version": "1.2.3+9f3c1aa"
+        },
+        "failed_too_big": {
+          "ota_state": "failed",
+          "ota_message": "image 5767168 > slot 5636096",
+          "desired_version": "1.2.3+9f3c1aa"
+        },
+        "failed_hash": {
+          "ota_state": "failed",
+          "ota_message": "hash mismatch, not installing",
+          "desired_version": "1.2.3+9f3c1aa"
+        },
+        "failed_health": {
+          "ota_state": "failed",
+          "pending_verify": true,
+          "ota_message": "unhealthy (backend not answering), rolling back",
+          "version": "1.2.3+9f3c1aa",
+          "slot": "ota_0"
+        },
+        "rolled_back_boot": {
+          "rolled_back": true,
+          "ota_message": "running 1.2.2+2d189af"
+        },
+        "failed_unknown": {
+          "ota_state": "failed",
+          "ota_message": "something new went wrong in a future build"
         },
         "fallback_backend": {
           "backend_url": "http://clawbox.local:8000",
           "backend_fallback": true,
           "ota_message": "no manifest from CLAWBOX"
+        },
+        "dirty_long": {
+          "version": "1.3.0+ac594bc-dirty",
+          "built_at": "Oct 22 2026 17:40:51",
+          "ota_message": "up to date (1.3.0+ac594bc-dirty)"
         }
       }
     },

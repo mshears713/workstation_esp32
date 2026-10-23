@@ -44,6 +44,17 @@ gcc -std=gnu11 -g -O2 -Wall -Wextra -Werror=format-truncation -fsanitize=address
     -fno-sanitize-recover=undefined -fno-omit-frame-pointer \
     -I"$REPO/main" "$HERE/test_log_format.c" "$REPO/main/ui_log_format.c" -o "$OUT/logformat"
 "$OUT/logformat"
+# FIRMWARE timeline model (main/ui_fw_timeline.c): same flags, and the
+# ota_service.c messages it places failures by must still exist.
+gcc -std=gnu11 -g -O2 -Wall -Wextra -Werror=format-truncation -fsanitize=address,undefined \
+    -fno-sanitize-recover=undefined -fno-omit-frame-pointer \
+    -I"$REPO/main" "$HERE/test_fw_timeline.c" "$REPO/main/ui_fw_timeline.c" -o "$OUT/fwtimeline"
+"$OUT/fwtimeline"
+for m in '"image %lu > slot' '"cannot fetch image"' '"out of memory"' '"hash mismatch' '"unhealthy (' \
+         '"image marked valid"' '"up to date (' '"no manifest from CLAWBOX"'; do
+    grep -qF "$m" "$REPO/main/ota_service.c" || { echo "FW TIMELINE FAIL: ota_service.c no longer says $m"; exit 1; }
+done
+echo "FW TIMELINE: ota_service.c messages present"
 # diag_init() runs once per boot on the device; the test boots it 4 times,
 # so its one PSRAM copy of last_words per boot "leaks" by design here.
 ASAN_OPTIONS=detect_leaks=0 "$OUT/hosttest"
