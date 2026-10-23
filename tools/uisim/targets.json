@@ -1346,6 +1346,173 @@
           "result": "MIC REOPEN FAILED"
         }
       }
+    },
+    "notify": {
+      "kind": "page",
+      "description": "NOTIFY card stack + playback overlay (ui_notify.c). Front card = the oldest pending message (text from GET /notifications/{id}, PLAY), then '+N more waiting' (a count: the backend only describes the front one), then outcomes this device saw since boot. Overlay: message text, FETCH -> PLAY -> ACK steps (played and acknowledged kept apart), STOP only while playing. History texts are illustrative.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_notify.c"
+      ],
+      "headers": [
+        "ui_kit.h",
+        "ui_theme.h",
+        "ui_notify.h"
+      ],
+      "adapter": "tools/uisim/targets/notify.c",
+      "fields": {
+        "view": {
+          "type": "enum",
+          "values": [
+            "page",
+            "overlay"
+          ],
+          "default": "page",
+          "doc": "the card stack page or the playback overlay"
+        },
+        "link": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "ok",
+            "down",
+            "no_net"
+          ],
+          "default": "ok",
+          "doc": "backend_health as the poll sees it"
+        },
+        "pending": {
+          "type": "int",
+          "default": 1,
+          "doc": "/pending count"
+        },
+        "text": {
+          "type": "str",
+          "default": "Your van build note was filed under Van Build 2. Two items need a decision.",
+          "doc": "front message's spoken_message"
+        },
+        "text_loaded": {
+          "type": "bool",
+          "default": true,
+          "doc": "the text fetch has finished"
+        },
+        "text_failed": {
+          "type": "bool",
+          "default": false,
+          "doc": "the text could not be loaded"
+        },
+        "age_s": {
+          "type": "int",
+          "default": 360,
+          "doc": "since the front message was created"
+        },
+        "history": {
+          "type": "int",
+          "default": 2,
+          "doc": "outcomes kept this boot (0-4)"
+        },
+        "phase": {
+          "type": "enum",
+          "values": [
+            "fetching",
+            "playing",
+            "acking",
+            "done"
+          ],
+          "default": "playing",
+          "doc": "overlay: voice_control last_result mapped"
+        },
+        "outcome": {
+          "type": "enum",
+          "values": [
+            "delivered",
+            "ack_failed",
+            "stopped",
+            "fetch_failed"
+          ],
+          "default": "delivered",
+          "doc": "overlay, when done"
+        },
+        "reason": {
+          "type": "str",
+          "default": "",
+          "doc": "fetch failure text"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "three_waiting": {
+          "pending": 3
+        },
+        "loading_text": {
+          "text_loaded": false
+        },
+        "text_failed": {
+          "text_loaded": false,
+          "text_failed": true
+        },
+        "long_text": {
+          "text": "The overnight gallery run stopped at the session limit after twenty mockups. Four cells were blocked by quota, not by design problems, and can be retried when credits reset tomorrow morning."
+        },
+        "empty": {
+          "pending": 0,
+          "history": 0
+        },
+        "empty_with_history": {
+          "pending": 0,
+          "history": 4
+        },
+        "checking": {
+          "link": "unknown",
+          "pending": 0,
+          "history": 0
+        },
+        "backend_down": {
+          "link": "down",
+          "pending": 2
+        },
+        "no_network": {
+          "link": "no_net",
+          "pending": 1,
+          "text_loaded": false
+        },
+        "overlay_fetching": {
+          "view": "overlay",
+          "phase": "fetching"
+        },
+        "overlay_playing": {
+          "view": "overlay",
+          "phase": "playing"
+        },
+        "overlay_delivered": {
+          "view": "overlay",
+          "phase": "done",
+          "outcome": "delivered",
+          "pending": 3
+        },
+        "overlay_ack_failed": {
+          "view": "overlay",
+          "phase": "done",
+          "outcome": "ack_failed"
+        },
+        "overlay_stopped": {
+          "view": "overlay",
+          "phase": "done",
+          "outcome": "stopped"
+        },
+        "overlay_fetch_failed": {
+          "view": "overlay",
+          "phase": "done",
+          "outcome": "fetch_failed",
+          "reason": "NOTIFICATION FETCH FAILED: HTTP 404",
+          "text_loaded": false
+        },
+        "overlay_no_text": {
+          "view": "overlay",
+          "phase": "playing",
+          "text": ""
+        }
+      }
     }
   }
 }
