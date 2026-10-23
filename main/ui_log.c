@@ -12,7 +12,7 @@
  *          said an event's type. Here every retained line is reachable, a page
  *          at a time, and nothing is cut: a long message wraps under itself.
  *
- *    y   0.. 56   LOG title beside HOME; position and FPS/CPU at the right
+ *    y   0.. 56   LOG title beside HOME; FPS/CPU (device) and position at the right
  *    y  58..188   lines: "12:04 NET WIFI ONLINE", a fault in amber with '!'
  *    y 192..236   soft keys: NEW (newer page)  OLD (older page)  NET  RPT  CLR
  *
@@ -117,7 +117,7 @@ static void draw(ui_log_page_t *p)
     p->shown = i - p->offset;
 
     if (p->count > 0) {
-        lv_label_set_text_fmt(p->position, "%d-%d of %d", p->offset + 1, p->offset + p->shown, p->count);
+        lv_label_set_text_fmt(p->position, "%d-%d of %d, since boot", p->offset + 1, p->offset + p->shown, p->count);
     } else {
         lv_label_set_text(p->position, "0 of 0");
     }
@@ -170,16 +170,18 @@ void ui_log_build(ui_log_page_t *p, lv_obj_t *page, const ui_log_actions_t *a)
     lv_obj_set_style_text_color(title, PH_GREEN, 0);
     lv_obj_set_pos(title, 104, 12);
 
-    lv_obj_t *cap = text(page, "TIME SINCE BOOT", PH_DIM);
-    lv_obj_align(cap, LV_ALIGN_TOP_RIGHT, -8, 6);
-    p->position = text(page, "", PH_GREEN);
-    lv_obj_align(p->position, LV_ALIGN_TOP_RIGHT, -8, 22);
-    /* LVGL's FPS/CPU label is reparented here on the device (status_deck_ui). */
+    /* LVGL's FPS/CPU readout is reparented here on the device
+     * (status_deck_ui). It is two lines ("NN FPS, NN% CPU" / "NN ms (..)"),
+     * so the slot is two lines tall. */
     p->perf_slot = lv_obj_create(page);
     lv_obj_remove_style_all(p->perf_slot);
-    lv_obj_set_size(p->perf_slot, 116, 16);
-    lv_obj_align(p->perf_slot, LV_ALIGN_TOP_RIGHT, -8, 40);
+    lv_obj_set_size(p->perf_slot, 132, 38);
+    lv_obj_align(p->perf_slot, LV_ALIGN_TOP_RIGHT, -4, 1);
     lv_obj_clear_flag(p->perf_slot, LV_OBJ_FLAG_CLICKABLE);
+    /* "13-19 of 32, since boot": where you are, and what the time column is. */
+    p->position = text(page, "", PH_DIM);
+    lv_obj_set_style_text_font(p->position, &lv_font_montserrat_12, 0);
+    lv_obj_align(p->position, LV_ALIGN_TOP_RIGHT, -8, 41);
 
     lv_obj_t *rule = lv_obj_create(page);
     lv_obj_remove_style_all(rule);

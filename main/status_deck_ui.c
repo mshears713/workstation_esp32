@@ -861,6 +861,7 @@ static struct {
     ui_notify_page_t notify;
     ui_recording_t rec;
     ui_notify_overlay_t notif;
+    ui_notify_done_t notify_done[4];   /* NOTIFY_HISTORY_LEN; the card stack borrows them */
 } *ui;
 
 /* Mission 14: three pages behind a bottom nav bar, replacing the single
@@ -1063,6 +1064,11 @@ static void render_event_log(void)
 {
     if (ui == NULL || ui->log.list == NULL) {
         return;   /* page not built yet (boot-time events) */
+    }
+    /* Rebuilding the list costs a full layout pass; nobody sees a hidden
+     * LOG, and it is rebuilt on entry (log_nav_button_cb). */
+    if (page_log == NULL || lv_obj_has_flag(page_log, LV_OBJ_FLAG_HIDDEN)) {
+        return;
     }
     int n = (event_history && log_entries) ? event_history_used : 0;
     for (int i = 0; i < n; i++) {
@@ -1839,6 +1845,7 @@ static void sens_nav_button_cb(lv_event_t *e)
 static void log_nav_button_cb(lv_event_t *e)
 {
     set_active_page(APP_PAGE_LOG);
+    render_event_log();   /* built only while on screen - see render_event_log() */
 }
 
 /* TALK: retires the old manual REC button. Rather than starting a capture
@@ -1853,6 +1860,7 @@ static void log_nav_button_cb(lv_event_t *e)
 static void set_nav_button_cb(lv_event_t *e)
 {
     (void)e;
+    refresh_settings_page();   /* current on the first frame, not 500 ms later */
     set_active_page(APP_PAGE_SET);
 }
 
@@ -1949,21 +1957,31 @@ static void survey_open_cb(lv_event_t *e)
 }
 
 /* MUSIC: simulated - the mock answers, nothing reaches a laptop. */
-static ui_music_mock_t music_mock;
+static ui_music_mock_t *music_mock;   /* PSRAM, only while MUSIC is open */
 
 static void music_exit(void *ctx)
 {
     (void)ctx;
-    ui_music_mock_stop(&music_mock);
+    if (music_mock) {
+        ui_music_mock_stop(music_mock);
+    }
     ui_music_close();
+    heap_caps_free(music_mock);
+    music_mock = NULL;
     experiment_closed(NULL);
 }
 
 static void music_open_cb(lv_event_t *e)
 {
     (void)e;
-    ui_music_mock_init(&music_mock);
-    ui_music_open(app_screen, &music_mock.view, ui_music_mock_command, music_exit, &music_mock);
+    if (music_mock == NULL) {
+        music_mock = heap_caps_calloc(1, sizeof(*music_mock), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (music_mock == NULL) {
+            return;
+        }
+    }
+    ui_music_mock_init(music_mock);
+    ui_music_open(app_screen, &music_mock->view, ui_music_mock_command, music_exit, music_mock);
 }
 
 /* FACE: the companion eyes. */
@@ -2139,7 +2157,7 @@ static void refresh_notify_page(void)
     if (ui == NULL || ui->notify.card == NULL) {
         return;
     }
-    static ui_notify_done_t done[NOTIFY_HISTORY_LEN];
+    ui_notify_done_t *done = ui->notify_done;   /* PSRAM; borrowed by the page until the next apply */
     notification_status_t nst;
     notification_client_get_status(&nst);
     if (notify_front_text) {
@@ -2658,7 +2676,7 @@ void status_deck_ui(lv_obj_t *scr)
     lv_display_t *disp = lv_display_get_default();
     if (disp != NULL && disp->perf_label != NULL) {
         lv_obj_set_parent(disp->perf_label, ui->log.perf_slot);
-        lv_obj_align(disp->perf_label, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_align(disp->perf_label, LV_ALIGN_TOP_RIGHT, 0, 0);
     }
 
     /* ---- Nav bar: HOME/SENS/LOG/TALK, always on screen, own row on `scr`

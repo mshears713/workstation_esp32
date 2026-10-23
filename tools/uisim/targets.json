@@ -1076,6 +1076,11 @@
           "type": "int",
           "default": 1000,
           "doc": "when the held-back events are recorded"
+        },
+        "perf_standin": {
+          "type": "bool",
+          "default": true,
+          "doc": "draw a stand-in for LVGL's two-line FPS/CPU readout in its slot (the device shows the real one on LOG)"
         }
       },
       "fixtures": {

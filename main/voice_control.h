@@ -147,8 +147,9 @@ void voice_control_manual_command(voice_command_id_t id);
  * PLAY on the NOTIFY card: plays the oldest pending notification exactly as
  * a spoken YES would (fetch, play, ack), without opening a command window.
  * Safe from the LVGL task: it raises a flag detect_task consumes, so the
- * mic handoff still happens on the task that owns it. Ignored while a
- * command window is open or nothing is pending.
+ * mic handoff still happens on the task that owns it. Dropped (not queued)
+ * if a command window opens first, if nothing is pending, and for extra
+ * taps while that playback runs.
  */
 void voice_control_play_notification(void);
 

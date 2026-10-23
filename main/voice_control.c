@@ -919,6 +919,9 @@ static void detect_task(void *arg)
             if (nst.pending) {
                 notify(VOICE_STATE_LISTENING, "PLAY (TAP)");
                 run_notification_command(nst.notification_id);   /* the YES path */
+                /* A second tap made before the overlay appeared must not
+                 * play (and ack) the next message too. */
+                s_play_notification_requested = false;
             }
             continue;
         }
@@ -932,6 +935,7 @@ static void detect_task(void *arg)
             s_status.wake_count++;
             portEXIT_CRITICAL(&s_mux);
             notify(VOICE_STATE_WAKE_DETECTED, manual ? "WAKE (MANUAL)" : "WAKE DETECTED");
+            s_play_notification_requested = false;   /* a PLAY during the window is dropped, not queued */
             enter_command_window();
             notify(VOICE_STATE_COMMAND_WINDOW, "COMMAND WINDOW OPEN");
             continue;

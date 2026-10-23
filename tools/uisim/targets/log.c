@@ -83,6 +83,17 @@ void ws_render(lv_obj_t *scr)
     static const ui_log_actions_t actions = { ws_noop_event_cb, ws_noop_event_cb, ws_noop_event_cb };
     ui_log_build(&page, p, &actions);
     ui_back_button_create(scr, ws_noop_event_cb);
+    if (ws_fx_bool("perf_standin", true)) {
+        /* Stand-in for LVGL's two-line FPS/CPU readout, which the firmware
+         * reparents into the slot (the simulator keeps the real one hidden). */
+        lv_obj_t *perf = lv_label_create(page.perf_slot);
+        lv_label_set_text(perf, "33 FPS, 12% CPU\n30 ms (21 | 9)");
+        lv_obj_set_style_text_color(perf, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_bg_color(perf, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(perf, LV_OPA_50, 0);
+        lv_obj_set_style_pad_all(perf, 3, 0);
+        lv_obj_align(perf, LV_ALIGN_TOP_RIGHT, 0, 0);
+    }
 
     int n = (int)(sizeof(evening) / sizeof(evening[0]));
     ring = evening;

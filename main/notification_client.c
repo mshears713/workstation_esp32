@@ -239,7 +239,7 @@ static void set_status(bool pending, int count, const char *notification_id)
 
 /* One blocking GET {base}/pending -> updates s_status. Used by both the
  * background poll task and notification_client_refresh_now(). */
-static void poll_once(void)
+static void poll_once(bool with_text)
 {
     char url[160];
     snprintf(url, sizeof(url), "%s%s/pending", BACKEND_BASE_URL, NOTIFICATIONS_BASE_PATH);
@@ -293,12 +293,20 @@ static void poll_once(void)
 
     set_status(pending, count, notification_id);
     char want[NOTIFICATION_ID_LEN] = "";
-    if (notification_id && strcmp(notification_id, s_detail_id) != 0) {
+    if (!notification_id) {
+        /* Queue empty: forget whose text we had, so the same id coming back
+         * to the front is fetched again rather than left "not tried". */
+        if (with_text) {
+            s_detail_id[0] = '\0';
+        }
+    } else if (with_text && strcmp(notification_id, s_detail_id) != 0) {
         strncpy(want, notification_id, sizeof(want) - 1);
     }
     cJSON_Delete(root);
     if (want[0]) {
-        /* Only the poll task fetches text, so s_detail_id needs no lock. */
+        /* Only the poll task (with_text) fetches text or touches s_detail_*,
+         * so they need no lock. refresh_now() runs on detect_task between
+         * playback and reopening the mic, and must not add a GET there. */
         strncpy(s_detail_id, want, sizeof(s_detail_id) - 1);
         fetch_text(want);
     }
@@ -308,7 +316,7 @@ static void poll_task(void *arg)
 {
     (void)arg;
     for (;;) {
-        poll_once();
+        poll_once(true);
         vTaskDelay(pdMS_TO_TICKS(NOTIFICATION_POLL_INTERVAL_MS));
     }
 }
@@ -365,7 +373,7 @@ void notification_client_get_text(char *out, size_t out_len)
 
 void notification_client_refresh_now(void)
 {
-    poll_once();
+    poll_once(false);   /* count/front only; the poll task loads the text */
 }
 
 bool notification_client_fetch_audio(const char *notification_id,

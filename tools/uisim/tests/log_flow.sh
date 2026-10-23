@@ -28,7 +28,7 @@ print("\n".join(n["text"] for n in json.load(open(r["dir"] + "/tree.json")) if n
     if [ $ok = 1 ]; then echo "PASS $name"; else echo "FAIL $name"; fail=1; fi
 }
 
-case_ first_page_newest "1-5 of 32|REPORT SENT #14" ""
+case_ first_page_newest "1-5 of 32, since boot|REPORT SENT #14" ""
 case_ newer_does_nothing_on_top "1-5 of 32" "" --tap $NEW@300
 case_ older_pages_down "of 32|SENSOR INIT" "REPORT SENT #14" --tap $OLD@300 --tap $OLD@700 --tap $OLD@1100 --tap $OLD@1500 --tap $OLD@1900
 case_ every_line_reachable "BOOT #212|32 of 32" "" --tap $OLD@300 --tap $OLD@700 --tap $OLD@1100 --tap $OLD@1500 \
