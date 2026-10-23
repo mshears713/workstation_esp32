@@ -1584,6 +1584,602 @@
           "text": ""
         }
       }
+    },
+    "music": {
+      "kind": "page",
+      "description": "EXPERIMENT: music remote for Spotify on Mike's laptop (ui_music.c, Calm Paper): prev / play-pause / next, volume - / +, a link tag that always says SIMULATED / CONNECTED / NOT CONNECTED / CONNECTING, optional title/artist, pending + last-result line. Built on open, deleted on close; leaves via its own '< HOME' key. mock=true (default) runs the ui_music_mock.c stand-in bridge (forces SIMULATED); mock=false shows the fixture as a real bridge would report it.",
+      "sources": [
+        "main/ui_paper.c",
+        "main/ui_music.c",
+        "main/ui_music_mock.c"
+      ],
+      "headers": [
+        "ui_paper.h",
+        "ui_music.h",
+        "ui_music_mock.h",
+        "ui_theme.h"
+      ],
+      "adapter": "tools/uisim/targets/music.c",
+      "fields": {
+        "mock": {
+          "type": "bool",
+          "default": true,
+          "doc": "taps go to the mock bridge, which answers after ack_ms and forces link=SIMULATED"
+        },
+        "link": {
+          "type": "enum",
+          "values": [
+            "simulated",
+            "connected",
+            "disconnected",
+            "unknown"
+          ],
+          "default": "simulated",
+          "doc": "link state (only shown as given when mock=false)"
+        },
+        "play": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "playing",
+            "paused"
+          ],
+          "default": "paused",
+          "doc": "playback state"
+        },
+        "title": {
+          "type": "str",
+          "default": "",
+          "doc": "track title, optional"
+        },
+        "artist": {
+          "type": "str",
+          "default": "",
+          "doc": "artist, optional"
+        },
+        "volume": {
+          "type": "int",
+          "default": 40,
+          "doc": "0..100, -1 = not known"
+        },
+        "volume_kind": {
+          "type": "enum",
+          "values": [
+            "laptop",
+            "spotify",
+            "unknown"
+          ],
+          "default": "laptop",
+          "doc": "which volume the number is: Windows system volume or Spotify's own"
+        },
+        "pending": {
+          "type": "enum",
+          "values": [
+            "none",
+            "prev",
+            "play_pause",
+            "next",
+            "vol_down",
+            "vol_up"
+          ],
+          "default": "none",
+          "doc": "command waiting for an answer"
+        },
+        "result": {
+          "type": "enum",
+          "values": [
+            "none",
+            "sent",
+            "failed",
+            "timed_out"
+          ],
+          "default": "none",
+          "doc": "last command's result"
+        },
+        "result_cmd": {
+          "type": "enum",
+          "values": [
+            "none",
+            "prev",
+            "play_pause",
+            "next",
+            "vol_down",
+            "vol_up"
+          ],
+          "default": "none",
+          "doc": "which command the result is about"
+        },
+        "outcome": {
+          "type": "enum",
+          "values": [
+            "ack",
+            "fail",
+            "silent"
+          ],
+          "default": "ack",
+          "doc": "mock: how it answers taps"
+        },
+        "ack_ms": {
+          "type": "int",
+          "default": 400,
+          "doc": "mock: simulated round trip"
+        },
+        "timeout_ms": {
+          "type": "int",
+          "default": 3000,
+          "doc": "mock: silent outcome gives up after this"
+        },
+        "trace": {
+          "type": "bool",
+          "default": false,
+          "doc": "tests: list received commands in the header"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "playing": {
+          "play": "playing",
+          "title": "Midnight City",
+          "artist": "M83",
+          "volume": 40,
+          "result": "sent",
+          "result_cmd": "play_pause"
+        },
+        "paused": {
+          "play": "paused",
+          "title": "Midnight City",
+          "artist": "M83",
+          "volume": 40
+        },
+        "no_title": {
+          "play": "playing",
+          "volume": 55
+        },
+        "long_text": {
+          "play": "playing",
+          "title": "Shine On You Crazy Diamond (Parts I-V) - 2011 Remastered Version",
+          "artist": "Pink Floyd, David Gilmour, Roger Waters, Richard Wright, Nick Mason",
+          "volume": 65
+        },
+        "spotify_volume": {
+          "play": "playing",
+          "title": "Midnight City",
+          "artist": "M83",
+          "volume_kind": "spotify",
+          "volume": 72
+        },
+        "pending": {
+          "play": "playing",
+          "title": "Midnight City",
+          "artist": "M83",
+          "pending": "next"
+        },
+        "failed": {
+          "play": "playing",
+          "title": "Midnight City",
+          "artist": "M83",
+          "result": "failed",
+          "result_cmd": "next"
+        },
+        "timed_out": {
+          "play": "paused",
+          "volume": 40,
+          "result": "timed_out",
+          "result_cmd": "play_pause"
+        },
+        "volume_0": {
+          "play": "playing",
+          "volume": 0,
+          "result": "sent",
+          "result_cmd": "vol_down"
+        },
+        "volume_100": {
+          "play": "playing",
+          "volume": 100,
+          "result": "sent",
+          "result_cmd": "vol_up"
+        },
+        "connected": {
+          "mock": false,
+          "link": "connected",
+          "play": "playing",
+          "title": "Midnight City",
+          "artist": "M83",
+          "result": "sent",
+          "result_cmd": "next"
+        },
+        "disconnected": {
+          "mock": false,
+          "link": "disconnected",
+          "play": "unknown",
+          "volume": -1
+        },
+        "connecting": {
+          "mock": false,
+          "link": "unknown",
+          "play": "unknown",
+          "volume": -1,
+          "volume_kind": "unknown"
+        }
+      }
+    },
+    "companion": {
+      "kind": "page",
+      "description": "EXPERIMENT: Friendly Companion expressive eyes (ui_companion.c). Full-screen face, three eye treatments, seven moods, eight reactions, touch (tap = boop, hold = laugh, drag = eyes follow, 4 quick taps = confused, top-left tap reveals < HOME). Behaviour modelled on FluxGarage RoboEyes (GPL-3.0); no code copied.",
+      "sources": [
+        "main/ui_companion.c"
+      ],
+      "headers": [
+        "ui_companion.h"
+      ],
+      "adapter": "tools/uisim/targets/companion.c",
+      "fields": {
+        "style": {
+          "type": "enum",
+          "values": [
+            "robo",
+            "pill",
+            "ember"
+          ],
+          "default": "robo",
+          "doc": "eye treatment: robo = cyan rounded squares on navy, pill = white pills on black, ember = wide amber on brown"
+        },
+        "mood": {
+          "type": "enum",
+          "values": [
+            "neutral",
+            "happy",
+            "sleepy",
+            "thinking",
+            "listening",
+            "worried",
+            "asleep"
+          ],
+          "default": "neutral",
+          "doc": "starting mood (ui_companion_set_mood)"
+        },
+        "react": {
+          "type": "enum",
+          "values": [
+            "none",
+            "blink",
+            "boop",
+            "happy",
+            "laugh",
+            "confused",
+            "surprised",
+            "wink",
+            "yawn"
+          ],
+          "default": "none",
+          "doc": "reaction to play (ui_companion_react)"
+        },
+        "preview": {
+          "type": "bool",
+          "default": false,
+          "doc": "snap to the pose (ui_companion_preview) instead of easing - for stills"
+        },
+        "elapsed_ms": {
+          "type": "int",
+          "default": 0,
+          "doc": "with preview: how far into the reaction"
+        },
+        "react_at_ms": {
+          "type": "int",
+          "default": 0,
+          "doc": "without preview: start the reaction at this simulated ms (0 = at open)"
+        },
+        "mood2": {
+          "type": "enum",
+          "values": [
+            "neutral",
+            "happy",
+            "sleepy",
+            "thinking",
+            "listening",
+            "worried",
+            "asleep"
+          ],
+          "default": "neutral",
+          "doc": "mood the app switches to at mood2_at_ms"
+        },
+        "mood2_at_ms": {
+          "type": "int",
+          "default": 0,
+          "doc": "0 = never; tests the status hook mid-run"
+        },
+        "still": {
+          "type": "bool",
+          "default": false,
+          "doc": "no autoblink / idle gaze / doze"
+        },
+        "seed": {
+          "type": "int",
+          "default": 7,
+          "doc": "idle randomness seed (fixed = reproducible)"
+        },
+        "doze_s": {
+          "type": "int",
+          "default": 0,
+          "doc": "falls asleep after this long without touch (0 = never)"
+        },
+        "look_x": {
+          "type": "int",
+          "default": -1,
+          "doc": "glance at this screen x (with look_y); -1 = no"
+        },
+        "look_y": {
+          "type": "int",
+          "default": -1,
+          "doc": "glance at this screen y"
+        },
+        "say": {
+          "type": "str",
+          "default": "",
+          "doc": "line under the eyes (ui_companion_say)"
+        },
+        "say2": {
+          "type": "str",
+          "default": "",
+          "doc": "line said at mood2_at_ms"
+        },
+        "show_state": {
+          "type": "bool",
+          "default": false,
+          "doc": "TEST ONLY: small mood/reaction/key line bottom-right"
+        },
+        "measure": {
+          "type": "bool",
+          "default": false,
+          "doc": "TEST ONLY: print invalidated px per refresh to the render log once a second"
+        }
+      },
+      "fixtures": {
+        "default": {
+          "preview": true
+        },
+        "robo_neutral": {
+          "style": "robo",
+          "preview": true
+        },
+        "robo_happy": {
+          "style": "robo",
+          "preview": true,
+          "mood": "happy"
+        },
+        "robo_sleepy": {
+          "style": "robo",
+          "preview": true,
+          "mood": "sleepy"
+        },
+        "robo_thinking": {
+          "style": "robo",
+          "preview": true,
+          "mood": "thinking"
+        },
+        "robo_listening": {
+          "style": "robo",
+          "preview": true,
+          "mood": "listening"
+        },
+        "robo_worried": {
+          "style": "robo",
+          "preview": true,
+          "mood": "worried"
+        },
+        "robo_asleep": {
+          "style": "robo",
+          "preview": true,
+          "mood": "asleep",
+          "elapsed_ms": 900
+        },
+        "robo_look_left": {
+          "style": "robo",
+          "look_x": 20,
+          "look_y": 110,
+          "still": true
+        },
+        "robo_boop": {
+          "style": "robo",
+          "preview": true,
+          "react": "boop",
+          "elapsed_ms": 600
+        },
+        "robo_laugh": {
+          "style": "robo",
+          "preview": true,
+          "react": "laugh",
+          "elapsed_ms": 140
+        },
+        "robo_confused": {
+          "style": "robo",
+          "preview": true,
+          "react": "confused",
+          "elapsed_ms": 1200
+        },
+        "robo_surprised": {
+          "style": "robo",
+          "preview": true,
+          "react": "surprised",
+          "elapsed_ms": 400
+        },
+        "robo_wink": {
+          "style": "robo",
+          "preview": true,
+          "react": "wink",
+          "elapsed_ms": 250
+        },
+        "robo_yawn": {
+          "style": "robo",
+          "preview": true,
+          "react": "yawn",
+          "elapsed_ms": 1200
+        },
+        "pill_neutral": {
+          "style": "pill",
+          "preview": true
+        },
+        "pill_happy": {
+          "style": "pill",
+          "preview": true,
+          "mood": "happy"
+        },
+        "pill_sleepy": {
+          "style": "pill",
+          "preview": true,
+          "mood": "sleepy"
+        },
+        "pill_thinking": {
+          "style": "pill",
+          "preview": true,
+          "mood": "thinking"
+        },
+        "pill_listening": {
+          "style": "pill",
+          "preview": true,
+          "mood": "listening"
+        },
+        "pill_worried": {
+          "style": "pill",
+          "preview": true,
+          "mood": "worried"
+        },
+        "pill_asleep": {
+          "style": "pill",
+          "preview": true,
+          "mood": "asleep",
+          "elapsed_ms": 900
+        },
+        "pill_look_left": {
+          "style": "pill",
+          "look_x": 20,
+          "look_y": 110,
+          "still": true
+        },
+        "pill_boop": {
+          "style": "pill",
+          "preview": true,
+          "react": "boop",
+          "elapsed_ms": 600
+        },
+        "pill_laugh": {
+          "style": "pill",
+          "preview": true,
+          "react": "laugh",
+          "elapsed_ms": 140
+        },
+        "pill_confused": {
+          "style": "pill",
+          "preview": true,
+          "react": "confused",
+          "elapsed_ms": 1200
+        },
+        "pill_surprised": {
+          "style": "pill",
+          "preview": true,
+          "react": "surprised",
+          "elapsed_ms": 400
+        },
+        "pill_wink": {
+          "style": "pill",
+          "preview": true,
+          "react": "wink",
+          "elapsed_ms": 250
+        },
+        "pill_yawn": {
+          "style": "pill",
+          "preview": true,
+          "react": "yawn",
+          "elapsed_ms": 1200
+        },
+        "ember_neutral": {
+          "style": "ember",
+          "preview": true
+        },
+        "ember_happy": {
+          "style": "ember",
+          "preview": true,
+          "mood": "happy"
+        },
+        "ember_sleepy": {
+          "style": "ember",
+          "preview": true,
+          "mood": "sleepy"
+        },
+        "ember_thinking": {
+          "style": "ember",
+          "preview": true,
+          "mood": "thinking"
+        },
+        "ember_listening": {
+          "style": "ember",
+          "preview": true,
+          "mood": "listening"
+        },
+        "ember_worried": {
+          "style": "ember",
+          "preview": true,
+          "mood": "worried"
+        },
+        "ember_asleep": {
+          "style": "ember",
+          "preview": true,
+          "mood": "asleep",
+          "elapsed_ms": 900
+        },
+        "ember_look_left": {
+          "style": "ember",
+          "look_x": 20,
+          "look_y": 110,
+          "still": true
+        },
+        "ember_boop": {
+          "style": "ember",
+          "preview": true,
+          "react": "boop",
+          "elapsed_ms": 600
+        },
+        "ember_laugh": {
+          "style": "ember",
+          "preview": true,
+          "react": "laugh",
+          "elapsed_ms": 140
+        },
+        "ember_confused": {
+          "style": "ember",
+          "preview": true,
+          "react": "confused",
+          "elapsed_ms": 1200
+        },
+        "ember_surprised": {
+          "style": "ember",
+          "preview": true,
+          "react": "surprised",
+          "elapsed_ms": 400
+        },
+        "ember_wink": {
+          "style": "ember",
+          "preview": true,
+          "react": "wink",
+          "elapsed_ms": 250
+        },
+        "ember_yawn": {
+          "style": "ember",
+          "preview": true,
+          "react": "yawn",
+          "elapsed_ms": 1200
+        },
+        "robo_backend_down": {
+          "preview": true,
+          "mood": "worried",
+          "say": "Backend is down."
+        },
+        "robo_long_say": {
+          "preview": true,
+          "mood": "thinking",
+          "say": "Waiting for the workstation backend to answer"
+        }
+      }
     }
   }
 }
