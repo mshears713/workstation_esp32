@@ -1,0 +1,198 @@
+/*
+ * SPDX-FileCopyrightText: 2021-2025 Espressif Systems (Shanghai) CO LTD
+ *
+ * SPDX-License-Identifier: CC0-1.0
+ */
+
+/**
+ * @file
+ * @brief Speaker playback for notification audio - see audio_playback.h.
+ * @details Follows the esp-box-3 BSP's own documented speaker example
+ *          verbatim in call order (set volume, then open, then write, then
+ *          close - see include/bsp/esp-box-3.h's g03_audio doc comment):
+ *
+ *              esp_codec_dev_set_out_vol(spk_codec_dev, DEFAULT_VOLUME);
+ *              esp_codec_dev_open(spk_codec_dev, &fs);
+ *              esp_codec_dev_write(spk_codec_dev, wav_bytes, bytes_read_from_spiffs);
+ *              esp_codec_dev_close(spk_codec_dev);
+ *
+ *          The only departure from that one-shot example is writing in
+ *          bounded chunks instead of the whole buffer in a single call, so
+ *          audio_playback_stop() (the playback overlay's STOP button) can
+ *          take effect between chunks instead of only after the entire clip
+ *          has been written - the same reason audio_capture.c's mic read
+ *          loop is chunked rather than one big read.
+ */
+
+#include <string.h>
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "audio_playback.h"
+
+static const char *TAG = "audio_playback";
+
+#define PLAYBACK_BITS_PER_SAMPLE 16
+#define PLAYBACK_CHANNELS 1
+
+/* ~85ms per chunk at 24kHz/16-bit/mono - fine enough for STOP to feel
+ * responsive without turning every chunk into per-call overhead. */
+#define PLAYBACK_WRITE_CHUNK_BYTES 4096
+
+/* 0-100 int scale per esp_codec_dev_set_out_vol's documented range - starting
+ * point for the volume control UI (status_deck_ui.c's up/down buttons next
+ * to the listening ring), same "reasonable default, not a measured/tested
+ * limit" choice audio_capture.c makes for its own mic gain. */
+#define PLAYBACK_VOLUME_DEFAULT 70
+
+static esp_codec_dev_handle_t s_spk_dev = NULL;
+static int s_volume = PLAYBACK_VOLUME_DEFAULT;
+
+/* Set by audio_playback_stop() (any task, e.g. the STOP button's LVGL
+ * callback), read once per write-chunk by audio_playback_play() - same
+ * bare-volatile, no-mutex-needed pattern audio_capture.c's s_stop_requested
+ * uses, safe because only one playback is ever in flight (it blocks the
+ * calling task, see audio_playback.h). */
+static volatile bool s_stop_requested = false;
+
+void audio_playback_init(esp_codec_dev_handle_t speaker_dev)
+{
+    s_spk_dev = speaker_dev;
+    if (!speaker_dev) {
+        ESP_LOGW(TAG, "no speaker handle - notification playback unavailable this boot");
+    }
+}
+
+void audio_playback_stop(void)
+{
+    s_stop_requested = true;
+}
+
+void audio_playback_set_volume(int volume)
+{
+    if (volume < 0) {
+        volume = 0;
+    } else if (volume > 100) {
+        volume = 100;
+    }
+    s_volume = volume;
+}
+
+int audio_playback_get_volume(void)
+{
+    return s_volume;
+}
+
+bool audio_playback_stream(audio_pcm_producer_t produce, void *ctx, int volume)
+{
+    if (!s_spk_dev || !produce) {
+        ESP_LOGW(TAG, "stream unavailable: missing codec/producer");
+        return false;
+    }
+    s_stop_requested = false;
+    esp_codec_dev_sample_info_t fs = {
+        .bits_per_sample = 16, .channel = 1, .sample_rate = 24000,
+    };
+    if (volume < 0) volume = 0;
+    if (volume > 100) volume = 100;
+    if (esp_codec_dev_set_out_vol(s_spk_dev, volume) != ESP_CODEC_DEV_OK) {
+        ESP_LOGW(TAG, "stream volume setup failed");
+        return false;
+    }
+    if (esp_codec_dev_open(s_spk_dev, &fs) != ESP_CODEC_DEV_OK) {
+        ESP_LOGW(TAG, "stream speaker open failed");
+        esp_codec_dev_set_out_vol(s_spk_dev, s_volume);
+        return false;
+    }
+    int16_t chunk[256];
+    bool ok = true;
+    unsigned chunks = 0;
+    unsigned slow_reads = 0;
+    int64_t max_read_us = 0;
+    size_t written_frames = 0;
+    ESP_LOGI(TAG, "stream started: 24000Hz mono, volume=%d", volume);
+    while (!s_stop_requested) {
+        int64_t read_start = esp_timer_get_time();
+        size_t frames = produce(chunk, 256, ctx);
+        int64_t read_us = esp_timer_get_time() - read_start;
+        if (read_us > max_read_us) max_read_us = read_us;
+        if (read_us > 10667) slow_reads++;
+        if (!frames) break;
+        if (frames > 256 || esp_codec_dev_write(s_spk_dev, chunk,
+                (int)(frames * sizeof(int16_t))) != ESP_CODEC_DEV_OK) {
+            ok = false;
+            ESP_LOGW(TAG, "stream write failed after %u frames", (unsigned)written_frames);
+            break;
+        }
+        written_frames += frames;
+        /* I2S paces writes. Occasional yield protects IDLE without adding a
+         * full scheduler tick to every 10.7ms PCM block. */
+        if (++chunks % 16 == 0) vTaskDelay(1);
+    }
+    esp_codec_dev_close(s_spk_dev);
+    esp_codec_dev_set_out_vol(s_spk_dev, s_volume);
+    /* Producer lateness is a risk indicator, not proof of an I2S underrun. */
+    ESP_LOGI(TAG, "stream closed: frames=%u slow_reads=%u max_read_us=%lld ok=%d",
+             (unsigned)written_frames, slow_reads, (long long)max_read_us, ok);
+    return ok;
+}
+
+bool audio_playback_play(const uint8_t *pcm, size_t len, uint32_t sample_rate_hz)
+{
+    if (!s_spk_dev || !pcm || len == 0) {
+        return false;
+    }
+
+    s_stop_requested = false;
+
+    esp_codec_dev_set_out_vol(s_spk_dev, s_volume);
+
+    esp_codec_dev_sample_info_t fs = {
+        .bits_per_sample = PLAYBACK_BITS_PER_SAMPLE,
+        .channel = PLAYBACK_CHANNELS,
+        .channel_mask = 0,
+        .sample_rate = sample_rate_hz,
+        .mclk_multiple = 0,
+    };
+    if (esp_codec_dev_open(s_spk_dev, &fs) != ESP_CODEC_DEV_OK) {
+        ESP_LOGE(TAG, "speaker open failed");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "playback start: %u bytes at %uHz/%dbit/%dch",
+             (unsigned)len, (unsigned)sample_rate_hz, PLAYBACK_BITS_PER_SAMPLE, PLAYBACK_CHANNELS);
+
+    size_t written = 0;
+    bool stopped_early = false;
+    while (written < len) {
+        if (s_stop_requested) {
+            stopped_early = true;
+            break;
+        }
+
+        size_t remaining = len - written;
+        size_t chunk = remaining < PLAYBACK_WRITE_CHUNK_BYTES ? remaining : PLAYBACK_WRITE_CHUNK_BYTES;
+
+        int err = esp_codec_dev_write(s_spk_dev, (void *)(pcm + written), (int)chunk);
+        if (err != ESP_CODEC_DEV_OK) {
+            ESP_LOGW(TAG, "speaker write error at byte %u: %d", (unsigned)written, err);
+            break;
+        }
+        written += chunk;
+    }
+
+    esp_codec_dev_close(s_spk_dev);
+
+    if (stopped_early) {
+        ESP_LOGI(TAG, "playback stopped early at %u/%u bytes", (unsigned)written, (unsigned)len);
+        return false;
+    }
+    if (written < len) {
+        ESP_LOGW(TAG, "playback ended early on a write error at %u/%u bytes", (unsigned)written, (unsigned)len);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "playback complete: %u bytes", (unsigned)written);
+    return true;
+}

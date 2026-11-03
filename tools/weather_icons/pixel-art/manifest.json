@@ -1,0 +1,44 @@
+{
+  "keys_replaced": [
+    "sun",
+    "moon",
+    "partly",
+    "cloud",
+    "rain",
+    "storm"
+  ],
+  "untouched_keys": [
+    "fog",
+    "snow"
+  ],
+  "native_grids": {
+    "sun": [
+      16,
+      16
+    ],
+    "moon": [
+      16,
+      16
+    ],
+    "cloud_variants": [
+      24,
+      24
+    ]
+  },
+  "actual_sizes": [
+    48,
+    30
+  ],
+  "pixel_bytes_per_icon": 12816,
+  "six_icon_pixel_bytes": 76896,
+  "baseline_six_icon_pixel_bytes": 76896,
+  "estimated_net_static_image_delta": 0,
+  "asset_sha256": {
+    "sun": "a3e63062a738804c55de22c140dc4ff22e2c0efd6bb5ffb4bbe37aa7a1f6e979",
+    "moon": "79076c5075d0c4493f00081634bc9c9a588aff7af016f12cfeeefbbb76994eb9",
+    "partly": "460f4e7ecaeb7dac29d39c38f0b382bd079bbda9060a2bccf24ef07edcfa8afe",
+    "cloud": "12c028ba58b5d4b755d10ab87eda90a19a3ed9b5ce1f0e0ccfcc87cbc5ae6ed4",
+    "rain": "8083281eb97b269151c8d814cd527e80f33be25eae1d87b440e9f2cda81d6483",
+    "storm": "dc8f4350bc29aafe6cf0784d52d1beb3a6930d870c6cfdbc981792f8fb8e1f56"
+  }
+}

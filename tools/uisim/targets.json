@@ -1,0 +1,2603 @@
+{
+  "about": "Render targets for the workstation-ui simulator (/opt/workstation/lvgl-sim). Each target compiles REAL firmware UI sources from main/ plus a small adapter in tools/uisim/targets/ that turns fixture state into the same calls status_deck_ui.c makes. Fixture values are flat strings/ints/bools; 'fixtures' are named, realistic states. See tools/uisim/README.md.",
+  "targets": {
+    "voice_listening_widget": {
+      "kind": "component",
+      "description": "HOME's microphone: rotating outer ring with a travelling highlight, counter-rotating accent, inner ring, halo, navy disc, white mic. 172x172. Its colour/motion is the device's link indicator. Rendered alone, centred on a plain screen.",
+      "sources": [
+        "main/voice_listening_widget.c"
+      ],
+      "headers": [
+        "voice_listening_widget.h"
+      ],
+      "adapter": "tools/uisim/targets/voice_listening_widget.c",
+      "fields": {
+        "link": {
+          "type": "enum",
+          "values": [
+            "ok",
+            "down",
+            "no_net",
+            "unknown"
+          ],
+          "default": "ok",
+          "doc": "backend reachability as the widget shows it: ok = spinning + white mic; down = stopped + red mic; no_net = stopped + grey mic; unknown = spinning + grey mic"
+        },
+        "notification_pending": {
+          "type": "bool",
+          "default": false,
+          "doc": "outer ring turns orange while a low-confidence notification waits"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "backend_down": {
+          "link": "down"
+        },
+        "no_wifi": {
+          "link": "no_net"
+        },
+        "booting": {
+          "link": "unknown"
+        },
+        "notification": {
+          "notification_pending": true
+        }
+      }
+    },
+    "home": {
+      "kind": "page",
+      "description": "HOME 1.3.0 (ui_home.c): Orlando weather column (now / +2 h / +6 h / tomorrow, F, rain %) left; the listening widget at 104 px top-right with its link caption; MENU bottom-right. Dark theme. Values are what GET /api/v1/weather returns, as render_weather() passes them.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_home.c",
+        "main/voice_listening_widget.c",
+        "main/weather_icons.c",
+        "main/ui_mouse.c",
+        "main/ui_weather_stage.c"
+      ],
+      "headers": [
+        "ui_kit.h",
+        "ui_home.h",
+        "voice_listening_widget.h",
+        "weather_icons.h",
+        "ui_theme.h"
+      ],
+      "adapter": "tools/uisim/targets/home.c",
+      "fields": {
+        "link": {
+          "type": "enum",
+          "values": [
+            "ok",
+            "down",
+            "no_net",
+            "unknown"
+          ],
+          "default": "ok",
+          "doc": "backend_health state mapped the way voice_ui_timer_cb maps it"
+        },
+        "notification_pending": {
+          "type": "bool",
+          "default": false,
+          "doc": "notification_client says a low-confidence notification is waiting"
+        },
+        "weather_valid": {
+          "type": "bool",
+          "default": true,
+          "doc": "false until the first weather answer (or if the backend has none)"
+        },
+        "status": {
+          "type": "str",
+          "default": "Loading weather",
+          "doc": "shown instead of the condition when weather_valid is false"
+        },
+        "location": {
+          "type": "str",
+          "default": "Orlando",
+          "doc": "backend config weather_location_name"
+        },
+        "stale_as_of": {
+          "type": "str",
+          "default": "",
+          "doc": "non-empty when the data is over 30 min old: backend as_of, e.g. '2:10 PM'"
+        },
+        "now_temp": {
+          "type": "int",
+          "default": 84,
+          "doc": "degrees F, rounded"
+        },
+        "now_icon": {
+          "type": "enum",
+          "values": [
+            "sun",
+            "moon",
+            "partly",
+            "cloud",
+            "fog",
+            "rain",
+            "storm",
+            "snow"
+          ],
+          "default": "partly",
+          "doc": "icon key from the backend's WMO mapping"
+        },
+        "now_text": {
+          "type": "str",
+          "default": "Partly cloudy",
+          "doc": "longest real value: 'Thunderstorm' / 'Partly cloudy'"
+        },
+        "now_rain": {
+          "type": "int",
+          "default": 10,
+          "doc": "precipitation probability %"
+        },
+        "slot1_label": {
+          "type": "str",
+          "default": "3 PM",
+          "doc": "+2 h, local hour"
+        },
+        "slot1_temp": {
+          "type": "int",
+          "default": 87,
+          "doc": ""
+        },
+        "slot1_icon": {
+          "type": "enum",
+          "values": [
+            "sun",
+            "moon",
+            "partly",
+            "cloud",
+            "fog",
+            "rain",
+            "storm",
+            "snow"
+          ],
+          "default": "storm",
+          "doc": ""
+        },
+        "slot1_rain": {
+          "type": "int",
+          "default": 60,
+          "doc": ""
+        },
+        "slot2_label": {
+          "type": "str",
+          "default": "7 PM",
+          "doc": "+6 h, local hour"
+        },
+        "slot2_temp": {
+          "type": "int",
+          "default": 79,
+          "doc": ""
+        },
+        "slot2_icon": {
+          "type": "enum",
+          "values": [
+            "sun",
+            "moon",
+            "partly",
+            "cloud",
+            "fog",
+            "rain",
+            "storm",
+            "snow"
+          ],
+          "default": "partly",
+          "doc": ""
+        },
+        "slot2_rain": {
+          "type": "int",
+          "default": 20,
+          "doc": ""
+        },
+        "tmrw_hi": {
+          "type": "int",
+          "default": 88,
+          "doc": ""
+        },
+        "tmrw_lo": {
+          "type": "int",
+          "default": 73,
+          "doc": ""
+        },
+        "tmrw_icon": {
+          "type": "enum",
+          "values": [
+            "sun",
+            "moon",
+            "partly",
+            "cloud",
+            "fog",
+            "rain",
+            "storm",
+            "snow"
+          ],
+          "default": "sun",
+          "doc": ""
+        },
+        "tmrw_rain": {
+          "type": "int",
+          "default": 20,
+          "doc": "daily max precipitation probability %"
+        },
+        "choreography": {
+          "type": "bool",
+          "default": false,
+          "doc": "Start a staged weather refresh with a distinct new snapshot"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "night": {
+          "now_temp": 63,
+          "now_icon": "moon",
+          "now_text": "Clear",
+          "now_rain": 0,
+          "slot1_label": "1 AM",
+          "slot1_temp": 61,
+          "slot1_icon": "moon",
+          "slot1_rain": 0,
+          "slot2_label": "5 AM",
+          "slot2_temp": 58,
+          "slot2_icon": "moon",
+          "slot2_rain": 0,
+          "tmrw_hi": 79,
+          "tmrw_lo": 58,
+          "tmrw_icon": "partly",
+          "tmrw_rain": 0
+        },
+        "worst_case": {
+          "now_temp": 104,
+          "now_icon": "storm",
+          "now_text": "Thunderstorm",
+          "now_rain": 100,
+          "slot1_label": "12 PM",
+          "slot1_temp": -10,
+          "slot1_rain": 100,
+          "slot2_label": "10 PM",
+          "slot2_temp": 100,
+          "slot2_icon": "snow",
+          "slot2_rain": 100,
+          "tmrw_hi": 101,
+          "tmrw_lo": -12,
+          "tmrw_icon": "fog",
+          "tmrw_rain": 100
+        },
+        "stale": {
+          "stale_as_of": "11:40 AM",
+          "link": "down"
+        },
+        "loading": {
+          "weather_valid": false,
+          "link": "unknown"
+        },
+        "backend_down": {
+          "link": "down",
+          "weather_valid": false,
+          "status": "No weather"
+        },
+        "no_wifi": {
+          "link": "no_net"
+        },
+        "notification": {
+          "notification_pending": true
+        },
+        "choreography": {
+          "choreography": true
+        }
+      }
+    },
+    "menu": {
+      "kind": "page",
+      "description": "MENU (ui_menu.c): six 151x54 buttons, two to a row (SENSORS, LOG, PROJECTS, FIRMWARE, SETTINGS, DIAG) with MORE > in the title band; page=more: the second page of experiments (MESSAGES, MUSIC, FACE, SURVEY) with < MENU. The < HOME back button on top.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_menu.c"
+      ],
+      "headers": [
+        "ui_kit.h",
+        "ui_menu.h",
+        "ui_theme.h"
+      ],
+      "adapter": "tools/uisim/targets/menu.c",
+      "fields": {
+        "page": {
+          "type": "enum",
+          "values": [
+            "main",
+            "more"
+          ],
+          "default": "main",
+          "doc": "first or second menu page"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "more": {
+          "page": "more"
+        }
+      }
+    },
+    "firmware": {
+      "kind": "page",
+      "description": "FIRMWARE as a timeline (ui_firmware_page.c + ui_fw_timeline.c): running version and slot (CONFIRMED / ON PROBATION); CHECK - GET - VERIFY - BOOT - HEALTH - KEPT from ota_service's state, a FAILED placed on its stage by ota_service's own message (unknown messages point at no stage); download percent is the updater's measured one; the health gate shows its 90 s limit, not an invented countdown; backend address (FB = fallback) and build time; CHECK NOW asks CLAWBOX again, never forces an install.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_fw_timeline.c",
+        "main/ui_firmware_page.c"
+      ],
+      "headers": [
+        "ui_firmware_page.h",
+        "ui_fw_timeline.h",
+        "ui_kit.h",
+        "ui_theme.h"
+      ],
+      "adapter": "tools/uisim/targets/firmware.c",
+      "fields": {
+        "version": {
+          "type": "str",
+          "default": "1.2.2+2d189af",
+          "doc": "firmware_version(): <semver>+<sha>[-dirty]"
+        },
+        "built_at": {
+          "type": "str",
+          "default": "Sep 23 2026 15:06:22",
+          "doc": "firmware_built_at()"
+        },
+        "backend_url": {
+          "type": "str",
+          "default": "http://192.168.1.71:8000",
+          "doc": "device_config_backend_base_url()"
+        },
+        "backend_fallback": {
+          "type": "bool",
+          "default": false,
+          "doc": "running on the fallback address (clawbox.local)"
+        },
+        "slot": {
+          "type": "str",
+          "default": "ota_1",
+          "doc": "running partition label"
+        },
+        "pending_verify": {
+          "type": "bool",
+          "default": false,
+          "doc": "image still on probation"
+        },
+        "ota_state": {
+          "type": "enum",
+          "values": [
+            "idle",
+            "validating",
+            "checking",
+            "update ready",
+            "downloading",
+            "verifying",
+            "rebooting",
+            "failed"
+          ],
+          "default": "idle",
+          "doc": "ota_status_t.state"
+        },
+        "ota_message": {
+          "type": "str",
+          "default": "up to date (1.2.2+2d189af)",
+          "doc": "ota_status_t.message (<= 79 chars), ota_service.c's strings"
+        },
+        "desired_version": {
+          "type": "str",
+          "default": "1.2.2+2d189af",
+          "doc": "ota_status_t.desired_version"
+        },
+        "ota_progress_pct": {
+          "type": "int",
+          "default": 0,
+          "doc": "0-100 while downloading (bytes written / size)"
+        },
+        "rolled_back": {
+          "type": "bool",
+          "default": false,
+          "doc": "this boot came after a failed image"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "checking": {
+          "ota_state": "checking",
+          "ota_message": ""
+        },
+        "update_ready": {
+          "ota_state": "update ready",
+          "ota_message": "desired 1.2.3+9f3c1aa",
+          "desired_version": "1.2.3+9f3c1aa"
+        },
+        "downloading": {
+          "ota_state": "downloading",
+          "ota_progress_pct": 42,
+          "ota_message": "1.2.3+9f3c1aa -> ota_0",
+          "desired_version": "1.2.3+9f3c1aa"
+        },
+        "verifying": {
+          "ota_state": "verifying",
+          "ota_message": "checking hash",
+          "desired_version": "1.2.3+9f3c1aa"
+        },
+        "rebooting": {
+          "ota_state": "rebooting",
+          "ota_message": "installed 1.2.3+9f3c1aa, rebooting",
+          "desired_version": "1.2.3+9f3c1aa"
+        },
+        "probation": {
+          "pending_verify": true,
+          "ota_state": "validating",
+          "ota_message": "new image on probation, validating",
+          "version": "1.2.3+9f3c1aa",
+          "slot": "ota_0"
+        },
+        "kept": {
+          "ota_state": "idle",
+          "ota_message": "image marked valid",
+          "version": "1.2.3+9f3c1aa",
+          "slot": "ota_0"
+        },
+        "failed_download": {
+          "ota_state": "failed",
+          "ota_message": "cannot fetch image",
+          "desired_version": "1.2.3+9f3c1aa"
+        },
+        "failed_too_big": {
+          "ota_state": "failed",
+          "ota_message": "image 5767168 > slot 5636096",
+          "desired_version": "1.2.3+9f3c1aa"
+        },
+        "failed_hash": {
+          "ota_state": "failed",
+          "ota_message": "hash mismatch, not installing",
+          "desired_version": "1.2.3+9f3c1aa"
+        },
+        "failed_health": {
+          "ota_state": "failed",
+          "pending_verify": true,
+          "ota_message": "unhealthy (backend not answering), rolling back",
+          "version": "1.2.3+9f3c1aa",
+          "slot": "ota_0"
+        },
+        "rolled_back_boot": {
+          "rolled_back": true,
+          "ota_message": "running 1.2.2+2d189af"
+        },
+        "failed_unknown": {
+          "ota_state": "failed",
+          "ota_message": "something new went wrong in a future build"
+        },
+        "fallback_backend": {
+          "backend_url": "http://clawbox.local:8000",
+          "backend_fallback": true,
+          "ota_message": "no manifest from CLAWBOX"
+        },
+        "dirty_long": {
+          "version": "1.3.0+ac594bc-dirty",
+          "built_at": "Oct 22 2026 17:40:51",
+          "ota_message": "up to date (1.3.0+ac594bc-dirty)"
+        }
+      }
+    },
+    "diagnostics": {
+      "kind": "page",
+      "description": "DIAGNOSTICS (ui_diagnostics.c + ui_diag_format.c): four square blocks - LINK (Wi-Fi state + RSSI, backend reachability), SENSORS (ICM42670 accel and AHT30 temp/RH freshness), UPTIME (days / h m), INTERNAL HEAP KiB (free, largest block, min since boot). The global < HOME button on top. ALL telemetry values in these fixtures are ILLUSTRATIVE except heap_constrained, which uses the 1.2.0 report's real min/largest.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_diag_format.c",
+        "main/ui_diagnostics.c"
+      ],
+      "headers": [
+        "ui_kit.h",
+        "ui_diag_format.h",
+        "ui_diagnostics.h",
+        "ui_theme.h"
+      ],
+      "adapter": "tools/uisim/targets/diagnostics.c",
+      "fields": {
+        "wifi": {
+          "type": "enum",
+          "values": [
+            "off",
+            "joining",
+            "online",
+            "retry"
+          ],
+          "default": "online",
+          "doc": "wifi_mgr_state_t: DISCONNECTED / CONNECTING / ONLINE / RETRY_WAIT"
+        },
+        "have_rssi": {
+          "type": "bool",
+          "default": true,
+          "doc": "esp_wifi_sta_get_ap_info() answered (only tried while ONLINE)"
+        },
+        "rssi_dbm": {
+          "type": "int",
+          "default": -61,
+          "doc": "wifi_ap_record_t.rssi"
+        },
+        "wifi_reason": {
+          "type": "str",
+          "default": "",
+          "doc": "wifi_mgr reason_text (<= 19 chars): NO AP FOUND / AUTH FAILED / WIFI LOST / RETRYING"
+        },
+        "wifi_attempts": {
+          "type": "int",
+          "default": 1,
+          "doc": "attempt_count"
+        },
+        "wifi_retry_s": {
+          "type": "int",
+          "default": 0,
+          "doc": "retry_remaining_s"
+        },
+        "api": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "ok",
+            "down",
+            "no_net"
+          ],
+          "default": "ok",
+          "doc": "backend_health_state_t"
+        },
+        "api_ever_ok": {
+          "type": "bool",
+          "default": true,
+          "doc": "backend_health_stats_t.ever_ok"
+        },
+        "api_secs_since_ok": {
+          "type": "int",
+          "default": 0,
+          "doc": "backend_health_stats_t.secs_since_ok"
+        },
+        "accel": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "failed",
+            "waiting",
+            "live",
+            "stale"
+          ],
+          "default": "live",
+          "doc": "ui_diag_freshness(): probe not run / init failed / no sample yet / within 300 ms / older"
+        },
+        "accel_age_ms": {
+          "type": "int",
+          "default": 100,
+          "doc": "now - sensor_last_good_us"
+        },
+        "env": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "failed",
+            "waiting",
+            "live",
+            "stale"
+          ],
+          "default": "live",
+          "doc": "same, AHT30 (temp + RH share one timestamp), stale after 3 s"
+        },
+        "env_age_ms": {
+          "type": "int",
+          "default": 800,
+          "doc": "now - humiture_last_good_us"
+        },
+        "uptime_s": {
+          "type": "str",
+          "default": "371553",
+          "doc": "seconds since boot as a decimal string (uint32 range)"
+        },
+        "heap_free": {
+          "type": "int",
+          "default": 42190,
+          "doc": "heap_caps_get_free_size(MALLOC_CAP_INTERNAL), bytes"
+        },
+        "heap_largest": {
+          "type": "int",
+          "default": 18432,
+          "doc": "heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)"
+        },
+        "heap_min": {
+          "type": "int",
+          "default": 9830,
+          "doc": "heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL)"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "backend_down": {
+          "api": "down",
+          "api_secs_since_ok": 134,
+          "rssi_dbm": -78
+        },
+        "backend_never_up": {
+          "api": "down",
+          "api_ever_ok": false,
+          "uptime_s": "312"
+        },
+        "no_network": {
+          "wifi": "off",
+          "have_rssi": false,
+          "api": "no_net",
+          "api_ever_ok": false
+        },
+        "retrying": {
+          "wifi": "retry",
+          "have_rssi": false,
+          "wifi_reason": "AUTH FAILED",
+          "wifi_attempts": 6,
+          "wifi_retry_s": 24,
+          "api": "no_net"
+        },
+        "retrying_long_cause": {
+          "wifi": "retry",
+          "have_rssi": false,
+          "wifi_reason": "XXXXXXXXXXXXXXXXXXX",
+          "wifi_attempts": 41,
+          "wifi_retry_s": 120,
+          "api": "no_net"
+        },
+        "joining": {
+          "wifi": "joining",
+          "have_rssi": false,
+          "wifi_attempts": 3,
+          "api": "no_net"
+        },
+        "booting": {
+          "wifi": "joining",
+          "have_rssi": false,
+          "api": "unknown",
+          "api_ever_ok": false,
+          "accel": "waiting",
+          "env": "waiting",
+          "uptime_s": "9",
+          "heap_free": 31744,
+          "heap_largest": 14336,
+          "heap_min": 28672
+        },
+        "sensor_init_failed": {
+          "accel": "failed",
+          "env": "failed"
+        },
+        "stale_sensors": {
+          "accel": "stale",
+          "accel_age_ms": 4200,
+          "env": "stale",
+          "env_age_ms": 2520000
+        },
+        "long_uptime": {
+          "uptime_s": "31560720",
+          "api": "down",
+          "api_secs_since_ok": 4320000,
+          "env": "stale",
+          "env_age_ms": 2000000000
+        },
+        "uptime_max": {
+          "uptime_s": "4294967295"
+        },
+        "wifi_lost_cached_ok": {
+          "wifi": "off",
+          "api": "ok",
+          "have_rssi": false
+        },
+        "unknown_sources": {
+          "api": "unknown",
+          "api_ever_ok": false,
+          "accel": "unknown",
+          "env": "unknown",
+          "uptime_s": "0"
+        },
+        "heap_constrained": {
+          "heap_free": 9420,
+          "heap_largest": 6144,
+          "heap_min": 1207,
+          "uptime_s": "425"
+        }
+      }
+    },
+    "survey": {
+      "kind": "page",
+      "description": "EXPERIMENT: event-feedback survey kiosk (ui_survey.c, Calm Paper): welcome, three SAMPLE question screens (1-5 tiles, 0-10 slider with -/+ keys, three-way choice), review/submit, thank-you with a QR to a SAMPLE link (example.com), next-visitor reset. Full-screen sheet; no HOME button; organiser leaves by holding the top bar 3 s on welcome. Questions and link are placeholders.",
+      "sources": [
+        "main/ui_paper.c",
+        "main/ui_survey.c"
+      ],
+      "headers": [
+        "ui_paper.h",
+        "ui_survey.h",
+        "ui_theme.h"
+      ],
+      "adapter": "tools/uisim/targets/survey.c",
+      "fields": {
+        "step": {
+          "type": "enum",
+          "values": [
+            "welcome",
+            "q1",
+            "q2",
+            "q3",
+            "review",
+            "thanks"
+          ],
+          "default": "welcome",
+          "doc": "screen to open on (ui_survey_preview); taps then drive the real flow"
+        },
+        "a1": {
+          "type": "int",
+          "default": -1,
+          "doc": "answer to Q1, 1..5 rating; -1 unanswered"
+        },
+        "a2": {
+          "type": "int",
+          "default": -1,
+          "doc": "answer to Q2, 0..10 slider; -1 unanswered"
+        },
+        "a3": {
+          "type": "int",
+          "default": -1,
+          "doc": "answer to Q3, choice index 0..2; -1 unanswered"
+        },
+        "save_failed": {
+          "type": "bool",
+          "default": false,
+          "doc": "review screen shows the not-saved notice"
+        },
+        "save_fails": {
+          "type": "bool",
+          "default": false,
+          "doc": "the submit callback refuses (tests the failure path by tapping Submit)"
+        },
+        "response_no": {
+          "type": "int",
+          "default": 12,
+          "doc": "response number the app hands back"
+        },
+        "thanks_reset_s": {
+          "type": "int",
+          "default": 30,
+          "doc": "thank-you screen's auto reset"
+        },
+        "idle_reset_s": {
+          "type": "int",
+          "default": 90,
+          "doc": "mid-survey inactivity reset"
+        },
+        "qr_url": {
+          "type": "str",
+          "default": "https://example.com/feedback",
+          "doc": "QR content (SAMPLE until Mike gives the real URL)"
+        },
+        "qr_caption": {
+          "type": "str",
+          "default": "Sample link:\nexample.com",
+          "doc": "under the QR"
+        },
+        "saved_note": {
+          "type": "str",
+          "default": "Saved on this device only (sample mode).",
+          "doc": "thank-you line saying where answers went"
+        },
+        "q1_prompt": {
+          "type": "str",
+          "default": "",
+          "doc": "replaces the sample Q1 wording (tests a long question)"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "q1_empty": {
+          "step": "q1"
+        },
+        "q1_answered": {
+          "step": "q1",
+          "a1": 4
+        },
+        "q2_empty": {
+          "step": "q2",
+          "a1": 4
+        },
+        "q2_answered": {
+          "step": "q2",
+          "a1": 4,
+          "a2": 7
+        },
+        "q2_min": {
+          "step": "q2",
+          "a1": 4,
+          "a2": 0
+        },
+        "q2_max": {
+          "step": "q2",
+          "a1": 4,
+          "a2": 10
+        },
+        "q3_empty": {
+          "step": "q3",
+          "a1": 4,
+          "a2": 7
+        },
+        "q3_answered": {
+          "step": "q3",
+          "a1": 4,
+          "a2": 7,
+          "a3": 1
+        },
+        "review": {
+          "step": "review",
+          "a1": 4,
+          "a2": 7,
+          "a3": 1
+        },
+        "review_extremes": {
+          "step": "review",
+          "a1": 1,
+          "a2": 10,
+          "a3": 2
+        },
+        "review_save_failed": {
+          "step": "review",
+          "a1": 4,
+          "a2": 7,
+          "a3": 1,
+          "save_failed": true
+        },
+        "thanks": {
+          "step": "thanks",
+          "a1": 4,
+          "a2": 7,
+          "a3": 1
+        },
+        "thanks_long": {
+          "step": "thanks",
+          "a1": 4,
+          "a2": 7,
+          "a3": 1,
+          "response_no": 4294967295,
+          "qr_url": "https://feedback.example.com/events/2026-10-workstation-demo?src=booth-3",
+          "qr_caption": "Sample link:\nfeedback.example.com/events"
+        },
+        "q1_long_prompt": {
+          "step": "q1",
+          "a1": 3,
+          "q1_prompt": "On a scale of one to five, how useful was the live demonstration you just watched at our booth today?"
+        }
+      }
+    },
+    "sensors": {
+      "kind": "page",
+      "description": "SENSORS as a dial cluster (ui_sensors.c + ui_dial.c + ui_sensor_model.c): ACCEL |a| on a 0-2 g dial with a 1 g rest tick (sensor is +-2 g per axis, so |a| can reach ~3.46 g: past 2 g the dial pins amber, the number stays exact), TEMP on the firmware's 60-90 F band, HUMIDITY 0-100 %. Trend line under each dial on the dial's scale (100 pts = 10 s accel, 60 pts = 60 s env; synthesized in fixtures). State words from the DIAGNOSTICS freshness rules: accel stale after 300 ms, temp+humidity (one AHT30 read) after 3 s. Values in fixtures are illustrative.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_diag_format.c",
+        "main/ui_sensor_model.c",
+        "main/ui_dial.c",
+        "main/ui_sensors.c"
+      ],
+      "headers": [
+        "ui_kit.h",
+        "ui_theme.h",
+        "ui_diag_format.h",
+        "ui_sensor_model.h",
+        "ui_dial.h",
+        "ui_sensors.h"
+      ],
+      "adapter": "tools/uisim/targets/sensors.c",
+      "fields": {
+        "accel": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "failed",
+            "waiting",
+            "live",
+            "stale"
+          ],
+          "default": "live",
+          "doc": "ui_diag_freshness() for the ICM42670: probe not run / init failed / no sample / within 300 ms / older"
+        },
+        "accel_age_ms": {
+          "type": "int",
+          "default": 60,
+          "doc": "now - sensor_last_good_us"
+        },
+        "accel_x100": {
+          "type": "int",
+          "default": 101,
+          "doc": "|a| in centi-g (101 = 1.01 g)"
+        },
+        "accel_lo": {
+          "type": "int",
+          "default": 98,
+          "doc": "lowest |a| in the last 10 s, centi-g"
+        },
+        "accel_hi": {
+          "type": "int",
+          "default": 104,
+          "doc": "highest |a| in the last 10 s"
+        },
+        "env": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "failed",
+            "waiting",
+            "live",
+            "stale"
+          ],
+          "default": "live",
+          "doc": "AHT30 freshness (temperature and humidity share it), stale after 3 s"
+        },
+        "env_age_ms": {
+          "type": "int",
+          "default": 600,
+          "doc": "now - humiture_last_good_us"
+        },
+        "temp_x10": {
+          "type": "int",
+          "default": 763,
+          "doc": "deci-degrees F (763 = 76.3 F)"
+        },
+        "temp_lo": {
+          "type": "int",
+          "default": 760,
+          "doc": "last 60 s low"
+        },
+        "temp_hi": {
+          "type": "int",
+          "default": 765,
+          "doc": "last 60 s high"
+        },
+        "humi_pct": {
+          "type": "int",
+          "default": 48,
+          "doc": "% RH, whole"
+        },
+        "humi_lo": {
+          "type": "int",
+          "default": 47,
+          "doc": "last 60 s low"
+        },
+        "humi_hi": {
+          "type": "int",
+          "default": 49,
+          "doc": "last 60 s high"
+        },
+        "history_permille": {
+          "type": "int",
+          "default": 1000,
+          "doc": "how much of the trend window has samples (1000 = full; small just after boot)"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "unknown": {
+          "accel": "unknown",
+          "env": "unknown"
+        },
+        "waiting_first_data": {
+          "accel": "waiting",
+          "env": "waiting"
+        },
+        "first_sample": {
+          "history_permille": 10
+        },
+        "no_dock_or_failed_env": {
+          "env": "failed"
+        },
+        "imu_failed": {
+          "accel": "failed",
+          "temp_x10": 759,
+          "humi_pct": 51,
+          "humi_lo": 50,
+          "humi_hi": 52
+        },
+        "stale": {
+          "accel": "stale",
+          "accel_age_ms": 4200,
+          "accel_x100": 99,
+          "env": "stale",
+          "env_age_ms": 2520000,
+          "temp_x10": 770,
+          "temp_lo": 768,
+          "temp_hi": 772
+        },
+        "shaking": {
+          "accel_x100": 173,
+          "accel_lo": 41,
+          "accel_hi": 236
+        },
+        "over_scale": {
+          "accel_x100": 287,
+          "accel_lo": 95,
+          "accel_hi": 341,
+          "temp_x10": 1043,
+          "temp_lo": 1031,
+          "temp_hi": 1049,
+          "humi_pct": 100,
+          "humi_lo": 97,
+          "humi_hi": 100
+        },
+        "under_scale": {
+          "accel_x100": 4,
+          "accel_lo": 2,
+          "accel_hi": 100,
+          "temp_x10": -400,
+          "temp_lo": -402,
+          "temp_hi": -395,
+          "humi_pct": 0,
+          "humi_lo": 0,
+          "humi_hi": 3
+        },
+        "long_stale": {
+          "accel": "stale",
+          "accel_age_ms": 1987200000,
+          "accel_x100": 100,
+          "env": "stale",
+          "env_age_ms": 1987200000
+        }
+      }
+    },
+    "log": {
+      "kind": "page",
+      "description": "LOG as a phosphor terminal (ui_log.c + ui_log_format.c): every line of the 32-event Black Box reachable a page at a time (NEWER / OLDER soft keys), each line 'time-since-boot TAG message', long messages wrap, faults amber with '!'. NET / RPT / CLR keep their firmware handlers; LVGL's FPS/CPU readout is parked top-right on the device. Scenarios use messages the firmware really writes.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_log_format.c",
+        "main/ui_log.c"
+      ],
+      "headers": [
+        "ui_kit.h",
+        "ui_theme.h",
+        "ui_log_format.h",
+        "ui_log.h"
+      ],
+      "adapter": "tools/uisim/targets/log.c",
+      "fields": {
+        "scenario": {
+          "type": "enum",
+          "values": [
+            "evening",
+            "fresh_boot",
+            "longest",
+            "cleared"
+          ],
+          "default": "evening",
+          "doc": "evening: full 32-line ring with a watchdog boot, outage and failed upload; fresh_boot: 4 lines incl. dock init failure; longest: 31-char messages and the widest time stamps; cleared: after CLR"
+        },
+        "count": {
+          "type": "int",
+          "default": 32,
+          "doc": "lines in the ring (trims the scenario)"
+        },
+        "seq_bump": {
+          "type": "int",
+          "default": 0,
+          "doc": "newest N events arrive only at bump_at_ms"
+        },
+        "bump_at_ms": {
+          "type": "int",
+          "default": 1000,
+          "doc": "when the held-back events are recorded"
+        },
+        "perf_standin": {
+          "type": "bool",
+          "default": true,
+          "doc": "draw a stand-in for LVGL's two-line FPS/CPU readout in its slot (the device shows the real one on LOG)"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "fresh_boot": {
+          "scenario": "fresh_boot"
+        },
+        "longest": {
+          "scenario": "longest"
+        },
+        "cleared": {
+          "scenario": "cleared"
+        },
+        "one_line": {
+          "scenario": "evening",
+          "count": 1
+        }
+      }
+    },
+    "settings": {
+      "kind": "page",
+      "description": "SETTINGS, Hazard Industrial (ui_settings.c): API and WI-FI as solid status blocks with words from ui_diag_format.c (no network beats a cached API OK), hazard tape around anything not OK, latency as the last 3 s probe's; volume 0-100 in tens on 60x50 keys with a ten-cell meter; GO repository (backend catalog label <= 12 chars, '...' loading, 'NONE' empty) on prev/next keys; PROJECTS and FIRMWARE links beside the shell's HOME; uptime in the bottom hazard band.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_diag_format.c",
+        "main/ui_settings.c"
+      ],
+      "headers": [
+        "ui_kit.h",
+        "ui_theme.h",
+        "ui_diag_format.h",
+        "ui_settings.h"
+      ],
+      "adapter": "tools/uisim/targets/settings.c",
+      "fields": {
+        "uptime_s": {
+          "type": "int",
+          "default": 2537,
+          "doc": "seconds since boot"
+        },
+        "wifi": {
+          "type": "enum",
+          "values": [
+            "off",
+            "joining",
+            "online",
+            "retry"
+          ],
+          "default": "online",
+          "doc": "wifi_mgr_state_t"
+        },
+        "ip_octet": {
+          "type": "str",
+          "default": ".57",
+          "doc": "last octet of the station IP, with its dot"
+        },
+        "wifi_attempts": {
+          "type": "int",
+          "default": 1,
+          "doc": "attempt_count"
+        },
+        "wifi_reason": {
+          "type": "str",
+          "default": "",
+          "doc": "NO AP FOUND / AUTH FAILED / WIFI LOST / RETRYING"
+        },
+        "wifi_retry_s": {
+          "type": "int",
+          "default": 0,
+          "doc": "retry_remaining_s"
+        },
+        "api": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "ok",
+            "down",
+            "no_net"
+          ],
+          "default": "ok",
+          "doc": "backend_health_state_t"
+        },
+        "api_ms": {
+          "type": "int",
+          "default": 38,
+          "doc": "latency_ms of the last successful probe"
+        },
+        "api_ever_ok": {
+          "type": "bool",
+          "default": true,
+          "doc": "backend answered at least once this boot"
+        },
+        "api_secs_since_ok": {
+          "type": "int",
+          "default": 0,
+          "doc": "since the last success"
+        },
+        "volume": {
+          "type": "int",
+          "default": 70,
+          "doc": "audio_playback volume 0..100 (default 70, steps of 10)"
+        },
+        "repo": {
+          "type": "str",
+          "default": "workstation",
+          "doc": "backend_catalog_repo_label(): <= 12 chars, '...' before load, 'NONE' if empty"
+        },
+        "repo_count": {
+          "type": "int",
+          "default": 4,
+          "doc": "repositories in the catalog"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "backend_down": {
+          "api": "down",
+          "api_secs_since_ok": 134
+        },
+        "backend_never_up": {
+          "api": "down",
+          "api_ever_ok": false,
+          "uptime_s": 312
+        },
+        "wifi_retry": {
+          "wifi": "retry",
+          "wifi_reason": "AUTH FAILED",
+          "wifi_retry_s": 24,
+          "wifi_attempts": 6,
+          "api": "no_net"
+        },
+        "wifi_lost_cached_ok": {
+          "wifi": "retry",
+          "wifi_reason": "WIFI LOST",
+          "wifi_retry_s": 12,
+          "api": "ok"
+        },
+        "connecting": {
+          "uptime_s": 6,
+          "wifi": "joining",
+          "wifi_attempts": 1,
+          "api": "unknown",
+          "api_ever_ok": false,
+          "repo": "...",
+          "repo_count": 0
+        },
+        "wifi_off": {
+          "wifi": "off",
+          "api": "no_net"
+        },
+        "catalog_empty": {
+          "repo": "NONE",
+          "repo_count": 0
+        },
+        "volume_min": {
+          "volume": 0
+        },
+        "worst_case": {
+          "uptime_s": 31560720,
+          "api_ms": 1250,
+          "volume": 100,
+          "repo": "WWWWWWWWWWWW",
+          "repo_count": 9
+        }
+      }
+    },
+    "recording": {
+      "kind": "page",
+      "description": "SEND / NOTE / GO recording overlay, Health Rail (ui_recording.c): rail NET / API / MIC / UPL computed from the same view as the main area; big timer ('of 15s' for SEND/GO, 'cap 20:00' + SEND for NOTE), progress bar on bounded captures, 'MIC PAUSED - WAITING ON BACKEND' when the uploader is behind; outcome card after; NOTE project / GO repo chooser while capturing; CANCEL only while arming/recording (when audio_capture honours it), SEND only for NOTE. Rail is display-only.",
+      "sources": [
+        "main/ui_recording.c"
+      ],
+      "headers": [
+        "ui_recording.h",
+        "ui_diag_format.h"
+      ],
+      "adapter": "tools/uisim/targets/recording.c",
+      "fields": {
+        "command": {
+          "type": "enum",
+          "values": [
+            "SEND",
+            "NOTE",
+            "GO"
+          ],
+          "default": "SEND",
+          "doc": "voice_status_t.last_command"
+        },
+        "phase": {
+          "type": "enum",
+          "values": [
+            "starting",
+            "arming",
+            "recording",
+            "uploading",
+            "ready",
+            "cancelled",
+            "failed",
+            "result"
+          ],
+          "default": "recording",
+          "doc": "audio_cap state mapped as render_recording_overlay did; result = audio IDLE with voice last_result held"
+        },
+        "elapsed_ms": {
+          "type": "int",
+          "default": 7000,
+          "doc": "audio_cap_status_t.elapsed_ms"
+        },
+        "target_ms": {
+          "type": "int",
+          "default": 15000,
+          "doc": "duration_target_ms: 15000 SEND/GO, 1200000 NOTE"
+        },
+        "uploader_behind": {
+          "type": "bool",
+          "default": false,
+          "doc": "recording loop stalled waiting for a buffer"
+        },
+        "fail_reason": {
+          "type": "str",
+          "default": "",
+          "doc": "audio fail_reason, <= 23 chars, e.g. UPLOAD TIMEOUT / ENDPOINT NOT SET"
+        },
+        "result": {
+          "type": "str",
+          "default": "",
+          "doc": "voice last_result: SENT / NOTE SENT / ISSUE #13 / CANCELLED / NO ENDPOINT SET / FAILED: <reason> / DID NOT FINISH"
+        },
+        "selector": {
+          "type": "str",
+          "default": "",
+          "doc": "project (NOTE) or repo (GO) label, <= 12 chars"
+        },
+        "wifi": {
+          "type": "enum",
+          "values": [
+            "off",
+            "joining",
+            "online",
+            "retry"
+          ],
+          "default": "online",
+          "doc": "wifi_mgr state"
+        },
+        "api": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "ok",
+            "down",
+            "no_net"
+          ],
+          "default": "ok",
+          "doc": "backend_health state"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "send_starting": {
+          "phase": "starting",
+          "elapsed_ms": 0
+        },
+        "send_arming": {
+          "phase": "arming",
+          "elapsed_ms": 0
+        },
+        "send_near_end": {
+          "elapsed_ms": 14800
+        },
+        "note_recording": {
+          "command": "NOTE",
+          "elapsed_ms": 221000,
+          "target_ms": 1200000,
+          "selector": "Van Build 2"
+        },
+        "note_long_name": {
+          "command": "NOTE",
+          "elapsed_ms": 1199000,
+          "target_ms": 1200000,
+          "selector": "WWWWWWWWWWWW"
+        },
+        "note_stalled": {
+          "command": "NOTE",
+          "elapsed_ms": 95000,
+          "target_ms": 1200000,
+          "selector": "Van Build 2",
+          "uploader_behind": true
+        },
+        "go_recording": {
+          "command": "GO",
+          "elapsed_ms": 4000,
+          "selector": "workstation"
+        },
+        "wifi_drop_mid_capture": {
+          "command": "NOTE",
+          "elapsed_ms": 61000,
+          "target_ms": 1200000,
+          "selector": "GEN",
+          "wifi": "retry",
+          "api": "no_net"
+        },
+        "uploading": {
+          "command": "NOTE",
+          "phase": "uploading",
+          "elapsed_ms": 221000,
+          "target_ms": 1200000
+        },
+        "ready": {
+          "command": "NOTE",
+          "phase": "ready",
+          "elapsed_ms": 221000,
+          "target_ms": 1200000
+        },
+        "result_sent": {
+          "phase": "result",
+          "result": "SENT"
+        },
+        "result_issue": {
+          "command": "GO",
+          "phase": "result",
+          "result": "ISSUE #13"
+        },
+        "cancelled": {
+          "command": "NOTE",
+          "phase": "cancelled",
+          "target_ms": 1200000
+        },
+        "failed": {
+          "command": "NOTE",
+          "phase": "failed",
+          "fail_reason": "UPLOAD TIMEOUT",
+          "target_ms": 1200000,
+          "api": "down"
+        },
+        "endpoint_not_set": {
+          "phase": "failed",
+          "fail_reason": "ENDPOINT NOT SET"
+        },
+        "result_failed_long": {
+          "command": "GO",
+          "phase": "result",
+          "result": "FAILED: CHUNK HTTP 503 RETRY"
+        },
+        "result_did_not_finish": {
+          "command": "NOTE",
+          "phase": "result",
+          "result": "DID NOT FINISH",
+          "target_ms": 1200000
+        },
+        "result_mic_reopen": {
+          "phase": "result",
+          "result": "MIC REOPEN FAILED"
+        }
+      }
+    },
+    "notify": {
+      "kind": "page",
+      "description": "NOTIFY card stack + playback overlay (ui_notify.c). Front card = the oldest pending message (text from GET /notifications/{id}, PLAY), then '+N more waiting' (a count: the backend only describes the front one), then outcomes this device saw since boot. Overlay: message text, FETCH -> PLAY -> ACK steps (played and acknowledged kept apart), STOP only while playing. History texts are illustrative.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_notify.c"
+      ],
+      "headers": [
+        "ui_kit.h",
+        "ui_theme.h",
+        "ui_notify.h"
+      ],
+      "adapter": "tools/uisim/targets/notify.c",
+      "fields": {
+        "view": {
+          "type": "enum",
+          "values": [
+            "page",
+            "overlay"
+          ],
+          "default": "page",
+          "doc": "the card stack page or the playback overlay"
+        },
+        "link": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "ok",
+            "down",
+            "no_net"
+          ],
+          "default": "ok",
+          "doc": "backend_health as the poll sees it"
+        },
+        "pending": {
+          "type": "int",
+          "default": 1,
+          "doc": "/pending count"
+        },
+        "text": {
+          "type": "str",
+          "default": "Your van build note was filed under Van Build 2. Two items need a decision.",
+          "doc": "front message's spoken_message"
+        },
+        "text_loaded": {
+          "type": "bool",
+          "default": true,
+          "doc": "the text fetch has finished"
+        },
+        "text_failed": {
+          "type": "bool",
+          "default": false,
+          "doc": "the text could not be loaded"
+        },
+        "age_s": {
+          "type": "int",
+          "default": 360,
+          "doc": "since the front message was created"
+        },
+        "history": {
+          "type": "int",
+          "default": 2,
+          "doc": "outcomes kept this boot (0-4)"
+        },
+        "phase": {
+          "type": "enum",
+          "values": [
+            "fetching",
+            "playing",
+            "acking",
+            "done"
+          ],
+          "default": "playing",
+          "doc": "overlay: voice_control last_result mapped"
+        },
+        "outcome": {
+          "type": "enum",
+          "values": [
+            "delivered",
+            "ack_failed",
+            "stopped",
+            "fetch_failed"
+          ],
+          "default": "delivered",
+          "doc": "overlay, when done"
+        },
+        "reason": {
+          "type": "str",
+          "default": "",
+          "doc": "fetch failure text"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "three_waiting": {
+          "pending": 3
+        },
+        "loading_text": {
+          "text_loaded": false
+        },
+        "text_failed": {
+          "text_loaded": false,
+          "text_failed": true
+        },
+        "long_text": {
+          "text": "The overnight gallery run stopped at the session limit after twenty mockups. Four cells were blocked by quota, not by design problems, and can be retried when credits reset tomorrow morning."
+        },
+        "empty": {
+          "pending": 0,
+          "history": 0
+        },
+        "empty_with_history": {
+          "pending": 0,
+          "history": 4
+        },
+        "checking": {
+          "link": "unknown",
+          "pending": 0,
+          "history": 0
+        },
+        "backend_down": {
+          "link": "down",
+          "pending": 2
+        },
+        "no_network": {
+          "link": "no_net",
+          "pending": 1,
+          "text_loaded": false
+        },
+        "overlay_fetching": {
+          "view": "overlay",
+          "phase": "fetching"
+        },
+        "overlay_playing": {
+          "view": "overlay",
+          "phase": "playing"
+        },
+        "overlay_delivered": {
+          "view": "overlay",
+          "phase": "done",
+          "outcome": "delivered",
+          "pending": 3
+        },
+        "overlay_ack_failed": {
+          "view": "overlay",
+          "phase": "done",
+          "outcome": "ack_failed"
+        },
+        "overlay_stopped": {
+          "view": "overlay",
+          "phase": "done",
+          "outcome": "stopped"
+        },
+        "overlay_fetch_failed": {
+          "view": "overlay",
+          "phase": "done",
+          "outcome": "fetch_failed",
+          "reason": "NOTIFICATION FETCH FAILED: HTTP 404",
+          "text_loaded": false
+        },
+        "overlay_no_text": {
+          "view": "overlay",
+          "phase": "playing",
+          "text": ""
+        }
+      }
+    },
+    "music": {
+      "kind": "page",
+      "description": "EXPERIMENT: music remote for Spotify on Mike's laptop (ui_music.c, Calm Paper): prev / play-pause / next, volume - / +, a link tag that always says SIMULATED / CONNECTED / NOT CONNECTED / CONNECTING, optional title/artist, pending + last-result line. Built on open, deleted on close; leaves via its own '< HOME' key. mock=true (default) runs the ui_music_mock.c stand-in bridge (forces SIMULATED); mock=false shows the fixture as a real bridge would report it.",
+      "sources": [
+        "main/ui_paper.c",
+        "main/ui_music.c",
+        "main/ui_music_mock.c"
+      ],
+      "headers": [
+        "ui_paper.h",
+        "ui_music.h",
+        "ui_music_mock.h",
+        "ui_theme.h"
+      ],
+      "adapter": "tools/uisim/targets/music.c",
+      "fields": {
+        "mock": {
+          "type": "bool",
+          "default": true,
+          "doc": "taps go to the mock bridge, which answers after ack_ms and forces link=SIMULATED"
+        },
+        "link": {
+          "type": "enum",
+          "values": [
+            "simulated",
+            "connected",
+            "disconnected",
+            "unknown"
+          ],
+          "default": "simulated",
+          "doc": "link state (only shown as given when mock=false)"
+        },
+        "play": {
+          "type": "enum",
+          "values": [
+            "unknown",
+            "playing",
+            "paused"
+          ],
+          "default": "paused",
+          "doc": "playback state"
+        },
+        "title": {
+          "type": "str",
+          "default": "",
+          "doc": "track title, optional"
+        },
+        "artist": {
+          "type": "str",
+          "default": "",
+          "doc": "artist, optional"
+        },
+        "volume": {
+          "type": "int",
+          "default": 40,
+          "doc": "0..100, -1 = not known"
+        },
+        "volume_kind": {
+          "type": "enum",
+          "values": [
+            "laptop",
+            "spotify",
+            "unknown"
+          ],
+          "default": "laptop",
+          "doc": "which volume the number is: Windows system volume or Spotify's own"
+        },
+        "pending": {
+          "type": "enum",
+          "values": [
+            "none",
+            "prev",
+            "play_pause",
+            "next",
+            "vol_down",
+            "vol_up"
+          ],
+          "default": "none",
+          "doc": "command waiting for an answer"
+        },
+        "result": {
+          "type": "enum",
+          "values": [
+            "none",
+            "sent",
+            "failed",
+            "timed_out"
+          ],
+          "default": "none",
+          "doc": "last command's result"
+        },
+        "result_cmd": {
+          "type": "enum",
+          "values": [
+            "none",
+            "prev",
+            "play_pause",
+            "next",
+            "vol_down",
+            "vol_up"
+          ],
+          "default": "none",
+          "doc": "which command the result is about"
+        },
+        "outcome": {
+          "type": "enum",
+          "values": [
+            "ack",
+            "fail",
+            "silent"
+          ],
+          "default": "ack",
+          "doc": "mock: how it answers taps"
+        },
+        "ack_ms": {
+          "type": "int",
+          "default": 400,
+          "doc": "mock: simulated round trip"
+        },
+        "timeout_ms": {
+          "type": "int",
+          "default": 3000,
+          "doc": "mock: silent outcome gives up after this"
+        },
+        "trace": {
+          "type": "bool",
+          "default": false,
+          "doc": "tests: list received commands in the header"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "playing": {
+          "play": "playing",
+          "title": "Midnight City",
+          "artist": "M83",
+          "volume": 40,
+          "result": "sent",
+          "result_cmd": "play_pause"
+        },
+        "paused": {
+          "play": "paused",
+          "title": "Midnight City",
+          "artist": "M83",
+          "volume": 40
+        },
+        "no_title": {
+          "play": "playing",
+          "volume": 55
+        },
+        "long_text": {
+          "play": "playing",
+          "title": "Shine On You Crazy Diamond (Parts I-V) - 2011 Remastered Version",
+          "artist": "Pink Floyd, David Gilmour, Roger Waters, Richard Wright, Nick Mason",
+          "volume": 65
+        },
+        "spotify_volume": {
+          "play": "playing",
+          "title": "Midnight City",
+          "artist": "M83",
+          "volume_kind": "spotify",
+          "volume": 72
+        },
+        "pending": {
+          "play": "playing",
+          "title": "Midnight City",
+          "artist": "M83",
+          "pending": "next"
+        },
+        "failed": {
+          "play": "playing",
+          "title": "Midnight City",
+          "artist": "M83",
+          "result": "failed",
+          "result_cmd": "next"
+        },
+        "timed_out": {
+          "play": "paused",
+          "volume": 40,
+          "result": "timed_out",
+          "result_cmd": "play_pause"
+        },
+        "volume_0": {
+          "play": "playing",
+          "volume": 0,
+          "result": "sent",
+          "result_cmd": "vol_down"
+        },
+        "volume_100": {
+          "play": "playing",
+          "volume": 100,
+          "result": "sent",
+          "result_cmd": "vol_up"
+        },
+        "connected": {
+          "mock": false,
+          "link": "connected",
+          "play": "playing",
+          "title": "Midnight City",
+          "artist": "M83",
+          "result": "sent",
+          "result_cmd": "next"
+        },
+        "disconnected": {
+          "mock": false,
+          "link": "disconnected",
+          "play": "unknown",
+          "volume": -1
+        },
+        "connecting": {
+          "mock": false,
+          "link": "unknown",
+          "play": "unknown",
+          "volume": -1,
+          "volume_kind": "unknown"
+        }
+      }
+    },
+    "companion": {
+      "kind": "page",
+      "description": "EXPERIMENT: Friendly Companion expressive eyes (ui_companion.c). Full-screen face, three eye treatments, seven moods, eight reactions, touch (tap = boop, hold = laugh, drag = eyes follow, 4 quick taps = confused, top-left tap reveals < HOME). Behaviour modelled on FluxGarage RoboEyes (GPL-3.0); no code copied.",
+      "sources": [
+        "main/ui_companion.c"
+      ],
+      "headers": [
+        "ui_companion.h"
+      ],
+      "adapter": "tools/uisim/targets/companion.c",
+      "fields": {
+        "style": {
+          "type": "enum",
+          "values": [
+            "robo",
+            "pill",
+            "ember"
+          ],
+          "default": "robo",
+          "doc": "eye treatment: robo = cyan rounded squares on navy, pill = white pills on black, ember = wide amber on brown"
+        },
+        "mood": {
+          "type": "enum",
+          "values": [
+            "neutral",
+            "happy",
+            "sleepy",
+            "thinking",
+            "listening",
+            "worried",
+            "asleep"
+          ],
+          "default": "neutral",
+          "doc": "starting mood (ui_companion_set_mood)"
+        },
+        "react": {
+          "type": "enum",
+          "values": [
+            "none",
+            "blink",
+            "boop",
+            "happy",
+            "laugh",
+            "confused",
+            "surprised",
+            "wink",
+            "yawn"
+          ],
+          "default": "none",
+          "doc": "reaction to play (ui_companion_react)"
+        },
+        "preview": {
+          "type": "bool",
+          "default": false,
+          "doc": "snap to the pose (ui_companion_preview) instead of easing - for stills"
+        },
+        "elapsed_ms": {
+          "type": "int",
+          "default": 0,
+          "doc": "with preview: how far into the reaction"
+        },
+        "react_at_ms": {
+          "type": "int",
+          "default": 0,
+          "doc": "without preview: start the reaction at this simulated ms (0 = at open)"
+        },
+        "mood2": {
+          "type": "enum",
+          "values": [
+            "neutral",
+            "happy",
+            "sleepy",
+            "thinking",
+            "listening",
+            "worried",
+            "asleep"
+          ],
+          "default": "neutral",
+          "doc": "mood the app switches to at mood2_at_ms"
+        },
+        "mood2_at_ms": {
+          "type": "int",
+          "default": 0,
+          "doc": "0 = never; tests the status hook mid-run"
+        },
+        "still": {
+          "type": "bool",
+          "default": false,
+          "doc": "no autoblink / idle gaze / doze"
+        },
+        "seed": {
+          "type": "int",
+          "default": 7,
+          "doc": "idle randomness seed (fixed = reproducible)"
+        },
+        "doze_s": {
+          "type": "int",
+          "default": 0,
+          "doc": "falls asleep after this long without touch (0 = never)"
+        },
+        "look_x": {
+          "type": "int",
+          "default": -1,
+          "doc": "glance at this screen x (with look_y); -1 = no"
+        },
+        "look_y": {
+          "type": "int",
+          "default": -1,
+          "doc": "glance at this screen y"
+        },
+        "say": {
+          "type": "str",
+          "default": "",
+          "doc": "line under the eyes (ui_companion_say)"
+        },
+        "say2": {
+          "type": "str",
+          "default": "",
+          "doc": "line said at mood2_at_ms"
+        },
+        "show_state": {
+          "type": "bool",
+          "default": false,
+          "doc": "TEST ONLY: small mood/reaction/key line bottom-right"
+        },
+        "measure": {
+          "type": "bool",
+          "default": false,
+          "doc": "TEST ONLY: print invalidated px per refresh to the render log once a second"
+        }
+      },
+      "fixtures": {
+        "default": {
+          "preview": true
+        },
+        "robo_neutral": {
+          "style": "robo",
+          "preview": true
+        },
+        "robo_happy": {
+          "style": "robo",
+          "preview": true,
+          "mood": "happy"
+        },
+        "robo_sleepy": {
+          "style": "robo",
+          "preview": true,
+          "mood": "sleepy"
+        },
+        "robo_thinking": {
+          "style": "robo",
+          "preview": true,
+          "mood": "thinking"
+        },
+        "robo_listening": {
+          "style": "robo",
+          "preview": true,
+          "mood": "listening"
+        },
+        "robo_worried": {
+          "style": "robo",
+          "preview": true,
+          "mood": "worried"
+        },
+        "robo_asleep": {
+          "style": "robo",
+          "preview": true,
+          "mood": "asleep",
+          "elapsed_ms": 900
+        },
+        "robo_look_left": {
+          "style": "robo",
+          "look_x": 20,
+          "look_y": 110,
+          "still": true
+        },
+        "robo_boop": {
+          "style": "robo",
+          "preview": true,
+          "react": "boop",
+          "elapsed_ms": 600
+        },
+        "robo_laugh": {
+          "style": "robo",
+          "preview": true,
+          "react": "laugh",
+          "elapsed_ms": 140
+        },
+        "robo_confused": {
+          "style": "robo",
+          "preview": true,
+          "react": "confused",
+          "elapsed_ms": 1200
+        },
+        "robo_surprised": {
+          "style": "robo",
+          "preview": true,
+          "react": "surprised",
+          "elapsed_ms": 400
+        },
+        "robo_wink": {
+          "style": "robo",
+          "preview": true,
+          "react": "wink",
+          "elapsed_ms": 250
+        },
+        "robo_yawn": {
+          "style": "robo",
+          "preview": true,
+          "react": "yawn",
+          "elapsed_ms": 1200
+        },
+        "pill_neutral": {
+          "style": "pill",
+          "preview": true
+        },
+        "pill_happy": {
+          "style": "pill",
+          "preview": true,
+          "mood": "happy"
+        },
+        "pill_sleepy": {
+          "style": "pill",
+          "preview": true,
+          "mood": "sleepy"
+        },
+        "pill_thinking": {
+          "style": "pill",
+          "preview": true,
+          "mood": "thinking"
+        },
+        "pill_listening": {
+          "style": "pill",
+          "preview": true,
+          "mood": "listening"
+        },
+        "pill_worried": {
+          "style": "pill",
+          "preview": true,
+          "mood": "worried"
+        },
+        "pill_asleep": {
+          "style": "pill",
+          "preview": true,
+          "mood": "asleep",
+          "elapsed_ms": 900
+        },
+        "pill_look_left": {
+          "style": "pill",
+          "look_x": 20,
+          "look_y": 110,
+          "still": true
+        },
+        "pill_boop": {
+          "style": "pill",
+          "preview": true,
+          "react": "boop",
+          "elapsed_ms": 600
+        },
+        "pill_laugh": {
+          "style": "pill",
+          "preview": true,
+          "react": "laugh",
+          "elapsed_ms": 140
+        },
+        "pill_confused": {
+          "style": "pill",
+          "preview": true,
+          "react": "confused",
+          "elapsed_ms": 1200
+        },
+        "pill_surprised": {
+          "style": "pill",
+          "preview": true,
+          "react": "surprised",
+          "elapsed_ms": 400
+        },
+        "pill_wink": {
+          "style": "pill",
+          "preview": true,
+          "react": "wink",
+          "elapsed_ms": 250
+        },
+        "pill_yawn": {
+          "style": "pill",
+          "preview": true,
+          "react": "yawn",
+          "elapsed_ms": 1200
+        },
+        "ember_neutral": {
+          "style": "ember",
+          "preview": true
+        },
+        "ember_happy": {
+          "style": "ember",
+          "preview": true,
+          "mood": "happy"
+        },
+        "ember_sleepy": {
+          "style": "ember",
+          "preview": true,
+          "mood": "sleepy"
+        },
+        "ember_thinking": {
+          "style": "ember",
+          "preview": true,
+          "mood": "thinking"
+        },
+        "ember_listening": {
+          "style": "ember",
+          "preview": true,
+          "mood": "listening"
+        },
+        "ember_worried": {
+          "style": "ember",
+          "preview": true,
+          "mood": "worried"
+        },
+        "ember_asleep": {
+          "style": "ember",
+          "preview": true,
+          "mood": "asleep",
+          "elapsed_ms": 900
+        },
+        "ember_look_left": {
+          "style": "ember",
+          "look_x": 20,
+          "look_y": 110,
+          "still": true
+        },
+        "ember_boop": {
+          "style": "ember",
+          "preview": true,
+          "react": "boop",
+          "elapsed_ms": 600
+        },
+        "ember_laugh": {
+          "style": "ember",
+          "preview": true,
+          "react": "laugh",
+          "elapsed_ms": 140
+        },
+        "ember_confused": {
+          "style": "ember",
+          "preview": true,
+          "react": "confused",
+          "elapsed_ms": 1200
+        },
+        "ember_surprised": {
+          "style": "ember",
+          "preview": true,
+          "react": "surprised",
+          "elapsed_ms": 400
+        },
+        "ember_wink": {
+          "style": "ember",
+          "preview": true,
+          "react": "wink",
+          "elapsed_ms": 250
+        },
+        "ember_yawn": {
+          "style": "ember",
+          "preview": true,
+          "react": "yawn",
+          "elapsed_ms": 1200
+        },
+        "robo_backend_down": {
+          "preview": true,
+          "mood": "worried",
+          "say": "Backend is down."
+        },
+        "robo_long_say": {
+          "preview": true,
+          "mood": "thinking",
+          "say": "Waiting for the workstation backend to answer"
+        }
+      }
+    },
+    "mouse": {
+      "kind": "page",
+      "description": "Three accepted native icon stations; original mouse pauses to inspect each, background pause/resume and HOME exit.",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_home.c",
+        "main/voice_listening_widget.c",
+        "main/weather_icons.c",
+        "main/ui_mouse.c",
+        "main/ui_weather_stage.c"
+      ],
+      "headers": [
+        "ui_mouse.h"
+      ],
+      "adapter": "tools/uisim/targets/mouse.c",
+      "fields": {
+        "action": {
+          "type": "enum",
+          "values": [
+            "none",
+            "pause",
+            "close"
+          ],
+          "default": "none",
+          "doc": "Simulator event checks: pause or HOME exit"
+        }
+      },
+      "fixtures": {
+        "default": {}
+      }
+    },
+    "home_mouse_test": {
+      "kind": "page",
+      "description": "Assertions for HOME mouse navigation, hit testing, data refresh and lifetime",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_home.c",
+        "main/voice_listening_widget.c",
+        "main/weather_icons.c",
+        "main/ui_mouse.c",
+        "main/ui_weather_stage.c"
+      ],
+      "headers": [
+        "ui_kit.h",
+        "ui_home.h",
+        "voice_listening_widget.h",
+        "weather_icons.h",
+        "ui_theme.h"
+      ],
+      "adapter": "tools/uisim/targets/home_mouse_test.c",
+      "fields": {},
+      "fixtures": {
+        "default": {}
+      }
+    },
+    "weather_choreography_test": {
+      "kind": "page",
+      "description": "Exercise two staged snapshots and navigation cancellation on real HOME UI",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_home.c",
+        "main/voice_listening_widget.c",
+        "main/weather_icons.c",
+        "main/ui_mouse.c",
+        "main/ui_weather_stage.c"
+      ],
+      "headers": [
+        "ui_kit.h",
+        "ui_home.h",
+        "voice_listening_widget.h",
+        "weather_icons.h",
+        "ui_theme.h"
+      ],
+      "adapter": "tools/uisim/targets/weather_choreography_test.c",
+      "fields": {},
+      "fixtures": {
+        "default": {}
+      }
+    },
+    "audio_test": {
+      "kind": "page",
+      "description": "Local SD Audio Test: actual UI, injectable running/failure/voice states. Simulator does not drive speaker.",
+      "sources": [
+        "main/ui_audio_test.c"
+      ],
+      "headers": [
+        "ui_audio_test.h",
+        "ui_theme.h"
+      ],
+      "adapter": "tools/uisim/targets/audio_test.c",
+      "fields": {
+        "voice": {
+          "default": false,
+          "type": "bool"
+        },
+        "next_voice": {
+          "default": 1,
+          "type": "int"
+        },
+        "message": {
+          "default": "Music playing - speaker 100%",
+          "type": "str"
+        },
+        "running": {
+          "default": true,
+          "type": "bool"
+        },
+        "wind": {
+          "default": false,
+          "type": "bool"
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "missing": {
+          "running": false,
+          "message": "music_loop.pcm missing / invalid"
+        },
+        "busy": {
+          "running": false,
+          "message": "Audio busy - exit and retry"
+        },
+        "mixing": {
+          "wind": true,
+          "voice": true
+        },
+        "unavailable": {
+          "running": false,
+          "message": "SD unavailable - insert card, retry"
+        }
+      }
+    },
+    "audio_test_ui_test": {
+      "headers": [
+        "ui_audio_test.h",
+        "ui_theme.h"
+      ],
+      "fields": {},
+      "kind": "page",
+      "description": "Real LVGL input and lifecycle assertions for Audio Test",
+      "adapter": "tools/uisim/targets/audio_test_ui_test.c",
+      "sources": [
+        "main/ui_audio_test.c"
+      ],
+      "fixtures": {
+        "default": {}
+      }
+    },
+    "newton": {
+      "kind": "page",
+      "sources": [
+        "main/newton_scene.c",
+        "main/ui_newton.c",
+        "main/newton_art.c"
+      ],
+      "headers": [
+        "newton_scene.h",
+        "ui_newton.h",
+        "newton_art.h"
+      ],
+      "description": "Real native Newton scene with deterministic state; simulator audio state is injected, not physical speaker proof",
+      "adapter": "tools/uisim/targets/newton.c",
+      "fields": {
+        "ready": {
+          "type": "bool",
+          "default": true
+        },
+        "wind": {
+          "type": "bool",
+          "default": false
+        },
+        "drop": {
+          "type": "bool",
+          "default": false
+        },
+        "grow": {
+          "type": "bool",
+          "default": false
+        },
+        "queue": {
+          "type": "bool",
+          "default": false
+        },
+        "fixture_art": {
+          "type": "bool",
+          "default": false
+        },
+        "clip": {
+          "type": "int",
+          "default": 0
+        },
+        "elapsed_ms": {
+          "type": "int",
+          "default": 0
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "unavailable": {
+          "ready": false
+        },
+        "fixtures": {
+          "fixture_art": true
+        },
+        "gust": {
+          "wind": true,
+          "elapsed_ms": 400
+        },
+        "drop_0": {
+          "drop": true,
+          "wind": true,
+          "elapsed_ms": 0
+        },
+        "drop_400": {
+          "drop": true,
+          "wind": true,
+          "elapsed_ms": 400
+        },
+        "drop_800": {
+          "drop": true,
+          "wind": true,
+          "elapsed_ms": 800
+        },
+        "drop_1200": {
+          "drop": true,
+          "wind": true,
+          "elapsed_ms": 1200
+        },
+        "drop_1600": {
+          "drop": true,
+          "wind": true,
+          "elapsed_ms": 1600
+        },
+        "drop_1770": {
+          "drop": true,
+          "wind": true,
+          "elapsed_ms": 1770
+        },
+        "drop_1940": {
+          "drop": true,
+          "wind": true,
+          "elapsed_ms": 1940
+        },
+        "drop_2110": {
+          "drop": true,
+          "wind": true,
+          "elapsed_ms": 2110
+        },
+        "drop_2195": {
+          "drop": true,
+          "wind": true,
+          "elapsed_ms": 2195
+        },
+        "drop_2280": {
+          "drop": true,
+          "wind": true,
+          "elapsed_ms": 2280
+        },
+        "drop_2450": {
+          "drop": true,
+          "wind": true,
+          "elapsed_ms": 2450
+        },
+        "drop_2680": {
+          "drop": true,
+          "wind": true,
+          "elapsed_ms": 2680
+        },
+        "drop_3000": {
+          "drop": true,
+          "wind": true,
+          "elapsed_ms": 3000
+        },
+        "grow_0": {
+          "grow": true,
+          "elapsed_ms": 0
+        },
+        "grow_140": {
+          "grow": true,
+          "elapsed_ms": 140
+        },
+        "grow_280": {
+          "grow": true,
+          "elapsed_ms": 280
+        },
+        "grow_420": {
+          "grow": true,
+          "elapsed_ms": 420
+        },
+        "grow_560": {
+          "grow": true,
+          "elapsed_ms": 560
+        },
+        "grow_700": {
+          "grow": true,
+          "elapsed_ms": 700
+        },
+        "grow_840": {
+          "grow": true,
+          "elapsed_ms": 840
+        },
+        "quote_1": {
+          "clip": 1,
+          "elapsed_ms": 900,
+          "queue": true
+        },
+        "quote_2": {
+          "clip": 2,
+          "elapsed_ms": 900,
+          "queue": true
+        },
+        "quote_3": {
+          "clip": 3,
+          "elapsed_ms": 900,
+          "queue": true
+        },
+        "quote_4": {
+          "clip": 4,
+          "elapsed_ms": 900,
+          "queue": true
+        },
+        "quote_5": {
+          "clip": 5,
+          "elapsed_ms": 900,
+          "queue": true
+        },
+        "quote_6": {
+          "clip": 6,
+          "elapsed_ms": 900,
+          "queue": true
+        }
+      }
+    },
+    "newton_ui_test": {
+      "kind": "page",
+      "sources": [
+        "main/newton_scene.c",
+        "main/ui_newton.c",
+        "main/newton_art.c"
+      ],
+      "headers": [
+        "newton_scene.h",
+        "ui_newton.h",
+        "newton_art.h"
+      ],
+      "description": "Native scene actual LVGL pointer/lifecycle assertions",
+      "adapter": "tools/uisim/targets/newton_ui_test.c",
+      "fields": {},
+      "fixtures": {
+        "default": {}
+      }
+    },
+    "newton_motion": {
+      "kind": "page",
+      "sources": [
+        "main/newton_scene.c",
+        "main/ui_newton.c",
+        "main/newton_art.c"
+      ],
+      "headers": [
+        "newton_scene.h",
+        "ui_newton.h",
+        "newton_art.h"
+      ],
+      "description": "Actual LVGL 50ms timer: approach, contact, absent fruit, second-tap regrowth; injected audio state",
+      "adapter": "tools/uisim/targets/newton_motion.c",
+      "fields": {},
+      "fixtures": {
+        "default": {}
+      }
+    },
+    "mouse_ui_test": {
+      "kind": "page",
+      "sources": [
+        "main/ui_kit.c",
+        "main/ui_home.c",
+        "main/voice_listening_widget.c",
+        "main/weather_icons.c",
+        "main/ui_mouse.c",
+        "main/ui_weather_stage.c"
+      ],
+      "headers": [
+        "ui_mouse.h"
+      ],
+      "adapter": "tools/uisim/targets/mouse_ui_test.c",
+      "fields": {},
+      "fixtures": {
+        "default": {}
+      }
+    }
+  }
+}

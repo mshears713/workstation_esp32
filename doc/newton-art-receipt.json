@@ -1,0 +1,1017 @@
+{
+  "source_pack_sha256": "bb8ccd9b8b4d285305f94db88a9a2325f09090c1e889f194e17d72eab98dd54a",
+  "conversion": "lossless RGBA to BGRA/ARGB8888; duplicate exact frames shared; fruit empty margins trimmed with byte-identical reconstruction proof and anchor offsets; no art mutation",
+  "framing": "native 1:1 pixels, all scene coordinates translated y=-17, stage clips at y=192; 48px controls below",
+  "unique_payloads": 60,
+  "flash_payload_bytes": 964320,
+  "exports": [
+    {
+      "source": "background/projects/garden-0-0/frame_000.png",
+      "png_sha256": "a51a6d0063cc183614c123492af88741fe3f7e5de54e9b887d4a0ba2e8b0aed7",
+      "rgba_sha256": "ac6f0416060dd5b1f09132624a74297eef86ac15b870ff77db836cbea133b94b",
+      "crop": null,
+      "descriptor": "newton_native_0",
+      "width": 80,
+      "height": 120
+    },
+    {
+      "source": "background/projects/garden-1-0/frame_000.png",
+      "png_sha256": "989c1ac0a3eccf219eb7a3cea788d21bc947c2f5f2e498555fc33d2c80b17450",
+      "rgba_sha256": "abd9aa863fa1cce562440d53204b0c9f27d0a413823d7fdc75d5dd1a329194e2",
+      "crop": null,
+      "descriptor": "newton_native_1",
+      "width": 80,
+      "height": 120
+    },
+    {
+      "source": "background/projects/garden-2-0/frame_000.png",
+      "png_sha256": "c03c30b15154ce521c521ba45b70e4b234da9e92c81871c9001e226d627d1daa",
+      "rgba_sha256": "337c4528aea9c0c031d9850866d9d1add8252644baf801f93aa39f8c86470443",
+      "crop": null,
+      "descriptor": "newton_native_2",
+      "width": 80,
+      "height": 120
+    },
+    {
+      "source": "background/projects/garden-3-0/frame_000.png",
+      "png_sha256": "412ee40e1d4d6026b03f19fa0474b927af4a7fc4f48b12909464a4c0ff9940a7",
+      "rgba_sha256": "1135dc52a0d4e949662d6aa80f366718c83eedfea0e7519dc4f1ba207b464561",
+      "crop": null,
+      "descriptor": "newton_native_3",
+      "width": 80,
+      "height": 120
+    },
+    {
+      "source": "background/projects/garden-0-1/frame_000.png",
+      "png_sha256": "941901160c3220e4f11110f563c2c29ca9adb628428c3c86f17859d37c68a419",
+      "rgba_sha256": "282c930b4fd148f370628ace9a4e5c4a05d3f390f014842ff961effa845a115c",
+      "crop": null,
+      "descriptor": "newton_native_4",
+      "width": 80,
+      "height": 120
+    },
+    {
+      "source": "background/projects/garden-1-1/frame_000.png",
+      "png_sha256": "d5b694d47a629f81a6d9b8edf0cdcfd8a1f1ee0ab4d77cc744d1e10082872c64",
+      "rgba_sha256": "a51718888f087637f1e846d1b4192ccc10198082dabef5fd04edf85d7dec9851",
+      "crop": null,
+      "descriptor": "newton_native_5",
+      "width": 80,
+      "height": 120
+    },
+    {
+      "source": "background/projects/garden-2-1/frame_000.png",
+      "png_sha256": "ae525ebac0cffd00efb734709a88a6d877f4f8cc024bb8dfe0097852a36debbc",
+      "rgba_sha256": "9bd7df8950a3cf07671cf664cc0be339fc0aa9d8f4d5c4f27899242ed4cb8fef",
+      "crop": null,
+      "descriptor": "newton_native_6",
+      "width": 80,
+      "height": 120
+    },
+    {
+      "source": "background/projects/garden-3-1/frame_000.png",
+      "png_sha256": "35eb5ca28c71e9a02e80879ac01ef5ab941de6c451933bc2c862643fd909de15",
+      "rgba_sha256": "bee17e8777b4d11e8302e6d3b6fb7f83ec0c475449dd39b4e5d06524beea2110",
+      "crop": null,
+      "descriptor": "newton_native_7",
+      "width": 80,
+      "height": 120
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_000.png",
+      "png_sha256": "f064433eb19ec949730f78425b4947279636b07c97e1630f5c77fdffd5e549cc",
+      "rgba_sha256": "046efbe3b0c84b37b016ccc9ffedca14ea9e02727568b1165c667266d8c387f1",
+      "crop": null,
+      "descriptor": "newton_native_8",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_001.png",
+      "png_sha256": "f064433eb19ec949730f78425b4947279636b07c97e1630f5c77fdffd5e549cc",
+      "rgba_sha256": "046efbe3b0c84b37b016ccc9ffedca14ea9e02727568b1165c667266d8c387f1",
+      "crop": null,
+      "descriptor": "newton_native_8",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_002.png",
+      "png_sha256": "6ccc507b7751b2c1e204707020bacfdb5384fdc0743847cc39342462c9a12819",
+      "rgba_sha256": "83d2506e8bb15f17fbf094b6ea2c24262d764e846face1cc5ef12c364d2c829a",
+      "crop": null,
+      "descriptor": "newton_native_9",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_003.png",
+      "png_sha256": "f064433eb19ec949730f78425b4947279636b07c97e1630f5c77fdffd5e549cc",
+      "rgba_sha256": "046efbe3b0c84b37b016ccc9ffedca14ea9e02727568b1165c667266d8c387f1",
+      "crop": null,
+      "descriptor": "newton_native_8",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_004.png",
+      "png_sha256": "51fd1b8d7dd47e8575cf5c57a64304cb86e5a4568b500ae882416d4333177b16",
+      "rgba_sha256": "a2ec6587cab373e4b23efc87e730ded2fd980da8b0eaea5c94d58b4c3f44ec1d",
+      "crop": null,
+      "descriptor": "newton_native_10",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_005.png",
+      "png_sha256": "c3caf52744ace6bf9825ec2ffe707acacf3c16a2afae7620e1d11f28142d63c9",
+      "rgba_sha256": "14b49c7894d4a72716d2c815b60b5aab6b627c43161dad2055b088f4306fa474",
+      "crop": null,
+      "descriptor": "newton_native_11",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_006.png",
+      "png_sha256": "3f9a6100866b2176fc82a319ae16aa2085f76fe4ad254199637b391310752433",
+      "rgba_sha256": "282e951f1a8a184a95250c60ce1a16ac409d33fbe0f2ee57962ad61c53cf9424",
+      "crop": null,
+      "descriptor": "newton_native_12",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_007.png",
+      "png_sha256": "301b5de7acff27f4a5de65717cddeed68b48219c5da00ba95b6142ba126e5fc5",
+      "rgba_sha256": "3a769cea6dd8b9d558395e05796f271293d104555e20030f503ba2fae4503246",
+      "crop": null,
+      "descriptor": "newton_native_13",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_008.png",
+      "png_sha256": "05c865d07322b8600c7b8babb592b831e064682bf12f81cef4470878a7f07789",
+      "rgba_sha256": "4d20bb4e4379fe98e525ceeeb12c89e0eafb2b344ad550c7a557d274afb22ac4",
+      "crop": null,
+      "descriptor": "newton_native_14",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_009.png",
+      "png_sha256": "932c617107c3d70c1ff315759fe4636a590fe617629030ec8b823f2d731bb7d5",
+      "rgba_sha256": "3f49e98904e6908290ecc47880f44736bae722fcb3da240c5ca4a61e6424bf77",
+      "crop": null,
+      "descriptor": "newton_native_15",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_010.png",
+      "png_sha256": "e84c67c147cf314c14c33199a71fe2a0832e96328a7636804e7d368bd4ffadfd",
+      "rgba_sha256": "7b95234c1c7a6643642ffe55e77430710d1c33abc61c736d8a514dff9e6117a4",
+      "crop": null,
+      "descriptor": "newton_native_16",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_011.png",
+      "png_sha256": "3142101b2ebd9e55e77e50e4650de8358b8f6388d12faa374e57881f49b2ef0e",
+      "rgba_sha256": "9145a48e084816bebdc73d37c0f508a62888da48a9c4fafab03007cdc075c359",
+      "crop": null,
+      "descriptor": "newton_native_17",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_012.png",
+      "png_sha256": "074ca7d6b4d3aad9bfdd44ee1e24f368328903b4bb74eafd1e579aaf70f011a5",
+      "rgba_sha256": "f4236896913d811dd50cf9be6e9e7860babd2d6a8582eaf45270cae207bbd9bf",
+      "crop": null,
+      "descriptor": "newton_native_18",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_013.png",
+      "png_sha256": "21ff2292d0824a8e41c459ccd934333333c48877c4d142bd40b7a5a2f4933779",
+      "rgba_sha256": "08b041ab5ff15bf61846e3733fcf58724db06ad367645450a56057650e891db4",
+      "crop": null,
+      "descriptor": "newton_native_19",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_014.png",
+      "png_sha256": "6fad8b0dcdda6b7963085ad8fd8745be0840a36302588fac27e9bb3bea1d27f0",
+      "rgba_sha256": "0c8f230559f057193307ba92955ca79af3ebd074d01ac731ad208e4bbf8748f0",
+      "crop": null,
+      "descriptor": "newton_native_20",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_015.png",
+      "png_sha256": "5b01f7594b3c475789c81c025079b4919a468d0b04dfd2ec77d6715dcc0e3164",
+      "rgba_sha256": "77964b9ae8ad14b8b0c0fb57e5d6a686da927bffb83ded2b0b73dcee511c8fd2",
+      "crop": null,
+      "descriptor": "newton_native_21",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_016.png",
+      "png_sha256": "639ef98583b1ce5f3d0cb9c9b0cc62b9881c13c51e46b3dac502703a2fb9c234",
+      "rgba_sha256": "83eff77d9af801ab1a248fff093aadbfc8e967c2a9f7badfa1decc8c64f51ac0",
+      "crop": null,
+      "descriptor": "newton_native_22",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_017.png",
+      "png_sha256": "2fa94d38d7f161b95fc8a21ccb3b8fa51d18e5738ff4ecf0a27cac8b6dfc8d0e",
+      "rgba_sha256": "f7ef9a5226fdd90685a586bf5a5a5f93f2867469e0eb7df495c24f5f16bbc655",
+      "crop": null,
+      "descriptor": "newton_native_23",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_018.png",
+      "png_sha256": "96faf1427cb50a14dca6ba773bf8eeb97910c6e5548c55765d5a042bd2cd0177",
+      "rgba_sha256": "64a43ae69aa767b944b2e79f8da12d1f67eaec97bfd7f8c1bec3031c2aa613b8",
+      "crop": null,
+      "descriptor": "newton_native_24",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_019.png",
+      "png_sha256": "6285bf5e1423bead0997809aa68b10db46b657fd7fd9ce8a94c4cbd654d81276",
+      "rgba_sha256": "a2847cd9a2427c1ed2888a104eb27885a5dedc28af007ce3c942b4c1bc1889f3",
+      "crop": null,
+      "descriptor": "newton_native_25",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_020.png",
+      "png_sha256": "6b6e306f214ec922c4ebdbd2612d3b952eb9b2bf0fd677df6ff35af219ee85d1",
+      "rgba_sha256": "622a9b70cd881be4242636f6e75bd9aa924234666efcfa20084a9741c64bd450",
+      "crop": null,
+      "descriptor": "newton_native_26",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_021.png",
+      "png_sha256": "1b1eee1520e30c49b58699790886cbc28d3d6ec22225839497b6a62c223d8d0e",
+      "rgba_sha256": "be1b6041dc0dd6147e4df99ba3eb4ef8f414e190e5a960d788a208fc723a43f6",
+      "crop": null,
+      "descriptor": "newton_native_27",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_022.png",
+      "png_sha256": "4eb32c6de8377577d246f12bca14d9aeddd5726e0767939b42910f169972491d",
+      "rgba_sha256": "a08b1271b1d7eb1e90bcd322d565d1201e4a1323ae3513d29595bb4bc368e63c",
+      "crop": null,
+      "descriptor": "newton_native_28",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_023.png",
+      "png_sha256": "5ace5b0d1a8547ee76c17379e571bde0bc3c800532d743228476f0228475b6c0",
+      "rgba_sha256": "6fe245f3d366ec1161d367eb37d05636fec7866e7c7ec7b40ec042be4536e022",
+      "crop": null,
+      "descriptor": "newton_native_29",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_024.png",
+      "png_sha256": "379da4f8397eff0f3d2f243c050a273936614154e0983fb924440807540647da",
+      "rgba_sha256": "1af99f98b2a755d60548dd78b982bda169ff4bcf3f958253d54008a3e3e5e5f6",
+      "crop": null,
+      "descriptor": "newton_native_30",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_025.png",
+      "png_sha256": "56417403ca15310666992dcdc92d6b0b9db183d7087a3697c30dc1d942feddaa",
+      "rgba_sha256": "0b277ea3b6cea7061c6503bc415a802ac1424ec4359991b576a3ff20b2a4a9b9",
+      "crop": null,
+      "descriptor": "newton_native_31",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_026.png",
+      "png_sha256": "cbecd5d504918be716ee20ee2f82c5bcded9aa0290b3d74201148e2253954446",
+      "rgba_sha256": "d337441e5e1467b1b2ce717243aec3fced5ed721ef1fadc23b9bfdc6af9f2147",
+      "crop": null,
+      "descriptor": "newton_native_32",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_027.png",
+      "png_sha256": "4b9681e1bd6162d37dbb09ba71fae42de3c4c421b4737f01032542313f112bdd",
+      "rgba_sha256": "2c85c7c47180253976ea328d6fb8a3aff4cf06843c364db356d6aec31e7b8e8e",
+      "crop": null,
+      "descriptor": "newton_native_33",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_028.png",
+      "png_sha256": "56ae85be5af798d05390c4eb48f526228344b89601c8569236f8ca9f886cdfc9",
+      "rgba_sha256": "55f956931489ef77e1d68ff674c8a9cefa7b0c61e2480e4c06583b615e4ed5cd",
+      "crop": null,
+      "descriptor": "newton_native_34",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_029.png",
+      "png_sha256": "ae35cce921db748f5b97598ee3a169a9a68d99d520c6f02a9024f97b0f0f259b",
+      "rgba_sha256": "7552602cad27b4da7c0edb0e17a5b3d14465a73f81df4e81e761f1bb74813487",
+      "crop": null,
+      "descriptor": "newton_native_35",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_030.png",
+      "png_sha256": "ae35cce921db748f5b97598ee3a169a9a68d99d520c6f02a9024f97b0f0f259b",
+      "rgba_sha256": "7552602cad27b4da7c0edb0e17a5b3d14465a73f81df4e81e761f1bb74813487",
+      "crop": null,
+      "descriptor": "newton_native_35",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_031.png",
+      "png_sha256": "ae35cce921db748f5b97598ee3a169a9a68d99d520c6f02a9024f97b0f0f259b",
+      "rgba_sha256": "7552602cad27b4da7c0edb0e17a5b3d14465a73f81df4e81e761f1bb74813487",
+      "crop": null,
+      "descriptor": "newton_native_35",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_032.png",
+      "png_sha256": "8d828e966a11c4cfd03504321484a3c077c31c5ced740f5e1376db2d438d7c8f",
+      "rgba_sha256": "a078a334a6b4b972a15dccf6232a3e7d247f3942fbd5ada67c108b7f77595d93",
+      "crop": null,
+      "descriptor": "newton_native_36",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_033.png",
+      "png_sha256": "bd139a163362223eb7baeff4e1606ecbb79a3479612e1b7ba3856481b8ef5158",
+      "rgba_sha256": "7cfc3dc0d5bac4dbcbae8d40b52163874e9e1e8352e77b33e32e9236d8b4af1e",
+      "crop": null,
+      "descriptor": "newton_native_37",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_034.png",
+      "png_sha256": "4ff87522d72d657d0f3fc9f84cc54da4ef574dc382eb27f5e81235f08fd21985",
+      "rgba_sha256": "89f98a67d9503608da899312432cefae6d511b6650d53a749e15cbb22d65bb51",
+      "crop": null,
+      "descriptor": "newton_native_38",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_035.png",
+      "png_sha256": "d1f5904ea7feac69cb4d2bf11b6c365ccc74041b8c7f049bd1dfff55f197e434",
+      "rgba_sha256": "fab9219670e39050e2b5c9d9597ffbf23d67eb4141510728dab746500f6ae785",
+      "crop": null,
+      "descriptor": "newton_native_39",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_036.png",
+      "png_sha256": "27db6676269b50cc570ac13cfe522f03b49291f7eed0a4a80d40fc1226ea394e",
+      "rgba_sha256": "861d6c08c18c2d136075ce879a2aa65338c07364cc42e620c8afc68068dbcc89",
+      "crop": null,
+      "descriptor": "newton_native_40",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_037.png",
+      "png_sha256": "36c181e58371ce5714a63526e7e82e155ef359a52916306bb96e033cd9503251",
+      "rgba_sha256": "05b3e09e7312e0ea41642818f527b0e890e9bdd61864039e15790500c590d8e5",
+      "crop": null,
+      "descriptor": "newton_native_41",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_038.png",
+      "png_sha256": "281a379d661ad08a40d1d2433c175b2247d4fc745b47cc91109baeadcd7f6ec1",
+      "rgba_sha256": "1e6cfadf3bbe3ad6d3b04e5c0d4fa76d0d77edeb5b0ec2a9c6f23b997e25b6da",
+      "crop": null,
+      "descriptor": "newton_native_42",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "newton/projects/newton-sage/frame_039.png",
+      "png_sha256": "ee7cb84147b58c3608024600040d189dcf33bb914d45787ffa1ae914e9c44425",
+      "rgba_sha256": "468fe2f64579bd6514d5fc5599acbdaf689a2eba807e831f25207c07a8a315eb",
+      "crop": null,
+      "descriptor": "newton_native_43",
+      "width": 48,
+      "height": 64
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_000.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_001.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_002.png",
+      "png_sha256": "5cb88e5f41b14056c18dc17ba64de70b58bed06920e172a29c9f6745dbf21443",
+      "rgba_sha256": "0ed42ffa8af955a78a20bbfb0d7fce944bf6cc2a6458d34b5728de6f175a8466",
+      "crop": null,
+      "descriptor": "newton_native_45",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_003.png",
+      "png_sha256": "8987b50828e374cca6fc956b05d197b7cc273cb3763738d820539c0dcb5d2918",
+      "rgba_sha256": "ec1115b5fb857df4c6eee67a77a3eb56f08c98ed17707ea584aa0b94e31b18fc",
+      "crop": null,
+      "descriptor": "newton_native_46",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_004.png",
+      "png_sha256": "5cb88e5f41b14056c18dc17ba64de70b58bed06920e172a29c9f6745dbf21443",
+      "rgba_sha256": "0ed42ffa8af955a78a20bbfb0d7fce944bf6cc2a6458d34b5728de6f175a8466",
+      "crop": null,
+      "descriptor": "newton_native_45",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_005.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_006.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_007.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_008.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_009.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_010.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_011.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_012.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_013.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_014.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_015.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_016.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_017.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_018.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_019.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_020.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_021.png",
+      "png_sha256": "5cb88e5f41b14056c18dc17ba64de70b58bed06920e172a29c9f6745dbf21443",
+      "rgba_sha256": "0ed42ffa8af955a78a20bbfb0d7fce944bf6cc2a6458d34b5728de6f175a8466",
+      "crop": null,
+      "descriptor": "newton_native_45",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_022.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_023.png",
+      "png_sha256": "6d2ead3a255599619ed3fc714bd109801ed59f57f57ebf9e7c335094e48b4dd9",
+      "rgba_sha256": "8d87ab2f21c39af0248c728c2508a370b9dbd4714572329243ef0a8399f2641b",
+      "crop": null,
+      "descriptor": "newton_native_47",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-tree/frame_024.png",
+      "png_sha256": "e6a4a009cd8c0b6d58bb541bbe8e42d1537a592ecf58a2f1254c6123bd9dbbcb",
+      "rgba_sha256": "7881c56bcfb2b06978c3ba056573f25679d4bc2a94fe1350a3e5a6a3b5aa91d3",
+      "crop": null,
+      "descriptor": "newton_native_44",
+      "width": 96,
+      "height": 128
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_000.png",
+      "png_sha256": "e1a2ee5b37e148ddbc9363560673ebed76a8a5446f2266fa5c85824624ed31db",
+      "rgba_sha256": "f2cc4b40bdbf4af45c6bc7140438b90f63905d598818d6eb358907f1252c0992",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_48",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_001.png",
+      "png_sha256": "e1a2ee5b37e148ddbc9363560673ebed76a8a5446f2266fa5c85824624ed31db",
+      "rgba_sha256": "f2cc4b40bdbf4af45c6bc7140438b90f63905d598818d6eb358907f1252c0992",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_48",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_002.png",
+      "png_sha256": "e1a2ee5b37e148ddbc9363560673ebed76a8a5446f2266fa5c85824624ed31db",
+      "rgba_sha256": "f2cc4b40bdbf4af45c6bc7140438b90f63905d598818d6eb358907f1252c0992",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_48",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_003.png",
+      "png_sha256": "e1a2ee5b37e148ddbc9363560673ebed76a8a5446f2266fa5c85824624ed31db",
+      "rgba_sha256": "f2cc4b40bdbf4af45c6bc7140438b90f63905d598818d6eb358907f1252c0992",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_48",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_004.png",
+      "png_sha256": "e1a2ee5b37e148ddbc9363560673ebed76a8a5446f2266fa5c85824624ed31db",
+      "rgba_sha256": "f2cc4b40bdbf4af45c6bc7140438b90f63905d598818d6eb358907f1252c0992",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_48",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_005.png",
+      "png_sha256": "e1a2ee5b37e148ddbc9363560673ebed76a8a5446f2266fa5c85824624ed31db",
+      "rgba_sha256": "f2cc4b40bdbf4af45c6bc7140438b90f63905d598818d6eb358907f1252c0992",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_48",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_006.png",
+      "png_sha256": "e1a2ee5b37e148ddbc9363560673ebed76a8a5446f2266fa5c85824624ed31db",
+      "rgba_sha256": "f2cc4b40bdbf4af45c6bc7140438b90f63905d598818d6eb358907f1252c0992",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_48",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_007.png",
+      "png_sha256": "565b444d19344e7d39566af2cffcbed4920caca23a6ecd67cd07bdc584eb81cf",
+      "rgba_sha256": "ad8fcc5d28656b208976bc1ecf1560e16ec594b387fa9a99ca38ba4d71b031d0",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_49",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_008.png",
+      "png_sha256": "164bd5b7449710153f8c7592a2db2198c64d798756f26409fead3a21b4ffd231",
+      "rgba_sha256": "e724c87783a2a47db4c48d09a9817fad9f901448c8ec12757e012814e725a2ab",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_50",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_009.png",
+      "png_sha256": "a84a3c721933a98fb86a65a2b5b7920a5033b19d953385fe312ab4d42c7886d9",
+      "rgba_sha256": "3593e12731ffaffa0e984afa333de0227cb0542c55fb525486681926ff83330a",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_51",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_010.png",
+      "png_sha256": "945d3a92d1b65c302e6ac80ed958341124a864998575e7f3f512927642a60425",
+      "rgba_sha256": "dc4b393884a9aa971b499bad4a11501af7244d652f7065b70ae6d2d45d2a8134",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_52",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_011.png",
+      "png_sha256": "aec59b7fdc06b6fb36f4a2169c29533ad900327160d385bc528cb59d8aaa385e",
+      "rgba_sha256": "8489fc39a1a0cd329b1ca9befbacdaa80d8359181b05f2854384af03727d4cf2",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_53",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_012.png",
+      "png_sha256": "87fe619009a7e515decbfb471248b604fb59a9c0d4ecdd97c4d713b29f148c5b",
+      "rgba_sha256": "aad3da9565d12f623386db3fe8527b21e78b9d1d90e8b41652891a05cf40e7d1",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_54",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_013.png",
+      "png_sha256": "947dd5e2d434cccd16e988cbe48fb9321a47a2133792c45ec08cd2398caab0c9",
+      "rgba_sha256": "6b323d25d87f56ab15514f3573ec403b297f0e5ae0e5d4de7cdf0001257f56fc",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_55",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_014.png",
+      "png_sha256": "851239c0d37a6df7941bd8f479e80e05a2072563e1025f41d4e52c13f6074487",
+      "rgba_sha256": "2aae7dc846aaf25f1cadf55f1666862046c6db9d65d84bdc07fa039dac405606",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_56",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_015.png",
+      "png_sha256": "851239c0d37a6df7941bd8f479e80e05a2072563e1025f41d4e52c13f6074487",
+      "rgba_sha256": "2aae7dc846aaf25f1cadf55f1666862046c6db9d65d84bdc07fa039dac405606",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_56",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_016.png",
+      "png_sha256": "4f2f0fc70e068af715fe3f0e5f02350d2c2d9fd3762135a369831d82342d06ef",
+      "rgba_sha256": "48aecdd9d314c0a939f89f425103823f7be070c21b4e2f7703db60c10a3763ab",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_57",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_017.png",
+      "png_sha256": "00d0508b6e259a4bff971814ca3c0910832be93c8d6398e30acae9a4a4e03a43",
+      "rgba_sha256": "d3d7a705be96a33cdfbf12d944099f62133af2dae6cabe375021fff8ac57a633",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_58",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_018.png",
+      "png_sha256": "e3583172dc7ddbaef015f2dece07d42b30511173df514f47fb371dc0f4326eff",
+      "rgba_sha256": "c4ecc8fb48047933bc4bf59efec0d0f444573c7308b52c9befc1c480c7ff9bc6",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_59",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_019.png",
+      "png_sha256": "e1a2ee5b37e148ddbc9363560673ebed76a8a5446f2266fa5c85824624ed31db",
+      "rgba_sha256": "f2cc4b40bdbf4af45c6bc7140438b90f63905d598818d6eb358907f1252c0992",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_48",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_020.png",
+      "png_sha256": "e1a2ee5b37e148ddbc9363560673ebed76a8a5446f2266fa5c85824624ed31db",
+      "rgba_sha256": "f2cc4b40bdbf4af45c6bc7140438b90f63905d598818d6eb358907f1252c0992",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_48",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_021.png",
+      "png_sha256": "851239c0d37a6df7941bd8f479e80e05a2072563e1025f41d4e52c13f6074487",
+      "rgba_sha256": "2aae7dc846aaf25f1cadf55f1666862046c6db9d65d84bdc07fa039dac405606",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_56",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_022.png",
+      "png_sha256": "851239c0d37a6df7941bd8f479e80e05a2072563e1025f41d4e52c13f6074487",
+      "rgba_sha256": "2aae7dc846aaf25f1cadf55f1666862046c6db9d65d84bdc07fa039dac405606",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_56",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_023.png",
+      "png_sha256": "851239c0d37a6df7941bd8f479e80e05a2072563e1025f41d4e52c13f6074487",
+      "rgba_sha256": "2aae7dc846aaf25f1cadf55f1666862046c6db9d65d84bdc07fa039dac405606",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_56",
+      "width": 9,
+      "height": 42
+    },
+    {
+      "source": "tree/projects/apple-fruit/frame_024.png",
+      "png_sha256": "851239c0d37a6df7941bd8f479e80e05a2072563e1025f41d4e52c13f6074487",
+      "rgba_sha256": "2aae7dc846aaf25f1cadf55f1666862046c6db9d65d84bdc07fa039dac405606",
+      "crop": [
+        24,
+        32,
+        33,
+        74
+      ],
+      "descriptor": "newton_native_56",
+      "width": 9,
+      "height": 42
+    }
+  ],
+  "c_sha256": "19851a1392859e4c2f1f9a6a256dad82d5a2335340dd0dafbf1c8f6cc1a1a0af"
+}

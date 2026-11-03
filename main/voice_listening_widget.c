@@ -1,0 +1,371 @@
+/*
+ * SPDX-FileCopyrightText: 2021-2025 Espressif Systems (Shanghai) CO LTD
+ *
+ * SPDX-License-Identifier: CC0-1.0
+ */
+
+/**
+ * @file
+ * @brief VoiceListeningWidget: rotating ring + glisten highlight + static
+ *        inner ring + halo + navy disc + mic icon.
+ * @details Five concentric native-primitive layers, back to front (creation
+ *          order = z-order, all siblings under one container, all centered
+ *          on the same point):
+ *            1. outer ring (lv_arc, rotating) - thick blue circle
+ *            2. inner ring (lv_arc, static)   - thin light-blue circle
+ *            3. halo (lv_obj, static)         - subtle pale-blue flat disc
+ *            4. disc (lv_obj, static)         - dark navy filled disc,
+ *                                                slightly smaller than the
+ *                                                halo so the halo's edge
+ *                                                peeks out around it
+ *            5. mic icon (lv_obj x3)          - white capsule+stand+base,
+ *                                                parented to the disc
+ *          The halo is a second flat circle behind the disc, not
+ *          lv_obj_set_style_shadow_*, and its opacity is a fixed value, not
+ *          animated - "depth" here comes from one static color layer
+ *          peeking around another, not a blur or a gradient.
+ *          One lv_arc does double duty as both the thick blue outer ring
+ *          (its background arc, spanning the full 360deg) and the
+ *          traveling highlight (its indicator arc, a short bright
+ *          cyan-toward-white segment) - lv_arc_draw() adds the same
+ *          `rotation` value to both the background and indicator angles
+ *          (see lv_arc.c), so animating just that one int32 property turns
+ *          the whole ring and moves the highlight with it in a single step.
+ *          The highlight's color is a single flat color mixed toward white
+ *          (lv_color_lighten), not a two-stop gradient - LVGL's arc has no
+ *          per-pixel gradient-along-a-stroke primitive, and a real gradient
+ *          was explicitly ruled out; this is the closest flat-color
+ *          approximation of "cyan-to-white" that stays within that limit.
+ *          That single-property animation is also what keeps this cheap:
+ *          one lv_anim ticking one int32, no timers of our own, no polling,
+ *          nothing scaling, fading, or otherwise animated on any of the
+ *          other four (static) layers - just a redraw of a handful of small
+ *          shapes per animation frame.
+ *          The mic icon is three plain white lv_obj rectangles (capsule +
+ *          stand + base) rather than a font glyph or bitmap - LVGL's
+ *          bundled symbol font (lv_symbol_def.h) has no microphone glyph,
+ *          and native primitives avoid pulling in a new font/image asset
+ *          for a shape this simple.
+ */
+
+#include "voice_listening_widget.h"
+
+/* 130 -> 148 (Mission 19) -> 156 now. HOME carries nothing else any more -
+ * title, uptime, Wi-Fi, volume and the project scroller all moved off or to
+ * SETTINGS - so the widget gets the page. 172 fits the full 240px screen with margin - the corner buttons overlap
+ * only the transparent corners of its bounding box, never the circle. Every layer below
+ * scales with it, mic glyph included, so the proportions are unchanged. */
+#define RING_DIAM 172
+#define RING_WIDTH 10
+#define GLINT_SPAN_DEG 110 /* long sweep, not a short blip - see the file comment */
+
+#define COUNTER_RING_DIAM 146
+#define COUNTER_RING_WIDTH 3
+#define COUNTER_SPAN_DEG 70
+#define COUNTER_PERIOD_MS 11000   /* slower than the outer ring, and reversed */
+
+#define INNER_RING_DIAM 132
+#define INNER_RING_WIDTH 2
+
+#define HALO_DIAM 118
+#define DISC_DIAM 100
+
+/* ~7s per rotation - inside the requested 6-8s range. Linear path (constant
+ * angular speed, no ease-in/out) is what keeps this reading as "calm" and
+ * "futuristic" rather than flashy - an eased path would visibly speed up
+ * and slow down once per lap. */
+#define ROTATION_PERIOD_MS 7000
+
+/* 1.3.0: the widget can be built at any diameter (HOME now draws it at ~104
+ * px in the top-right). Every size above is the 172 px design; SC() scales
+ * one of them to the diameter being built, so the proportions - and the
+ * layered look - are the same at any size. Scaling the geometry rather than
+ * applying an LVGL transform matters on this chip: a transformed object is
+ * drawn through an extra layer on every animation frame. */
+#define SC(v, d) (((v) * (d) + RING_DIAM / 2) / RING_DIAM)
+
+/* Capsule + stand + base, all parented directly to the disc and centered on
+ * it - so they track the disc's own box with no separate alignment math.
+ * Scaled with the ring; the 92px disc still has enough radius to hold them
+ * (the icon extends ~35px from center, disc radius is 46px). */
+static void build_mic_icon(lv_obj_t *disc, int d)
+{
+    lv_obj_t *head = lv_obj_create(disc);
+    lv_obj_set_size(head, SC(36, d), SC(52, d));
+    lv_obj_set_style_radius(head, SC(18, d), 0);
+    lv_obj_set_style_bg_color(head, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(head, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(head, 0, 0);
+    lv_obj_clear_flag(head, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(head, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_align(head, LV_ALIGN_CENTER, 0, -SC(18, d));
+
+    lv_obj_t *stand = lv_obj_create(disc);
+    lv_obj_set_size(stand, SC(7, d), SC(22, d));
+    lv_obj_set_style_radius(stand, SC(3, d), 0);
+    lv_obj_set_style_bg_color(stand, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(stand, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(stand, 0, 0);
+    lv_obj_clear_flag(stand, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(stand, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_align(stand, LV_ALIGN_CENTER, 0, SC(18, d));
+
+    lv_obj_t *base = lv_obj_create(disc);
+    lv_obj_set_size(base, SC(39, d), SC(7, d));
+    lv_obj_set_style_radius(base, SC(3, d), 0);
+    lv_obj_set_style_bg_color(base, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(base, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(base, 0, 0);
+    lv_obj_clear_flag(base, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(base, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_align(base, LV_ALIGN_CENTER, 0, SC(31, d));
+}
+
+/* An lv_arc, not a plain circle + overlay: its background/indicator split
+ * is exactly "thick static ring" + "small arc that can be rotated as one
+ * number" with no manual angle math of our own, and lv_arc_set_rotation is
+ * a native LVGL primitive - see the file comment. */
+static lv_obj_t *build_outer_ring(lv_obj_t *parent, int d)
+{
+    lv_obj_t *ring = lv_arc_create(parent);
+    lv_obj_set_size(ring, d, d);
+    lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(ring, LV_ALIGN_CENTER, 0, 0);
+
+    /* Background arc = the ring itself: a full circle, thick and blue. */
+    lv_arc_set_bg_angles(ring, 0, 360);
+    lv_obj_set_style_arc_width(ring, SC(RING_WIDTH, d), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(ring, lv_palette_main(LV_PALETTE_BLUE), LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(ring, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(ring, false, LV_PART_MAIN);
+
+    /* Indicator arc = the highlight: a short, bright cyan-toward-white
+     * segment at the same radius as the background (zero indicator
+     * padding - see get_indicator_max_pad() in lv_arc.c). Rounded caps
+     * give it a soft "glint" look instead of a hard-edged block. */
+    lv_arc_set_angles(ring, 0, GLINT_SPAN_DEG);
+    lv_obj_set_style_pad_all(ring, 0, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(ring, SC(RING_WIDTH, d), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(ring, lv_color_lighten(lv_palette_main(LV_PALETTE_CYAN), 160), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(ring, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(ring, true, LV_PART_INDICATOR);
+
+    /* lv_arc always draws a knob rect (lv_arc_draw() in lv_arc.c has no
+     * "disabled" branch for it) - opa 0 is what actually hides it, not
+     * just clearing CLICKABLE above. */
+    lv_obj_set_style_opa(ring, LV_OPA_TRANSP, LV_PART_KNOB);
+
+    return ring;
+}
+
+/* Thin, stationary, light-blue - no rotation applied to this one, and no
+ * indicator/knob drawn on it at all (opa 0 for both parts) since it never
+ * needs to show a highlight or be interactive. */
+/* Counter-rotating accent. Same one-property animation as the outer ring,
+ * turning the opposite way at a different rate - which is what makes the
+ * whole thing read as layered rather than as a single spinning circle. */
+static lv_obj_t *build_counter_ring(lv_obj_t *parent, int d)
+{
+    lv_obj_t *ring = lv_arc_create(parent);
+    lv_obj_set_size(ring, SC(COUNTER_RING_DIAM, d), SC(COUNTER_RING_DIAM, d));
+    lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(ring, LV_ALIGN_CENTER, 0, 0);
+
+    /* No background arc at all - only the short indicator shows, so this
+     * layer is a moving accent rather than another full circle. */
+    lv_arc_set_bg_angles(ring, 0, 0);
+    lv_obj_set_style_arc_opa(ring, LV_OPA_TRANSP, LV_PART_MAIN);
+
+    lv_arc_set_angles(ring, 0, COUNTER_SPAN_DEG);
+    lv_obj_set_style_pad_all(ring, 0, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(ring, LV_MAX(2, SC(COUNTER_RING_WIDTH, d)), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(ring, lv_palette_lighten(LV_PALETTE_CYAN, 2), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(ring, LV_OPA_70, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(ring, true, LV_PART_INDICATOR);
+    lv_obj_set_style_opa(ring, LV_OPA_TRANSP, LV_PART_KNOB);
+    return ring;
+}
+
+static lv_obj_t *build_inner_ring(lv_obj_t *parent, int d)
+{
+    lv_obj_t *ring = lv_arc_create(parent);
+    lv_obj_set_size(ring, SC(INNER_RING_DIAM, d), SC(INNER_RING_DIAM, d));
+    lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(ring, LV_ALIGN_CENTER, 0, 0);
+
+    lv_arc_set_bg_angles(ring, 0, 360);
+    lv_obj_set_style_arc_width(ring, LV_MAX(1, SC(INNER_RING_WIDTH, d)), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(ring, lv_palette_main(LV_PALETTE_LIGHT_BLUE), LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(ring, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(ring, false, LV_PART_MAIN);
+
+    lv_obj_set_style_opa(ring, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    lv_obj_set_style_opa(ring, LV_OPA_TRANSP, LV_PART_KNOB);
+
+    return ring;
+}
+
+/* Halo (subtle, pale blue, fixed low opacity - not animated) sits directly
+ * behind the disc and is a few px wider, so only its rim shows; disc (dark
+ * navy, full opacity) on top of it, with the mic icon on top of that. Both
+ * are lv_obj circles (radius = half of size), not lv_arc - full filled
+ * discs, not strokes. */
+static void build_disc(lv_obj_t *parent, int d)
+{
+    lv_obj_t *halo = lv_obj_create(parent);
+    lv_obj_set_size(halo, SC(HALO_DIAM, d), SC(HALO_DIAM, d));
+    lv_obj_set_style_radius(halo, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(halo, lv_palette_lighten(LV_PALETTE_BLUE, 4), 0);
+    lv_obj_set_style_bg_opa(halo, LV_OPA_40, 0);
+    lv_obj_set_style_border_width(halo, 0, 0);
+    lv_obj_clear_flag(halo, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(halo, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_align(halo, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_t *disc = lv_obj_create(parent);
+    lv_obj_set_size(disc, SC(DISC_DIAM, d), SC(DISC_DIAM, d));
+    lv_obj_set_style_radius(disc, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(disc, lv_palette_darken(LV_PALETTE_BLUE, 3), 0);
+    lv_obj_set_style_bg_grad_color(disc, lv_color_hex(0x0A1633), 0);
+    lv_obj_set_style_bg_grad_dir(disc, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_opa(disc, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(disc, 0, 0);
+    lv_obj_clear_flag(disc, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(disc, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_align(disc, LV_ALIGN_CENTER, 0, 0);
+
+    build_mic_icon(disc, d);
+}
+
+/* lv_anim_exec_xcb_t is `void(*)(void *, int32_t)` - lv_arc_set_rotation's
+ * signature already matches it exactly, so no wrapper function is needed
+ * (the same cast LVGL's own arc examples use). */
+/* Opposite direction (360 -> 0) and a slower period than start_rotation's.
+ * Two independent rates turning against each other is the whole trick. */
+static void start_counter_rotation(lv_obj_t *ring)
+{
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, ring);
+    lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)lv_arc_set_rotation);
+    lv_anim_set_values(&a, 360, 0);
+    lv_anim_set_duration(&a, COUNTER_PERIOD_MS);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&a, lv_anim_path_linear);
+    lv_anim_start(&a);
+}
+
+static void start_rotation(lv_obj_t *ring)
+{
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, ring);
+    lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)lv_arc_set_rotation);
+    lv_anim_set_values(&a, 0, 360);
+    lv_anim_set_duration(&a, ROTATION_PERIOD_MS);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&a, lv_anim_path_linear);
+    lv_anim_start(&a);
+}
+
+lv_obj_t *voice_listening_widget_create(lv_obj_t *parent)
+{
+    return voice_listening_widget_create_sized(parent, RING_DIAM);
+}
+
+lv_obj_t *voice_listening_widget_create_sized(lv_obj_t *parent, int diameter)
+{
+    int d = diameter;
+    /* Container is just the outer ring's own bounding box - callers
+     * position/size this exactly like they would the ring itself. */
+    lv_obj_t *cont = lv_obj_create(parent);
+    lv_obj_set_size(cont, d, d);
+    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(cont, 0, 0);
+    lv_obj_set_style_pad_all(cont, 0, 0);
+    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(cont, LV_OBJ_FLAG_CLICKABLE);
+
+    /* Back to front: outer rotating ring, static inner ring, halo+disc+icon
+     * on top - see the file comment for the full layer list. */
+    lv_obj_t *outer_ring = build_outer_ring(cont, d);
+    lv_obj_t *counter_ring = build_counter_ring(cont, d);
+    build_inner_ring(cont, d);
+    build_disc(cont, d);
+    start_rotation(outer_ring);
+    start_counter_rotation(counter_ring);
+
+    return cont;
+}
+
+/* Child indices on the container, in build order (see
+ * voice_listening_widget_create). set_notification() already relied on the
+ * outer ring being 0; these name the rest rather than leaving bare numbers
+ * scattered about. The mic icon's three pieces are children of the disc. */
+#define CHILD_OUTER_RING 0
+#define CHILD_DISC       4   /* outer, counter, inner, halo, disc */
+#define MIC_PART_COUNT   3
+
+void voice_listening_widget_set_link(lv_obj_t *widget, voice_widget_link_t link)
+{
+    if (!widget) {
+        return;
+    }
+
+    bool spin = (link == VOICE_WIDGET_LINK_OK || link == VOICE_WIDGET_LINK_UNKNOWN);
+    lv_color_t mic_color;
+    switch (link) {
+    case VOICE_WIDGET_LINK_DOWN:
+        mic_color = lv_palette_main(LV_PALETTE_RED);
+        break;
+    case VOICE_WIDGET_LINK_NO_NET:
+    case VOICE_WIDGET_LINK_UNKNOWN:
+        mic_color = lv_palette_main(LV_PALETTE_GREY);
+        break;
+    case VOICE_WIDGET_LINK_OK:
+    default:
+        mic_color = lv_color_white();
+        break;
+    }
+
+    lv_obj_t *ring = lv_obj_get_child(widget, CHILD_OUTER_RING);
+    if (ring) {
+        /* Only act on a change. Unconditionally restarting the animation
+         * would reset the rotation to 0 on every UI tick, which reads as a
+         * stuck ring rather than a spinning one. */
+        bool spinning = lv_anim_get(ring, (lv_anim_exec_xcb_t)lv_arc_set_rotation) != NULL;
+        if (spin && !spinning) {
+            start_rotation(ring);
+        } else if (!spin && spinning) {
+            lv_anim_delete(ring, (lv_anim_exec_xcb_t)lv_arc_set_rotation);
+        }
+    }
+
+    lv_obj_t *disc = lv_obj_get_child(widget, CHILD_DISC);
+    if (disc) {
+        for (int i = 0; i < MIC_PART_COUNT; i++) {
+            lv_obj_t *part = lv_obj_get_child(disc, i);
+            if (part) {
+                lv_obj_set_style_bg_color(part, mic_color, 0);
+            }
+        }
+    }
+}
+
+void voice_listening_widget_set_notification(lv_obj_t *widget, bool pending)
+{
+    if (!widget) {
+        return;
+    }
+    /* Outer ring is always child index 0 - see the creation order above
+     * (build_outer_ring() is the first thing parented to cont). */
+    lv_obj_t *outer_ring = lv_obj_get_child(widget, 0);
+    if (!outer_ring) {
+        return;
+    }
+    lv_color_t color = pending ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_main(LV_PALETTE_BLUE);
+    lv_obj_set_style_arc_color(outer_ring, color, LV_PART_MAIN);
+}

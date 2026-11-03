@@ -1,0 +1,478 @@
+{
+  "source_zip_sha256": "76229262dc437e888b30afd15ee4b6ad9e439568a6c6598fb7880a99a30109dc",
+  "accepted": false,
+  "conversion": "Exact RGBA palette/index encoding to native LVGL I8, byte-identical reconstruction verified; no resize, crop, quantization, drawing or recolouring",
+  "unique_payloads": 66,
+  "payload_bytes": 549376,
+  "exports": [
+    {
+      "source": "backdrop\\projects\\dusk-backdrop\\frame_000.png",
+      "sha256": "d1b6b54ab9948444115839fc1e9519b0ed62741e4d9b0ea88473b7dba93cd592",
+      "palette_colors": 8,
+      "raw_rgba_sha256": "638b400eecf5fa8f940aa806a6027320ddf10bb95abf8e32a50b847c33b8c4f4"
+    },
+    {
+      "source": "backdrop\\projects\\dusk-backdrop\\frame_001.png",
+      "sha256": "c7a4ee62788abae195910cf8876fc23da0c90875db99501286bc85fa929f362b",
+      "palette_colors": 10,
+      "raw_rgba_sha256": "7dc51411af7e529398afa5971f14b561aee4dd55415202d8bf52824663251464"
+    },
+    {
+      "source": "backdrop\\projects\\dusk-backdrop\\frame_002.png",
+      "sha256": "b4d35890e51efb73620705a3634e0d4020a55475aea393542d6d3a4eebd211db",
+      "palette_colors": 8,
+      "raw_rgba_sha256": "e7e3dc2a32b94def132cc7a4583e722335fe9badce6812dbe87a7a0706ecd8d4"
+    },
+    {
+      "source": "backdrop\\projects\\dusk-backdrop\\frame_003.png",
+      "sha256": "9686668dcd26299706d2a3a03fd50bf406b37a0780dea2cd444e9148e913b881",
+      "palette_colors": 8,
+      "raw_rgba_sha256": "cd206e8212ce8fa81e402be5448f69eb18972e7632513865c68b2f5de5e4eb0f"
+    },
+    {
+      "source": "backdrop\\projects\\dusk-backdrop\\frame_004.png",
+      "sha256": "974ce1667809667b618383a4aae60be97e701535e2f1f9ac8cf4d235ebb47185",
+      "palette_colors": 12,
+      "raw_rgba_sha256": "7a00b35731ec4f35bb99691d77e392b7f0cf8d65e6e099ce0b1a7755fc7e90a9"
+    },
+    {
+      "source": "backdrop\\projects\\dusk-backdrop\\frame_005.png",
+      "sha256": "a7e7c98027992d8173fc102c3cb67e0530caea25d93f5766d9adf13c5cb1b672",
+      "palette_colors": 14,
+      "raw_rgba_sha256": "928af49d0b63cbaf25a7a5aa77002ba3a5455720ee85e651850329fc3a792a8b"
+    },
+    {
+      "source": "backdrop\\projects\\dusk-backdrop\\frame_006.png",
+      "sha256": "3350fc24750fac636f5bbb54e4b84eef1564aad889c619f557edd1b9c2936a74",
+      "palette_colors": 14,
+      "raw_rgba_sha256": "35c74f9b9a001c93c839c7e10d9c7dc2d54e7d81aa5c08dc52d418b42b39b3ff"
+    },
+    {
+      "source": "backdrop\\projects\\dusk-backdrop\\frame_007.png",
+      "sha256": "785fdf0bc053e0dbe027908040a544e2b80a360513a07f39ae132184a4e33ceb",
+      "palette_colors": 12,
+      "raw_rgba_sha256": "af1803d7d8089a33ccdfa3da66ec9a73b02b7177a24c841779417dd92ce1c851"
+    },
+    {
+      "source": "cabin-v2\\projects\\log-cabin-v2\\frame_000.png",
+      "sha256": "e45199352cb8e9bb26d1f8fb9b8a4554e090947cdf0c4f64be6188d0d993b5e5",
+      "palette_colors": 20,
+      "raw_rgba_sha256": "0568c9eb44bc5e81a011e15c5ca2352a76503777f26c32fc9681e417b7481534"
+    },
+    {
+      "source": "cabin-v2\\projects\\log-cabin-v2\\frame_001.png",
+      "sha256": "14e574db7040075260a15759b03f9d0b3f39d555a75c8fd4e4bdbce907e007ce",
+      "palette_colors": 24,
+      "raw_rgba_sha256": "4793696e639e84d6d31ca88d88db9ddb7aba12bf5064bad0458313263a15562a"
+    },
+    {
+      "source": "cabin-v2\\projects\\log-cabin-v2\\frame_002.png",
+      "sha256": "89eb9e6f82757ecbb19b66876c510a1ae7dd8adee788b9a69c4eecf124ab6039",
+      "palette_colors": 24,
+      "raw_rgba_sha256": "55357ae920dde86c07af0a35fe920548d488a256fada1f4e7e27767d71f73a33"
+    },
+    {
+      "source": "cabin-v2\\projects\\log-cabin-v2\\frame_003.png",
+      "sha256": "14e574db7040075260a15759b03f9d0b3f39d555a75c8fd4e4bdbce907e007ce",
+      "palette_colors": 24,
+      "raw_rgba_sha256": "4793696e639e84d6d31ca88d88db9ddb7aba12bf5064bad0458313263a15562a"
+    },
+    {
+      "source": "cabin-v2\\projects\\log-cabin-v2\\frame_004.png",
+      "sha256": "e45199352cb8e9bb26d1f8fb9b8a4554e090947cdf0c4f64be6188d0d993b5e5",
+      "palette_colors": 20,
+      "raw_rgba_sha256": "0568c9eb44bc5e81a011e15c5ca2352a76503777f26c32fc9681e417b7481534"
+    },
+    {
+      "source": "cabin-v2\\projects\\log-cabin-v2\\frame_005.png",
+      "sha256": "05b1de5b84945c8c10c92a2c09c210af0a0f7a5d9ce6ff0ad2f87d7bc29c1020",
+      "palette_colors": 22,
+      "raw_rgba_sha256": "04ba7e8c6d0a36f3335b338c7064a3bbb4ccd6fc60307e3821ee0913a450bdef"
+    },
+    {
+      "source": "cabin-v2\\projects\\log-cabin-v2\\frame_006.png",
+      "sha256": "409301b2595d370e816fbe2a9d6d0f73df58725130eda4f4927cab3445320bd5",
+      "palette_colors": 22,
+      "raw_rgba_sha256": "04a4d11c4a8907c00ba12ad39bcb1ef0259811eef6e2aad5718aa9c4a61ba231"
+    },
+    {
+      "source": "cabin-v2\\projects\\log-cabin-v2\\frame_007.png",
+      "sha256": "f99ea130acd9d68cdf5a68b9e700863554f9d6b1d3fbcfc53158e30c7de3fbe6",
+      "palette_colors": 22,
+      "raw_rgba_sha256": "bd523cfb0583144c23eecb29bedb2cb538b136326370c3ee4e20bcca2c75e48a"
+    },
+    {
+      "source": "cabin-v2\\projects\\log-cabin-v2\\frame_008.png",
+      "sha256": "c8fcaaddafb261bd48f160a1022b8715c36a836961b43ec432ac86b32b58bb28",
+      "palette_colors": 22,
+      "raw_rgba_sha256": "7cce1138ea12c152c916d63c25f5bd23f08f581d9cf8fda58516b2b764445d1f"
+    },
+    {
+      "source": "cabin-v2\\projects\\log-cabin-v2\\frame_009.png",
+      "sha256": "409301b2595d370e816fbe2a9d6d0f73df58725130eda4f4927cab3445320bd5",
+      "palette_colors": 22,
+      "raw_rgba_sha256": "04a4d11c4a8907c00ba12ad39bcb1ef0259811eef6e2aad5718aa9c4a61ba231"
+    },
+    {
+      "source": "cabin-v2\\projects\\log-cabin-v2\\frame_010.png",
+      "sha256": "05b1de5b84945c8c10c92a2c09c210af0a0f7a5d9ce6ff0ad2f87d7bc29c1020",
+      "palette_colors": 22,
+      "raw_rgba_sha256": "04ba7e8c6d0a36f3335b338c7064a3bbb4ccd6fc60307e3821ee0913a450bdef"
+    },
+    {
+      "source": "cabin-v2\\projects\\log-cabin-v2\\frame_011.png",
+      "sha256": "e45199352cb8e9bb26d1f8fb9b8a4554e090947cdf0c4f64be6188d0d993b5e5",
+      "palette_colors": 20,
+      "raw_rgba_sha256": "0568c9eb44bc5e81a011e15c5ca2352a76503777f26c32fc9681e417b7481534"
+    },
+    {
+      "source": "cabin-v2\\projects\\log-cabin-v2\\frame_012.png",
+      "sha256": "9ca53125f6c0db0b3baefce9579634f4b0e8ef45db3ddf3b35378ab58e878057",
+      "palette_colors": 20,
+      "raw_rgba_sha256": "b79e78339060d8eb0e0c54829cbf1bea47b88b8c167014d61855a5b05ac87d79"
+    },
+    {
+      "source": "cabin-v2\\projects\\log-cabin-v2\\frame_013.png",
+      "sha256": "b7bd4f62eb4db5870d812123d96933cfbc336b809e1cc3aa22cabf73ecfa95da",
+      "palette_colors": 22,
+      "raw_rgba_sha256": "b1292ca7be769788b48041f51b8a0a6317df26403f8e71a6d533ba6139978bb8"
+    },
+    {
+      "source": "cabin-v2\\projects\\log-cabin-v2\\frame_014.png",
+      "sha256": "78a20a3146571920157c8dc9e5793ba6f5470e01747fb1e58dc9e1c1d9bc53ab",
+      "palette_colors": 22,
+      "raw_rgba_sha256": "88f721a500ed1ec179d1f5c07aff8550e18b37fb78bb2bfc91e99522c616ffd7"
+    },
+    {
+      "source": "cabin-v2\\projects\\log-cabin-v2\\frame_015.png",
+      "sha256": "e45199352cb8e9bb26d1f8fb9b8a4554e090947cdf0c4f64be6188d0d993b5e5",
+      "palette_colors": 20,
+      "raw_rgba_sha256": "0568c9eb44bc5e81a011e15c5ca2352a76503777f26c32fc9681e417b7481534"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_000.png",
+      "sha256": "0060c26c4f3762357ba21ac26759e9f8d10f6f7705bcdade5edade485407486f",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "81c3a65819b35180263bf0390706b3ca2d69c33b4466f98137fc075db6fbeefb"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_001.png",
+      "sha256": "0060c26c4f3762357ba21ac26759e9f8d10f6f7705bcdade5edade485407486f",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "81c3a65819b35180263bf0390706b3ca2d69c33b4466f98137fc075db6fbeefb"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_002.png",
+      "sha256": "777f722a40afdc3bf8e997dbf05c35bef02353d57ca022e2cf50954f33c607fa",
+      "palette_colors": 24,
+      "raw_rgba_sha256": "ba091b42c1db51f4d40a13598073fbe70ad4c62bd4ed2ea22850f148a03830a7"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_003.png",
+      "sha256": "055d6111342c76dd8b6962af235f993b9eb5a106d66bf6174b0174c9ea137667",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "a802b8963ff295a9507a7a43b9d0e18c6f0862455cee33628e9ce759d4b87e8c"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_004.png",
+      "sha256": "dd617bd7a6f41f123f417148a72f9020465b1e93c0c2006c1990007fba00744e",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "d6cc20afdda8a4e8a32592a76e0abb0d96944a7542ceabe46a614f3530a9442b"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_005.png",
+      "sha256": "a600c005a276028446c86f16d9b11187b7e39211289ad4a1fd6c4418d7da778d",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "8e3b14da1d2ec63ebbc6ae770aa311ab259264fd72ae0284d26f526ea3330a38"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_006.png",
+      "sha256": "36d59faa7b2b16e79b95495d8152872136caf8a26e1624add47ab91562e2cfc7",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "e9f4d2e71e4fdaec3c17d134b751587cb7788a87624b7938551fff89bc0db950"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_007.png",
+      "sha256": "7daf186f21d522b04e16aaf0281f8daff20ed14cef82ed92c67786148318fdae",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "55caf0e50a260774927a1d6cbf39691aadda12211e630380006f77fff2b4f9c3"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_008.png",
+      "sha256": "8456f71c4f6d904ddf725936f72a7327133ff649aa7dc7b67040ec73b980f487",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "e30f4ed5118f4beaefd3277bf6f626b6df123c722f432eafc35c6526adca35e8"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_009.png",
+      "sha256": "b0f375c25109a4bbcabfc0be48e37a27c7d5a31645d083dba25aeff7380b0e64",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "b1c844b48fe41a801533bd9c7e2b4bfef7493f73f31dee4bcb02df0a0ec3000a"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_010.png",
+      "sha256": "5fc7c7c97b3428dcbf9ca3d31c93dc0b5a8def2ded9929c0b4ce5af6d9d58ca4",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "29c50630f50055e208422dab5a93805b8481ac4f8227467d0257c0dd95600278"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_011.png",
+      "sha256": "c1ce10038b876b01caf490de417f3e4fdd331c74a497dce007ad60d9914f3876",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "e6912537cade16b80625a023ca3ae290e3fc0efbc016b6fd22c4a3b122d2cb8a"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_012.png",
+      "sha256": "c748c76875b1d0d5bc0504d7461eeac35c4e1410ffbab27f20e76b7fa8ba580f",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "460e82198f44e2a29540e398e4d19bbf1b66fd52cfe846cd1e0fc38b6368b498"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_013.png",
+      "sha256": "357c9c70b0cda10927b8a17068ef8965fcb0078387dc051253f39888ad6352ff",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "1f8b67880a27849590ca682f62da31d9fff942fb734a8d832288421fff386ad0"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_014.png",
+      "sha256": "dc598f3e58055fa5ed48f6b51315215245d4e5fcb4ca24887765679d25b0fe09",
+      "palette_colors": 26,
+      "raw_rgba_sha256": "99839ecefba8f054523743ffa0acd6a30b0e683a1bfc36e29aedef480d5707d0"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_015.png",
+      "sha256": "bb993d0d89735eb83cc706ddfe9375f62b9b9a15b24c2ee0b00e22ead80f562c",
+      "palette_colors": 24,
+      "raw_rgba_sha256": "9326d5acdcb97831cdfa59ecb37b2168c419ffeb8792ddeb248f2207ab5848f9"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_016.png",
+      "sha256": "67e6c38852eb6207f898091d4445481af96bdeb05d96200967dc99a7f7ffe86b",
+      "palette_colors": 24,
+      "raw_rgba_sha256": "1adbd1fd6ec8304e8dd095bd9b4ea73b0f90f718ab95b85f38f8b6e5392eeb57"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_017.png",
+      "sha256": "833bbc897faaadc6ac4b0bb54d7984b1d9612681b162782de12f7c3e7a92b705",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "db774a3e619a9fede78d2b2f7ac132495f19413f4812e18b0d67e9a8cb739a95"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_018.png",
+      "sha256": "eef00fefb31bcfb2c0dca5d7c3c3f8d2f8416f8cbcd27262af434afb52d187e9",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "db9bfd24943bb77a03a6ff0edb3d23165be21f7f4f29645f925ad8e616bacf9e"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_019.png",
+      "sha256": "c25132368699638d576ef310a40a67cc0201c2d518c820a2fbca3d21758da08e",
+      "palette_colors": 28,
+      "raw_rgba_sha256": "af43d7f36bc5ef1f5a5ee5252bb90433959f68e2f3721a92917ea64600bf7030"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_020.png",
+      "sha256": "e0a283820d35ce401ca831ba6e190488cd753a25089dbb3bf9e6e52f1695302b",
+      "palette_colors": 28,
+      "raw_rgba_sha256": "93bebac123f486202a96e1a0599148c26b0d0754db84d36bdcde4970677ec18e"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_021.png",
+      "sha256": "9ec7c700a8e0a4145fbb0119051249dedf60f0c26009e9e685c9241e0ebe9605",
+      "palette_colors": 27,
+      "raw_rgba_sha256": "8c25e24fd53efaf1805eb08eebbc77c574703ca3f5ec8a394478f4646ad8a2be"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_022.png",
+      "sha256": "9f62f4ae0c5b2ccb9f38ff40119a145963aec2831a8d4ce01a6d7d81c06577fc",
+      "palette_colors": 27,
+      "raw_rgba_sha256": "c4ed8afa4b37ad7c277ad49d5100a1d8d84f32d52f195d0d1c98f14ad6e766ca"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_023.png",
+      "sha256": "8a95ed307a65c21d684e2a668834df0de0a98e474f4f1684c450a5cb1e29b402",
+      "palette_colors": 26,
+      "raw_rgba_sha256": "467492dc2de7bea95716002981785469cdeeb29a12bdfa9cafa551cb2158dff0"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_024.png",
+      "sha256": "df494c523435c868d9d056635a6f6a0b2904ee63617963b762145f8344980e40",
+      "palette_colors": 27,
+      "raw_rgba_sha256": "15661316a486c6afe288c6281043c8444dc30042cedd6e3daa96e5b0709c318d"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_025.png",
+      "sha256": "8db679bc74b76dd4804b5b589ec1dd219d74881097fb2d0fa4bc9036a6917cc9",
+      "palette_colors": 27,
+      "raw_rgba_sha256": "59d132c94ee6c0ade9c31b042c3e54aeeafbfca9bcfc8e17c0bb2f4cf9b20356"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_026.png",
+      "sha256": "9ec7c700a8e0a4145fbb0119051249dedf60f0c26009e9e685c9241e0ebe9605",
+      "palette_colors": 27,
+      "raw_rgba_sha256": "8c25e24fd53efaf1805eb08eebbc77c574703ca3f5ec8a394478f4646ad8a2be"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_027.png",
+      "sha256": "19f540521168709c805fb7d000f8a7f2014d57b4e7f6d94d9b56d548421633ee",
+      "palette_colors": 27,
+      "raw_rgba_sha256": "67f515526850092745ad1b6bd216856506545fed23a7442f72cbf546eded7f74"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_028.png",
+      "sha256": "88300bdca00748cee11b700739352fd2f2b8e2e73d402a60e9170ceccdbcc6af",
+      "palette_colors": 27,
+      "raw_rgba_sha256": "08affda22a665f4b14c8cd816b5cd42cd0655933cf3f884d4ac8a09dde750f03"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_029.png",
+      "sha256": "cf78f953e2c808fae7c3e3b44d0bf482658027195eabc5b685ba8b3bc92d5c53",
+      "palette_colors": 27,
+      "raw_rgba_sha256": "f002160f1182a1a770985016721c5944dfee3cd59b4e89ee7a5cc279bf8620ab"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_030.png",
+      "sha256": "2a900dc67fa093b54e1ced547f840ecb2e5d5b8b0ac902c162aee45d4216de58",
+      "palette_colors": 27,
+      "raw_rgba_sha256": "4d200a2a0eb703a4c1e453a81ab8dfdd6e5fe7a39ed1e9a058575bf4fa9985c2"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_031.png",
+      "sha256": "2037e3396ef0b3011eb85e1bafbf2b66e9040a5393532d69babda6e72fe57444",
+      "palette_colors": 27,
+      "raw_rgba_sha256": "3c01d4d24969a1bf270a527ec2c743e76d51ff91f2773149abd3dce7ee90a3d2"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_032.png",
+      "sha256": "94f7932ac4527ce619d6b3768ade6aa04ad80355b75ecd966dfde9e50689c0e9",
+      "palette_colors": 27,
+      "raw_rgba_sha256": "381256dbf1a39b52f129b921e9158bb81362e024e076350871b189c5999a7549"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_033.png",
+      "sha256": "fab703cc5b3d004dca78fcd1de08098eac8dd1b3a777fae1aee13dbfeb96fe1c",
+      "palette_colors": 26,
+      "raw_rgba_sha256": "768db0bb8b6285d7ce5d731d3402a9ed481821d4f31be9ac0c3f62bff590ccef"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_034.png",
+      "sha256": "83f8b5067e77c7dd217965cca1d38d47f5fec5f015460ecf62a54f660491a1a5",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "109768b34578ff08a6c691fe95ff8310ee4841e5c17811bcaff1310de618db92"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_035.png",
+      "sha256": "d66d55ffd7e7419385d4f38ed316118e8d92c102bbca21378d4c7bb658b0654a",
+      "palette_colors": 27,
+      "raw_rgba_sha256": "01c4705fe859a4e6426496d6f6f4a5e83da96599f43d2053a0403f128ae3ed63"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_036.png",
+      "sha256": "7f01e5f162d1c9d63bdcb7a02905d3ccc2b403f39cd84b639dfce5a48a5bbb74",
+      "palette_colors": 27,
+      "raw_rgba_sha256": "7609d1d39d4e2b3e5a14bb20ada70fc933eb7ad9865c43f43d0f6c3bd6915cec"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_037.png",
+      "sha256": "86cd58f2eeff7e292e69a6c46655690072b308198bec7f97eb5624110b6a4a8c",
+      "palette_colors": 26,
+      "raw_rgba_sha256": "7abfc1ccaf998ad25fb9e4c9d1330f2f94488f9cbb0143160ef224f26823bb47"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_038.png",
+      "sha256": "df3f1a90d16c03f30b3f7f1345a706a30d080999257dc606a968fc3669864a46",
+      "palette_colors": 26,
+      "raw_rgba_sha256": "eebf2576828ab6e15ae8f3f531ac4c3cf2b89d1c5436af731147fc7f3c201dc0"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_039.png",
+      "sha256": "fab144bc3f5fcf88de58620704ae77a480ddaf44cebd97058f0eb30fe566e1b6",
+      "palette_colors": 26,
+      "raw_rgba_sha256": "3c0bc9facaba82e3aa0e75aec003082945c9328cd35aeabe0bc2aea95f6e1790"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_040.png",
+      "sha256": "1cb2dce60b8ce742358832c8d38d481396c3f6aefe1c699ceb44787bc6d7dc98",
+      "palette_colors": 24,
+      "raw_rgba_sha256": "f3483c5a049d474f38065ff115785dc907b0c1af9f46cb95ca62c39d522a4f09"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_041.png",
+      "sha256": "48edd5944caf4a149df0d45da2766058332baf304df7ba2e3a75870af8ae16e7",
+      "palette_colors": 26,
+      "raw_rgba_sha256": "16570e03c08bda729b695d29e07a01ad00942100b6d53e226f36068be87614c1"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_042.png",
+      "sha256": "0f63f4fc3b8fa826e09b3b6b90c6fb355cb57784170a2d700800bc312b3027f3",
+      "palette_colors": 27,
+      "raw_rgba_sha256": "310891d665d24477130808297f849f3888bd67555420cfbad2dc39f2b1743708"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_043.png",
+      "sha256": "845112a6c3f9c3d8aaa11e036ca11960babd76040412b55f0139dc11ff1675a9",
+      "palette_colors": 27,
+      "raw_rgba_sha256": "3e2d9f65bab962c4472f67a08efdb587d2d62304d6be5f2fb616c8d485fcebd8"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_044.png",
+      "sha256": "91e9a39747a3838a31faa59e56970a65057cbd4629e3b201a78743a72879ab2d",
+      "palette_colors": 24,
+      "raw_rgba_sha256": "5361fa71c052ae0dfd96d3997ca2b45ddaf81ffb526ab325080f5632b7e36403"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_045.png",
+      "sha256": "103b5a6eb2782caf92c3a27afe8ec3e3095b849a6af86ef5239fa6989b88551a",
+      "palette_colors": 26,
+      "raw_rgba_sha256": "0300664f2583d6b685933b450a6959ef2244f270e30e85dee58f08497f8988b3"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_046.png",
+      "sha256": "86ffe9ac5114e0d3acd603b04c7ffb68afcca4533f331364d337beb5820a90b5",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "3ccae65adbea8940ab5f53cc51b382a1ca85c2a303e8634c9430f2cbd3cb5fb0"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_047.png",
+      "sha256": "a79e895dd53f8e888578e72ec3552752459f9b0b0504477ddb217725b0e1a66a",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "bfdaddac8cc3abb8991ee90f9ef62f1a9625f7567b8335cc83bd526b680d2965"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_048.png",
+      "sha256": "b713c0049b8270a3b42b50e38571f783ce649fde00156f3a9cb87e9080efc143",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "4bb35915eff8d0a2e9d2bdfd3c41707bf2f9e271b23bd2bc8059f8fb17717d92"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_049.png",
+      "sha256": "c18273de98d596d3562c889d664959ef193ef22eef50d3ec2064e8aa1de3e977",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "3d135f6e1ad33cf3862bdcf89baec0d4e8faec4effbe658e956a4ec008c1dfa8"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_050.png",
+      "sha256": "b0f375c25109a4bbcabfc0be48e37a27c7d5a31645d083dba25aeff7380b0e64",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "b1c844b48fe41a801533bd9c7e2b4bfef7493f73f31dee4bcb02df0a0ec3000a"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_051.png",
+      "sha256": "8456f71c4f6d904ddf725936f72a7327133ff649aa7dc7b67040ec73b980f487",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "e30f4ed5118f4beaefd3277bf6f626b6df123c722f432eafc35c6526adca35e8"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_052.png",
+      "sha256": "36d59faa7b2b16e79b95495d8152872136caf8a26e1624add47ab91562e2cfc7",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "e9f4d2e71e4fdaec3c17d134b751587cb7788a87624b7938551fff89bc0db950"
+    },
+    {
+      "source": "lincoln-v2\\projects\\lincoln-v2\\frame_053.png",
+      "sha256": "a600c005a276028446c86f16d9b11187b7e39211289ad4a1fd6c4418d7da778d",
+      "palette_colors": 25,
+      "raw_rgba_sha256": "8e3b14da1d2ec63ebbc6ae770aa311ab259264fd72ae0284d26f526ea3330a38"
+    }
+  ],
+  "c_sha256": "fc9d72bacfb5737f668051b175d6718fbfc96919eb0a9b3699e0a1b62c04f01e"
+}

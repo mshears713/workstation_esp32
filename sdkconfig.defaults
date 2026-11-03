@@ -1,0 +1,143 @@
+﻿# This file was generated using idf.py save-defconfig. It can be edited manually.
+# Espressif IoT Development Framework (ESP-IDF) Project Minimal Configuration
+#
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_BSP_SELECT_ESP_BOX_3=y
+
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_CODEC_I2C_BACKWARD_COMPATIBLE=n
+
+# Custom dual-slot OTA table. The built-in single-app tables have no otadata
+# and no second app slot, so a wireless update has nowhere to be written and
+# nothing to fall back to. partitions.csv documents the sizing; the short
+# version is 5504K per slot on the 16MB flash above, with the ESP-SR model
+# partition kept separate and nvs left at its original offset so the Black
+# Box survives the migration.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Rollback protection. A freshly installed image boots in PENDING_VERIFY and
+# is on probation: ota_service.c runs a bounded health check (NVS, UI, Wi-Fi,
+# one successful backend call) and only then calls
+# esp_ota_mark_app_valid_cancel_rollback(). An image that crashes or fails
+# that check before marking itself valid is abandoned on the next reset and
+# the bootloader returns to the previous slot. Without this the first bad
+# wireless build would mean a drive home and a USB cable.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+## LVGL9 ##
+CONFIG_LV_CONF_SKIP=y
+CONFIG_LV_BUILD_EXAMPLES=n
+
+#CLIB default (string and sprintf only - see the malloc note below)
+# 1.2.1: LVGL's malloc is our own, PSRAM first (main/lvgl_psram_alloc.c).
+# With CONFIG_LV_USE_CLIB_MALLOC and SPIRAM_MALLOC_ALWAYSINTERNAL=4096 below,
+# every LVGL object, style and label (all small) landed in internal RAM - an
+# estimated 25-45 KB for six pages and three overlays built at boot and never
+# freed. The 1.2.0 report of 23 Sep showed internal min-free at 1,207 bytes
+# and a PANIC on the boot before. LVGL needs none of it to be internal: the
+# DMA draw buffer is allocated by esp_lvgl_port directly (MALLOC_CAP_DMA) and
+# stays internal; the allocator falls back to internal only if PSRAM is full.
+CONFIG_LV_USE_CUSTOM_MALLOC=y
+CONFIG_LV_USE_CLIB_SPRINTF=y
+CONFIG_LV_USE_CLIB_STRING=y
+
+# Performance monitor
+CONFIG_LV_USE_OBSERVER=y
+CONFIG_LV_USE_SYSMON=y
+CONFIG_LV_USE_PERF_MONITOR=y
+
+## LVGL8 - uncomment, when using LVGL8 ##
+# CONFIG_LV_USE_PERF_MONITOR=y
+# CONFIG_LV_COLOR_16_SWAP=y
+# CONFIG_LV_MEM_CUSTOM=y
+# CONFIG_LV_MEMCPY_MEMSET_STD=y
+# CONFIG_LV_SPRINTF_CUSTOM=y
+
+CONFIG_LV_USE_FLOAT=y
+CONFIG_LV_USE_GESTURE_RECOGNITION=y
+# Survey prototype's thank-you screen links to a website (ui_survey.c). The
+# 1-bit QR buffer is an LVGL allocation, so it lands in PSRAM like the rest.
+CONFIG_LV_USE_QRCODE=y
+
+# Internal RAM, not PSRAM, is the scarce resource on this board. Measured
+# after the UI restructure (four pages, corner nav, larger listening widget):
+# 18,955 bytes of internal heap free with 13.3MB of PSRAM sitting unused -
+# and Wi-Fi then failed to start:
+#
+#   ESP_ERROR_CHECK failed: ESP_ERR_NO_MEM at phy_common.c:118
+#   func: phy_track_pll_init
+#
+# Wi-Fi and lwIP buffers are the largest movable consumer, so they get to try
+# PSRAM first. Throughput headroom is ample - a 480KB chunk upload takes
+# ~600ms against 15s of recording per chunk - so trading a little bandwidth
+# for internal RAM is the right way round here.
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# Allocations at or below this always land in internal RAM. The 16KB default
+# keeps almost everything internal; 4KB lets medium buffers move to PSRAM
+# while small, latency-sensitive allocations still stay put.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+
+# LCD draw buffer: 320 x N x 2 bytes, and it needs DMA-capable memory, so it
+# lands in internal RAM where MultiNet also needs to live. At 100 rows that
+# is 64,000 bytes of the ~231KB the board has.
+#
+# Halved to 50 rows (32,000 bytes) after the UI restructure left only 15,487
+# bytes of internal heap free and MultiNet7 could no longer be created - the
+# voice pipeline silently never came up. LVGL renders in more, smaller
+# flushes as a result; on a 320x240 UI that updates a few labels a second
+# that is not a cost worth 32KB.
+CONFIG_BSP_LCD_DRAW_BUF_HEIGHT=50
+
+# Command-window tiles are read at arm's length during a 10s window, so the
+# word wants to nearly fill its 140x74 tile - 20 was still small. Font data
+# lives in flash rodata, not RAM, so this costs image size rather than the
+# internal heap that MultiNet needs.
+CONFIG_LV_FONT_MONTSERRAT_32=y
+
+# 1.3.0 HOME: the current temperature is the one number read from across the
+# room. Flash only, same as 32 above.
+CONFIG_LV_FONT_MONTSERRAT_48=y
+
+# 1.3.0: dark theme. LVGL default theme in dark mode gives every unstyled label
+# light text; ui_theme.h names the colours set on purpose. The light theme put
+# near-black text on the dark panels (~1.6:1 on FIRMWARE).
+CONFIG_LV_THEME_DEFAULT_DARK=y
+
+# TLS on a board with very little internal RAM. The first attempt at an OTA
+# check failed with mbedtls_ssl_setup -0x7F00 (MBEDTLS_ERR_SSL_ALLOC_FAILED):
+# mbedTLS wants ~32KB of session buffers, and internal heap - the scarce
+# resource here, see the LCD draw-buffer note above - simply did not have it.
+#
+# Two changes, both standard. mbedTLS allocations move to the 16MB of PSRAM
+# that is otherwise idle, and the inbound record buffer drops from the 16KB
+# default to 8KB, which is ample: nginx on CLAWBOX is configured with
+# ssl_buffer_size 4k and serves a single 2048-bit certificate.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=8192
+CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
+
+# Software AES for TLS. The hardware accelerator needs a DMA-capable buffer
+# from internal RAM for every record it decrypts, and partway through the
+# first 2.6MB firmware download it could not get one:
+#
+#   E esp-aes: Failed to allocate memory
+#   E esp-tls-mbedtls: read error :-0x0001
+#
+# The download died at 593KB. Internal RAM is the constraint on this board
+# (see the two notes above), and a long OTA transfer is the worst case for it.
+# Software AES costs a second or two of CPU across the whole image and asks
+# for no DMA memory at all. Wi-Fi's own WPA2 crypto does not go through
+# mbedTLS and is unaffected.
+# CONFIG_MBEDTLS_HARDWARE_AES is not set
+
+# SENSOR SD power uses GPIO43 (UART0 TX): use the verified native USB interface.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# CONFIG_ESP_CONSOLE_UART_DEFAULT is not set
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+# CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG is not set
+CONFIG_FATFS_LFN_HEAP=y
+# CONFIG_FATFS_LFN_NONE is not set
+# CONFIG_BSP_SD_FORMAT_ON_MOUNT_FAIL is not set

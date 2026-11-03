@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "workstation-ui": {
+      "type": "stdio",
+      "command": "/opt/workstation/lvgl-sim/bin/ws-ui-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}

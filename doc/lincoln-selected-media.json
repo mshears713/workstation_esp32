@@ -1,0 +1,94 @@
+{
+  "revision": "lincoln-scottw-two-20261030",
+  "selection": "User-approved two ScottW excerpts; Gettysburg and With Malice. No Brian takes active.",
+  "voice": "6Xb9dRSSm1t1OLWvzT1T",
+  "format": "s16le mono 24000Hz",
+  "assets": [
+    {
+      "file": "lincoln_1.pcm",
+      "generation_id": "A1dG4Ltvk5NV1QhRub55",
+      "voice": "6Xb9dRSSm1t1OLWvzT1T",
+      "model": "eleven_v4",
+      "master_file": "gettysburg-scottw-a1.mp3",
+      "master_sha256": "013fd67d4fe54a1da6af7c681f382c6dfec7cc43a373901cae3e940ee2b8da0b",
+      "master_bytes": 433038,
+      "container_seconds": 25.965714,
+      "seconds": 25.92,
+      "bytes": 1244160,
+      "sha256": "5b4a26b6f11b19ed63df391ced9d6bc19efd6dce74debd3338bdd553558d93da",
+      "gain_db": -3,
+      "peak_dbfs": -4.218326491064004,
+      "rms_dbfs": -22.75424977453163,
+      "clipped_samples": 0,
+      "format": "s16le mono 24000Hz"
+    },
+    {
+      "file": "lincoln_2.pcm",
+      "generation_id": "1uu8fHS8WeWjuvsJ3o9w",
+      "voice": "6Xb9dRSSm1t1OLWvzT1T",
+      "model": "eleven_v4",
+      "master_file": "with-malice-scottw-a1.mp3",
+      "master_sha256": "2476c593e7c3581d696f62fd48f86ec3db35e7c9cca4b209442e70670dd83e05",
+      "master_bytes": 433038,
+      "container_seconds": 25.965714,
+      "seconds": 25.92,
+      "bytes": 1244160,
+      "sha256": "eefc9d305fe90c6be47885069d43d5abb9b0d0115a62be9d4e3fc74c1adee37f",
+      "gain_db": -3,
+      "peak_dbfs": -4.305787960167312,
+      "rms_dbfs": -23.53284545036598,
+      "clipped_samples": 0,
+      "format": "s16le mono 24000Hz"
+    },
+    {
+      "file": "music_loop.pcm",
+      "candidate": "music_a1",
+      "bytes": 1536000,
+      "sha256": "aec7bfe073011ac74a2b79f7739ceef55bc19f0377bc7326b0cf7a08dd2e2812",
+      "seconds": 32.0,
+      "master_sha256": "b44f9ea0e28043d7099ab5971133f1fd03fd3a6fb0ca6c2ae81a22ae57d20e9f",
+      "gain_db": -12
+    },
+    {
+      "file": "cabin_door.pcm",
+      "candidate": "cabin_door_a1",
+      "bytes": 96000,
+      "sha256": "b0dd597e1b9c3a94137ffd7c747886450e3507693e13045a621cfdd3c1e541d5",
+      "seconds": 2.0,
+      "master_sha256": "cd38eba8871885189bf0d81ed987dbabd9415e18a139bd243e0720f9793377b2",
+      "gain_db": -15
+    },
+    {
+      "file": "cabin_fire.pcm",
+      "candidate": "cabin_fire_a1",
+      "bytes": 144000,
+      "sha256": "a18324e722e4d7d91bef3d6a584d8ab1f19e72a4f832399785a06ce566008f8f",
+      "seconds": 3.0,
+      "master_sha256": "f8a039162f9858738038915bd02644dcf8e60970d43cc2ebd3efc4cb6aac4e72",
+      "gain_db": -15
+    },
+    {
+      "file": "cabin_puff.pcm",
+      "candidate": "cabin_puff_a1",
+      "bytes": 48000,
+      "sha256": "7650e8055517c9d1c75e64c5b77cf1890ab7941c9f93e37150742fcce180ffbd",
+      "seconds": 1.0,
+      "master_sha256": "01671124629dd03ac86b2389469bdb7533b68efebc813ad53bf5cfe7095dddb7",
+      "gain_db": -15
+    },
+    {
+      "file": "paper.pcm",
+      "candidate": "paper_a1",
+      "bytes": 71040,
+      "sha256": "a261a11d30be8f848e8a5f9e839dbb0360e4eb8a3854a5c5b190fcf19487edb9",
+      "seconds": 1.48,
+      "master_sha256": "8ad766b8f268d901133899262af3a44392e7bd4c367f7545bb5e2a5468b41103",
+      "gain_db": -15
+    }
+  ],
+  "limitations": [
+    "Draft native art transition defects disclosed",
+    "Assistant has not listened to audio; Gettysburg audition approved by user",
+    "Music seam not listening-verified"
+  ]
+}
