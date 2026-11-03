@@ -181,7 +181,8 @@ void ui_home_build(ui_home_t *h,lv_obj_t *page,lv_event_cb_t talk_cb,lv_event_cb
  sprite(&hulk_route,0,20,256);
  sprite(&eye_base,240,99,256);
  s.wheel=sprite(&eye_rim,230,59,256);lv_image_set_pivot(s.wheel,40,40);
- for(int i=0;i<12;i++)s.cabins[i]=sprite(&eye_cabin,0,0,256);wheel_position(0);
+ for(int i=0;i<12;i++){s.cabins[i]=sprite(&eye_cabin,0,0,256);}
+ wheel_position(0);
  s.peek=sprite(&castle_silhouette,120,74,256);visible(s.peek,false);
  sprite(&center_castle,112,20,256);
  s.princess=sprite(&window_princess_v3,151,82,256);visible(s.princess,false);
