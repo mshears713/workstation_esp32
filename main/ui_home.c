@@ -7,12 +7,13 @@
 #include <stdint.h>
 #include <math.h>
 #include "orlando_v3.h"
+#include "orlando_v4.h"
 
 enum { ACT_HOME=1,ACT_TOUR,ACT_INTRO,ACT_WHEEL,ACT_CASTLE,ACT_COASTER,
        ACT_MENU,ACT_ALL,ACT_TALK,ACT_DISMISS,ACT_NEXT,ACT_CLOSE };
 static struct {
  lv_obj_t *root,*wheel,*car,*peek,*princess,*mouse,*sign,*shade,*tray,*menu_label;
- lv_obj_t *dialog,*dialog_text,*audio_hint,*cabins[12],*cues[3];
+ lv_obj_t *dialog,*dialog_text,*audio_hint,*guide_nav,*cabins[12],*cues[3];
  lv_timer_t *timer;
  lv_event_cb_t home_cb,tour_cb,intro_cb,menu_cb,talk_cb;
  uint32_t elapsed,wheel_start,castle_start,car_start,last_tick,intro_dismissed;
@@ -62,7 +63,7 @@ static void close_menu(void) {
 }
 static void close_intro(void) {
  if(s.dialog)lv_obj_delete(s.dialog);
- s.dialog=NULL;s.dialog_text=NULL;s.audio_hint=NULL;s.intro_dismissed=s.elapsed;
+ s.dialog=NULL;s.dialog_text=NULL;s.audio_hint=NULL;s.guide_nav=NULL;s.intro_dismissed=s.elapsed;
 }
 static const char *guide[]={
  "I'm your curious mouse guide!\nThe house brings you Home.\nThe van starts our first tour.\nMenu opens the other controls.",
@@ -78,7 +79,7 @@ static void open_intro(lv_event_t *e) {
  label(paper,"Hello, traveler!",54,14,234,&lv_font_montserrat_20,0x25303D);
  s.dialog_text=label(paper,guide[0],12,58,276,&lv_font_montserrat_14,0x25303D);
  /* Routine audio availability is not part of the welcome copy. */
- button(paper,"Next",12,151,128,42,ACT_NEXT);button(paper,"Close guide",158,151,130,42,ACT_CLOSE);
+ s.guide_nav=button(paper,"Next",12,151,128,42,ACT_NEXT);button(paper,"Close guide",158,151,130,42,ACT_CLOSE);
  if(s.intro_cb)s.intro_cb(e);
 }
 void ui_home_intro_audio_result(bool accepted) {
@@ -108,7 +109,7 @@ static void action(lv_event_t *e) {
  case ACT_ALL:close_menu();if(s.menu_cb)s.menu_cb(e);break;
  case ACT_TALK:close_menu();if(s.talk_cb)s.talk_cb(e);break;
  case ACT_DISMISS:close_menu();break;
- case ACT_NEXT:s.intro_page=(s.intro_page+1)%2;lv_label_set_text(s.dialog_text,guide[s.intro_page]);break;
+ case ACT_NEXT:s.intro_page=(s.intro_page+1)%2;lv_label_set_text(s.dialog_text,guide[s.intro_page]);lv_label_set_text(lv_obj_get_child(s.guide_nav,0),s.intro_page?"Back":"Next");break;
  case ACT_CLOSE:close_intro();break;
  }
 }
@@ -146,7 +147,7 @@ static void tick(lv_timer_t *t) {
  }
  bool sign=!s.dialog&&!s.menu_open && s.elapsed-s.intro_dismissed>=6000 && (s.elapsed%14000)>=9000;
  visible(s.sign,sign);
- if(sign)lv_image_set_src(s.mouse,ui_adventure_original_asset(TOUR_ASSET_MOUSE,0));
+
  /* Brief hint strokes, no extra permanent buttons; suppressed during overlays/motion. */
  unsigned cue=s.elapsed%18000;
  for(int i=0;i<3;i++)visible(s.cues[i],!s.dialog&&!s.menu_open&&!s.spinning&&!s.peeking&&!s.launching && cue>=4000u+i*900u && cue<4400u+i*900u);
@@ -178,7 +179,7 @@ void ui_home_build(ui_home_t *h,lv_obj_t *page,lv_event_cb_t talk_cb,lv_event_cb
  /* Extend the original flat road below its 192px background, without altering it. */
  lv_obj_set_style_bg_color(page,lv_color_hex(0xACA183),0);lv_obj_set_style_bg_opa(page,LV_OPA_COVER,0);
  sprite(ui_adventure_original_asset(TOUR_ASSET_HOME,0),0,0,256);
- sprite(&hulk_route,0,20,256);
+ sprite(&hulk_route_v4,0,20,256);
  sprite(&eye_base,240,99,256);
  s.wheel=sprite(&eye_rim,230,59,256);lv_image_set_pivot(s.wheel,40,40);
  for(int i=0;i<12;i++){s.cabins[i]=sprite(&eye_cabin,0,0,256);}
@@ -199,11 +200,13 @@ void ui_home_build(ui_home_t *h,lv_obj_t *page,lv_event_cb_t talk_cb,lv_event_cb
  hit(119,160,62,68,ACT_INTRO);hit(227,55,88,85,ACT_WHEEL);
  hit(109,18,100,120,ACT_CASTLE);hit(0,37,108,95,ACT_COASTER);
  /* A held sign is a separate overlay, preserving the original mouse pixels. */
- s.sign=flat(page,153,190,89,40,0,LV_OPA_TRANSP);
- flat(s.sign,0,15,24,3,0x866E50,LV_OPA_COVER);
- lv_obj_t *board=flat(s.sign,21,11,68,28,0xF3E9CF,LV_OPA_COVER);lv_obj_set_style_border_width(board,1,0);
+ s.sign=flat(page,115,139,70,70,0,LV_OPA_TRANSP);
+ /* Handle meets the mouse paw; board is raised away from bottom controls. */
+ flat(s.sign,40,22,3,41,0x866E50,LV_OPA_COVER);
+ flat(s.sign,35,61,8,4,0x866E50,LV_OPA_COVER);
+ lv_obj_t *board=flat(s.sign,0,0,70,24,0xF3E9CF,LV_OPA_COVER);lv_obj_set_style_border_width(board,1,0);
  lv_obj_set_style_border_color(board,lv_color_hex(0x866E50),0);
- label(board,"Guide",10,5,58,&lv_font_montserrat_14,0x25303D);
+ label(board,"Guide",10,3,58,&lv_font_montserrat_14,0x25303D);
  lv_obj_add_flag(s.sign,LV_OBJ_FLAG_CLICKABLE);lv_obj_add_event_cb(s.sign,action,LV_EVENT_CLICKED,(void *)(intptr_t)ACT_INTRO);visible(s.sign,false);
  const int cx[]={56,160,271},cy[]={42,25,66};
  for(int i=0;i<3;i++) {

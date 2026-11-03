@@ -1,0 +1,42 @@
+{
+  "initial": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "8ed6b2e82de667a367bd7c54b374806a",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "fresh": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "e1f6a162d867a850a10e16a62437306d",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "projects": [
+    {
+      "project": "hulk-route-v4",
+      "width": 110,
+      "height": 112,
+      "semantic_layers": [
+        "Supports and launch tunnel",
+        "Continuous green rails",
+        "Cross ties"
+      ],
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 112,
+        "layers": [
+          "Layer 1",
+          "Continuous green rails",
+          "Cross ties"
+        ],
+        "width": 110
+      },
+      "pxo_sha256": "bb0e2be1398a969b23f9382fda4af90734589cf93d510c4a7c038621c1126830",
+      "png_sha256": "20ead3da5c45e6336701af5a9518cbd0f6ad4275165daa186ced28c926831805"
+    }
+  ],
+  "fresh_reopen_exports_match": true
+}
