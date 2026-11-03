@@ -17,3 +17,7 @@ void ui_adventure_seek(adventure_scene_t scene);
 adventure_scene_t ui_adventure_scene(void);
 bool ui_adventure_is_open(void);
 unsigned ui_adventure_timer_count(void);
+
+/* Reuse the original accepted art without copying or redrawing its pixels. */
+typedef enum { TOUR_ASSET_HOME, TOUR_ASSET_HOUSE, TOUR_ASSET_MOUSE, TOUR_ASSET_VAN } tour_original_asset_t;
+const lv_image_dsc_t *ui_adventure_original_asset(tour_original_asset_t asset, unsigned frame);

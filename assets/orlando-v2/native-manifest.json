@@ -1,0 +1,172 @@
+{
+  "initial": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "de3c8a93000d54177246657bb659cbc4",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "fresh": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "5b48be936104e7f4d9dcccc5593a16c4",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "projects": [
+    {
+      "project": "center-castle",
+      "width": 96,
+      "height": 116,
+      "semantic_layers": [
+        "Stone silhouette",
+        "Blue roofs",
+        "Masonry and light",
+        "Window openings"
+      ],
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 116,
+        "layers": [
+          "Layer 1",
+          "Blue roofs",
+          "Masonry and light",
+          "Window openings"
+        ],
+        "width": 96
+      },
+      "pxo_sha256": "94d7cd4edba6ee342a0a078353de2a5343075cc798702e163f012cb76cc25c21",
+      "png_sha256": "01983a9ab7a8082fddcae10aaf4bff2c864776eb9c67304b3ed9973b3753f6c5"
+    },
+    {
+      "project": "eye-wheel",
+      "width": 80,
+      "height": 80,
+      "semantic_layers": [
+        "Rim and spokes",
+        "Gondolas and hub"
+      ],
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 80,
+        "layers": [
+          "Layer 1",
+          "Gondolas and hub"
+        ],
+        "width": 80
+      },
+      "pxo_sha256": "300c88d0d1d1e717f584c7e0c256949d85bfac920591ca94c02664844dc06bec",
+      "png_sha256": "0cb363b843c7c17860d498fa7515e315979d28dc2f0fa70750c47a51eae7ba7c"
+    },
+    {
+      "project": "eye-base",
+      "width": 60,
+      "height": 40,
+      "semantic_layers": [
+        "Support legs",
+        "Platform"
+      ],
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 40,
+        "layers": [
+          "Layer 1",
+          "Platform"
+        ],
+        "width": 60
+      },
+      "pxo_sha256": "092f887502ea510113d7b67ed77c5afd50f9d6d77795bae81b8b27bd61872dd1",
+      "png_sha256": "7efe52424f11bc76799f763a3966f9b2d629cd8478d7acef67560a0c5e59533c"
+    },
+    {
+      "project": "hulk-launch",
+      "width": 108,
+      "height": 96,
+      "semantic_layers": [
+        "Launch structure",
+        "Green rails",
+        "Cross ties and detail"
+      ],
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 96,
+        "layers": [
+          "Layer 1",
+          "Green rails",
+          "Cross ties and detail"
+        ],
+        "width": 108
+      },
+      "pxo_sha256": "1ac7ae8076b6df89b57bb876159e5b0af6206083a207c6ce8b3c2dc347df5140",
+      "png_sha256": "f7149a14f180d37c8f403043bc9c94eaed1eb5af008a8588744b775a504d266e"
+    },
+    {
+      "project": "peek-mouse",
+      "width": 32,
+      "height": 40,
+      "semantic_layers": [
+        "Silhouette",
+        "Face and paws"
+      ],
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 40,
+        "layers": [
+          "Layer 1",
+          "Face and paws"
+        ],
+        "width": 32
+      },
+      "pxo_sha256": "f95d476e183b17762c81d840626532f11b76e4508dde3f5a18cdbcbe0919e170",
+      "png_sha256": "4e2d07b72fa7667ffa43374a7a185bbb368ed871b47f2dbed9ecc42cabc84d88"
+    },
+    {
+      "project": "window-princess",
+      "width": 16,
+      "height": 24,
+      "semantic_layers": [
+        "Dress and hair",
+        "Face crown and waving hand"
+      ],
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 24,
+        "layers": [
+          "Layer 1",
+          "Face crown and waving hand"
+        ],
+        "width": 16
+      },
+      "pxo_sha256": "227f1bcf1763af70f024f6884811fe9bae075da1d4fd64e8ee2c5fb215ab1c0c",
+      "png_sha256": "c00fef7b9dfd795a367b05b6e322b077f15b5aadf301cbd10b229fb25788967a"
+    },
+    {
+      "project": "coaster-car",
+      "width": 28,
+      "height": 16,
+      "semantic_layers": [
+        "Car and seats",
+        "Riders and wheels"
+      ],
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 16,
+        "layers": [
+          "Layer 1",
+          "Riders and wheels"
+        ],
+        "width": 28
+      },
+      "pxo_sha256": "581e2bf3e39eb8f209db1a386fa848bc1b98d5b9325f0c2ee9ac61c74a2926ac",
+      "png_sha256": "a43036ffa44ba99b19cfa758e57af6eba636edbb7cbae779dcc6c7c4421a69b7"
+    }
+  ],
+  "fresh_reopen_exports_match": true
+}

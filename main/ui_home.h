@@ -6,10 +6,10 @@
 
 /**
  * @file
- * @brief Orlando HOME: native scene, journey welcome, and corner Menu.
+ * @brief Orlando HOME: interactive native scene and collapsible corner Menu.
  * @details Legacy weather setters remain compatible no-ops. This HOME has
- *          no weather objects or microphone ring. The mouse touch region
- *          invokes the supplied TALK callback; Menu uses the existing callback.
+ *          no weather objects or microphone ring. The mouse opens the guide and requests the existing intro audio.
+ *          Expanded Menu retains the existing controls and TALK callbacks.
  */
 #pragma once
 
@@ -83,6 +83,17 @@ lv_obj_t *ui_home_weather_field_object(unsigned card, weather_stage_field_t fiel
 
 /** Backend reachability: the ring/mic colour and the caption under it. */
 void ui_home_set_link(ui_home_t *h, voice_widget_link_t link);
+
+/* Orlando scene owns one timer; suspend it behind pages or tour overlays. */
+void ui_home_set_active(bool active);
+void ui_home_set_actions(lv_event_cb_t home_cb, lv_event_cb_t tour_cb, lv_event_cb_t intro_cb);
+void ui_home_intro_audio_result(bool accepted);
+typedef struct {
+ bool active, menu_open, intro_open, sign_visible, wheel_running, castle_running, launch_running;
+ unsigned timers, intro_page;
+ int wheel_angle, car_x, peek_x;
+} ui_home_state_t;
+ui_home_state_t ui_home_state(void);
 
 #ifdef __cplusplus
 }

@@ -215,3 +215,12 @@ void ui_adventure_open(lv_obj_t *screen,void (*exit_cb)(void *),void *ctx) {
 adventure_scene_t ui_adventure_scene(void){return a.scene;}
 bool ui_adventure_is_open(void){return a.root!=NULL;}
 unsigned ui_adventure_timer_count(void){return a.timer?1:0;}
+
+const lv_image_dsc_t *ui_adventure_original_asset(tour_original_asset_t asset, unsigned frame) {
+ if(asset==TOUR_ASSET_HOME)return &tour_bg_home;
+ if(asset==TOUR_ASSET_HOUSE)return &house_unoccupied;
+ if(asset==TOUR_ASSET_VAN)return tour_van_frames[frame%2];
+ unsigned i=frame%6;
+ mouse_frames[i]=(lv_image_dsc_t){.header={.magic=LV_IMAGE_HEADER_MAGIC,.cf=LV_COLOR_FORMAT_ARGB8888,.w=16,.h=16,.stride=64},.data_size=sizeof(mouse_pixels[i]),.data=(const uint8_t *)mouse_pixels[i]};
+ return &mouse_frames[i];
+}

@@ -47,14 +47,16 @@
     },
     "home": {
       "kind": "page",
-      "description": "Orlando HOME: native scene, welcome and corner Menu; weather setters intentionally have no visible output.",
+      "description": "Interactive Orlando HOME using original Tour A assets; no weather",
       "sources": [
         "main/ui_kit.c",
         "main/ui_home.c",
         "main/voice_listening_widget.c",
         "main/weather_icons.c",
         "main/ui_mouse.c",
-        "main/ui_weather_stage.c"
+        "main/ui_weather_stage.c",
+        "main/ui_adventure.c",
+        "main/ui_story_dialogue.c"
       ],
       "headers": [
         "ui_kit.h",
@@ -2551,24 +2553,104 @@
         "default": {}
       }
     },
-    "orlando_flow": {
+    "tour_reference": {
       "kind": "page",
-      "description": "Real HOME Menu tap transition test",
+      "description": "Unmodified original selectable tour A/B reference",
+      "sources": [
+        "main/ui_adventure.c",
+        "main/ui_adventure_b.c",
+        "main/ui_story_dialogue.c",
+        "main/voice_listening_widget.c"
+      ],
+      "headers": [
+        "ui_adventure.h",
+        "ui_adventure_b.h"
+      ],
+      "adapter": "tools/uisim/targets/tour_reference.c",
+      "fields": {
+        "variant": {
+          "type": "int",
+          "default": 0
+        },
+        "scene": {
+          "type": "int",
+          "default": 0
+        },
+        "elapsed": {
+          "type": "int",
+          "default": 0
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "a_egypt": {
+          "scene": 4
+        },
+        "a_greece": {
+          "scene": 7
+        },
+        "a_medieval": {
+          "scene": 9
+        },
+        "b_home": {
+          "variant": 1,
+          "scene": 1
+        }
+      }
+    },
+    "orlando_v2": {
+      "kind": "page",
+      "description": "Real interactive Orlando HOME with Tour A original assets and real event lifecycle tests",
       "sources": [
         "main/ui_home.c",
+        "main/ui_kit.c",
         "main/ui_menu.c",
-        "main/ui_kit.c"
+        "main/ui_adventure.c",
+        "main/ui_story_dialogue.c",
+        "main/voice_listening_widget.c"
       ],
       "headers": [
         "ui_home.h",
-        "ui_menu.h",
-        "ui_kit.h",
-        "orlando_home_pixels.h"
+        "ui_adventure.h",
+        "orlando_landmarks.h"
       ],
-      "adapter": "tools/uisim/targets/orlando_flow.c",
-      "fields": {},
+      "adapter": "tools/uisim/targets/orlando_v2.c",
+      "fields": {
+        "action": {
+          "type": "str",
+          "default": ""
+        },
+        "test": {
+          "type": "bool",
+          "default": false
+        }
+      },
       "fixtures": {
-        "default": {}
+        "wheel": {
+          "action": "wheel"
+        },
+        "castle": {
+          "action": "castle"
+        },
+        "coaster": {
+          "action": "coaster"
+        },
+        "guide": {
+          "action": "guide"
+        },
+        "menu": {
+          "action": "menu"
+        },
+        "tour": {
+          "action": "tour"
+        },
+        "all": {
+          "action": "all"
+        },
+        "default": {},
+        "test": {
+          "test": true
+        }
       }
     }
   }

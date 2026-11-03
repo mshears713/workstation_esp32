@@ -1821,6 +1821,7 @@ static void set_active_page(app_page_t page)
     };
     diag_set_page(page_names[page]);
     ui_mouse_home_set_active(page == APP_PAGE_HOME);
+    ui_home_set_active(page == APP_PAGE_HOME);
     for (int i = 0; i < APP_PAGE_COUNT; i++) {
         if (i == (int)page) {
             lv_obj_clear_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
@@ -2431,15 +2432,22 @@ static void refresh_notify_page(void)
  * timestamp. */
 #define WEATHER_STALE_S (30 * 60)
 
-static void house_refresh_cb(lv_event_t *e)
+static void home_intro_cb(lv_event_t *e)
 {
     (void)e;
-    weather_refresh_request_t result=weather_client_request_refresh();
-    (void)voice_control_request_mouse_intro();
-    if (result==WEATHER_REFRESH_ACCEPTED || result==WEATHER_REFRESH_PENDING)
-        ui_mouse_home_refresh_notice("UPDATING");
-    else if (result==WEATHER_REFRESH_COOLDOWN) ui_mouse_home_refresh_notice("WAIT");
-    else ui_mouse_home_refresh_result(false);
+    ui_home_intro_audio_result(voice_control_request_mouse_intro());
+}
+static void home_tour_return(void *ctx)
+{
+    (void)ctx;
+    set_active_page(APP_PAGE_HOME);
+}
+static void home_start_tour_cb(lv_event_t *e)
+{
+    (void)e;
+    if (ui_adventure_is_open()) return;
+    ui_home_set_active(false);
+    ui_adventure_open(app_screen, home_tour_return, NULL);
 }
 
 static void render_weather(void)
@@ -2812,8 +2820,9 @@ void status_deck_ui(lv_obj_t *scr)
     /* The microphone still shows whether the workstation is listening and
      * reachable, and is still the TALK button - now a quarter of the screen
      * beside Orlando's weather. See ui_home.c. */
-    ui_mouse_home_set_refresh_cb(house_refresh_cb);
+    /* House is Home; mouse owns the existing introduction audio request. */
     ui_home_build(&home_ui, page_home, talk_button_cb, menu_button_cb);
+    ui_home_set_actions(home_nav_button_cb, home_start_tour_cb, home_intro_cb);
     voice_widget = home_ui.mic;
 
     /* ---- MENU: every other page, one tap from HOME -------------------- */
