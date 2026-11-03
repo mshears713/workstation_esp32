@@ -6,14 +6,10 @@
 
 /**
  * @file
- * @brief HOME (1.3.0): Orlando weather down the left, the microphone (link
- *        status + tap to record) top-right, MENU bottom-right. Pure LVGL - see
- *        ui_kit.h for why that matters.
- * @details status_deck_ui.c fills a ui_home_weather_t from weather_client and
- *          calls ui_home_apply_weather(); the simulator's HOME target fills the
- *          same struct from fixtures. Link state goes through
- *          ui_home_set_link(), which drives both the widget and the caption
- *          under it.
+ * @brief Orlando HOME: native scene, journey welcome, and corner Menu.
+ * @details Legacy weather setters remain compatible no-ops. This HOME has
+ *          no weather objects or microphone ring. The mouse touch region
+ *          invokes the supplied TALK callback; Menu uses the existing callback.
  */
 #pragma once
 
@@ -68,9 +64,8 @@ typedef struct {
     lv_obj_t *tmrw_lo;
 } ui_home_t;
 
-/** Builds HOME into `page`. `talk_cb` fires on a tap of the microphone,
- *  `menu_cb` on MENU (either may be NULL in the simulator). Starts with the
- *  weather in its "Loading weather" state. */
+/** Builds HOME into `page`. `talk_cb` fires on a tap of the mouse,
+ *  `menu_cb` on Menu (either may be NULL). No weather UI is created. */
 void ui_home_build(ui_home_t *h, lv_obj_t *page, lv_event_cb_t talk_cb, lv_event_cb_t menu_cb);
 
 void ui_home_apply_weather(ui_home_t *h, const ui_home_weather_t *w);

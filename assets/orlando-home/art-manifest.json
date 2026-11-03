@@ -1,0 +1,202 @@
+{
+  "initial": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "08c274c602ce2ea65ca174c6da2e0eec",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "fresh": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "8f204d05cde8ef6550640a032b4d8363",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "projects": [
+    {
+      "project": "orlando-0-0",
+      "origin": [
+        0,
+        0
+      ],
+      "pxo_sha256": "e4b44f241c56304774607aa915d2d8ae1e3eb31c53e5800340e8c346f042ade5",
+      "png_sha256": "562fa088cf4f4b49fe71492a1b8e39f06f4d80b139f5cee50a4f359a974e708d",
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 80,
+        "layers": [
+          "Layer 1",
+          "Landmarks",
+          "Landscape",
+          "House and van",
+          "Scarf mouse"
+        ],
+        "width": 80
+      }
+    },
+    {
+      "project": "orlando-1-0",
+      "origin": [
+        80,
+        0
+      ],
+      "pxo_sha256": "4ca66394147facd09bc2de71a2af4f6bf372bb9526d4c1499ea3024a1b4b6243",
+      "png_sha256": "5e7da8b42a691f3fe9bd8a4c0a3d7039506f74e149672276bd72628e3be84911",
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 80,
+        "layers": [
+          "Layer 1",
+          "Landmarks",
+          "Landscape",
+          "House and van",
+          "Scarf mouse"
+        ],
+        "width": 80
+      }
+    },
+    {
+      "project": "orlando-2-0",
+      "origin": [
+        160,
+        0
+      ],
+      "pxo_sha256": "706a55fd35cad8ab0e6505e30b9fb148a27ab47950fc33bcebf9492115b4ea20",
+      "png_sha256": "37562f0b3654c61aed2db594d3c0105cd27cee2d47eb1ba24dd7a5d0436984ec",
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 80,
+        "layers": [
+          "Layer 1",
+          "Landmarks",
+          "Landscape",
+          "House and van",
+          "Scarf mouse"
+        ],
+        "width": 80
+      }
+    },
+    {
+      "project": "orlando-3-0",
+      "origin": [
+        240,
+        0
+      ],
+      "pxo_sha256": "b5dce6c629c4f580cee00ad125a3f5605fd690d5e3fd181dc193eb85d618ffa6",
+      "png_sha256": "38e22e01d359eee1450ad1e85e7071cfbb5fb875add7beadeffd57ee5500b6bc",
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 80,
+        "layers": [
+          "Layer 1",
+          "Landmarks",
+          "Landscape",
+          "House and van",
+          "Scarf mouse"
+        ],
+        "width": 80
+      }
+    },
+    {
+      "project": "orlando-0-1",
+      "origin": [
+        0,
+        80
+      ],
+      "pxo_sha256": "e8e474bd84d224b27e8e4a992898951fefddf5d18958347c906b7804f0d35dad",
+      "png_sha256": "7f213b35f7d86fd7f7667bb2a53c0dc2a355ba13276fb942f06707aad64d2c1c",
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 80,
+        "layers": [
+          "Layer 1",
+          "Landmarks",
+          "Landscape",
+          "House and van",
+          "Scarf mouse"
+        ],
+        "width": 80
+      }
+    },
+    {
+      "project": "orlando-1-1",
+      "origin": [
+        80,
+        80
+      ],
+      "pxo_sha256": "75dee8cbddc95ca7bd12f1ee0b16a63f1af7b6a87c3a47e94b2f47147fecdb05",
+      "png_sha256": "e952fdf054c43bddd35f412b4999b966262a3f932cd51cb6c840f946acdabc72",
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 80,
+        "layers": [
+          "Layer 1",
+          "Landmarks",
+          "Landscape",
+          "House and van",
+          "Scarf mouse"
+        ],
+        "width": 80
+      }
+    },
+    {
+      "project": "orlando-2-1",
+      "origin": [
+        160,
+        80
+      ],
+      "pxo_sha256": "532462ff5ba789b8a9951d12920db4720f6a982295b154d42bc307389f6b6c03",
+      "png_sha256": "70062f393843390c07b5d190fa4d0b296c6fdeb7befa72ea4b8243e3fbb8c7f4",
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 80,
+        "layers": [
+          "Layer 1",
+          "Landmarks",
+          "Landscape",
+          "House and van",
+          "Scarf mouse"
+        ],
+        "width": 80
+      }
+    },
+    {
+      "project": "orlando-3-1",
+      "origin": [
+        240,
+        80
+      ],
+      "pxo_sha256": "961b9eab30f42ce0a819a51762cea2b7060e9a12d0fed896fbb8e10ec7f183e9",
+      "png_sha256": "d18d1d1c96cca0816ff14298d4e7695ab76ed2867600c46dee62f4aaefc735c8",
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 80,
+        "layers": [
+          "Layer 1",
+          "Landmarks",
+          "Landscape",
+          "House and van",
+          "Scarf mouse"
+        ],
+        "width": 80
+      }
+    }
+  ],
+  "fresh_reopen_exports_match": true,
+  "layers": [
+    "Layer 1 = Sky",
+    "Landmarks",
+    "Landscape",
+    "House and van",
+    "Scarf mouse"
+  ]
+}

@@ -47,7 +47,7 @@
     },
     "home": {
       "kind": "page",
-      "description": "HOME 1.3.0 (ui_home.c): Orlando weather column (now / +2 h / +6 h / tomorrow, F, rain %) left; the listening widget at 104 px top-right with its link caption; MENU bottom-right. Dark theme. Values are what GET /api/v1/weather returns, as render_weather() passes them.",
+      "description": "Orlando HOME: native scene, welcome and corner Menu; weather setters intentionally have no visible output.",
       "sources": [
         "main/ui_kit.c",
         "main/ui_home.c",
@@ -2240,54 +2240,6 @@
         "default": {}
       }
     },
-    "home_mouse_test": {
-      "kind": "page",
-      "description": "Assertions for HOME mouse navigation, hit testing, data refresh and lifetime",
-      "sources": [
-        "main/ui_kit.c",
-        "main/ui_home.c",
-        "main/voice_listening_widget.c",
-        "main/weather_icons.c",
-        "main/ui_mouse.c",
-        "main/ui_weather_stage.c"
-      ],
-      "headers": [
-        "ui_kit.h",
-        "ui_home.h",
-        "voice_listening_widget.h",
-        "weather_icons.h",
-        "ui_theme.h"
-      ],
-      "adapter": "tools/uisim/targets/home_mouse_test.c",
-      "fields": {},
-      "fixtures": {
-        "default": {}
-      }
-    },
-    "weather_choreography_test": {
-      "kind": "page",
-      "description": "Exercise two staged snapshots and navigation cancellation on real HOME UI",
-      "sources": [
-        "main/ui_kit.c",
-        "main/ui_home.c",
-        "main/voice_listening_widget.c",
-        "main/weather_icons.c",
-        "main/ui_mouse.c",
-        "main/ui_weather_stage.c"
-      ],
-      "headers": [
-        "ui_kit.h",
-        "ui_home.h",
-        "voice_listening_widget.h",
-        "weather_icons.h",
-        "ui_theme.h"
-      ],
-      "adapter": "tools/uisim/targets/weather_choreography_test.c",
-      "fields": {},
-      "fixtures": {
-        "default": {}
-      }
-    },
     "audio_test": {
       "kind": "page",
       "description": "Local SD Audio Test: actual UI, injectable running/failure/voice states. Simulator does not drive speaker.",
@@ -2594,6 +2546,26 @@
         "ui_mouse.h"
       ],
       "adapter": "tools/uisim/targets/mouse_ui_test.c",
+      "fields": {},
+      "fixtures": {
+        "default": {}
+      }
+    },
+    "orlando_flow": {
+      "kind": "page",
+      "description": "Real HOME Menu tap transition test",
+      "sources": [
+        "main/ui_home.c",
+        "main/ui_menu.c",
+        "main/ui_kit.c"
+      ],
+      "headers": [
+        "ui_home.h",
+        "ui_menu.h",
+        "ui_kit.h",
+        "orlando_home_pixels.h"
+      ],
+      "adapter": "tools/uisim/targets/orlando_flow.c",
       "fields": {},
       "fixtures": {
         "default": {}
