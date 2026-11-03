@@ -1,0 +1,107 @@
+{
+  "initial": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "7f02dd48288b92cbbcd742dfea45d5d0",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "fresh": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "5081331e4901f97c13a416f4c7167f5e",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "projects": [
+    {
+      "project": "hulk-route",
+      "width": 110,
+      "height": 112,
+      "semantic_layers": [
+        "Supports and launch tunnel",
+        "Continuous green rails",
+        "Cross ties"
+      ],
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 112,
+        "layers": [
+          "Layer 1",
+          "Continuous green rails",
+          "Cross ties"
+        ],
+        "width": 110
+      },
+      "pxo_sha256": "60489d50374b0dd6ce2e04b68bf2b316a4b3001409784d0e9cd2654a779c708c",
+      "png_sha256": "bb2179d49a5ddacba81ca7e1a319589c818c2cdd134aa0a1f13e428b7f578780"
+    },
+    {
+      "project": "return-tunnel",
+      "width": 22,
+      "height": 29,
+      "semantic_layers": [
+        "Dark opening",
+        "Stone green surround"
+      ],
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 29,
+        "layers": [
+          "Layer 1",
+          "Stone green surround"
+        ],
+        "width": 22
+      },
+      "pxo_sha256": "f9a6256cf5fc5f2cf3d88c8fcd21b9fb3bfc38f21aa64277d60ca65750b10c78",
+      "png_sha256": "8768d397c908f78380b41305497bc0916ea410352ea0ce3e00165b0661c230fb"
+    },
+    {
+      "project": "castle-silhouette",
+      "width": 32,
+      "height": 40,
+      "semantic_layers": [
+        "Round ears and silhouette",
+        "Paw silhouette"
+      ],
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 40,
+        "layers": [
+          "Layer 1",
+          "Paw silhouette"
+        ],
+        "width": 32
+      },
+      "pxo_sha256": "6c2a3d3315edc96e7f536f64b67d621baa2fdeba4026e9689cfb674d70d7d6b1",
+      "png_sha256": "e1461cfc92fd434e1e1686b28001078f681df150a60cb82fa77b7c1af1c21023"
+    },
+    {
+      "project": "window-princess-v3",
+      "width": 18,
+      "height": 28,
+      "semantic_layers": [
+        "Hair and gown silhouette",
+        "Face and crown",
+        "Bodice and sleeve detail"
+      ],
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 28,
+        "layers": [
+          "Layer 1",
+          "Face and crown",
+          "Bodice and sleeve detail"
+        ],
+        "width": 18
+      },
+      "pxo_sha256": "af17674f83d6348dfc5572bcc48ba216bd1c7ba2afb9e748a52cffa722fc0a95",
+      "png_sha256": "c0a5417ee599cc767f6e3058aab4b8bcc82ee9cc2ad87cdc07a60e4d8670d34b"
+    }
+  ],
+  "fresh_reopen_exports_match": true
+}

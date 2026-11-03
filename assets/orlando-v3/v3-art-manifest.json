@@ -1,0 +1,61 @@
+{
+  "initial": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "8eb1afba73c6a0d76cc5299b0b49e05a",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "fresh": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "fffed3ea4f71488148c999bb9cdbb834",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "projects": [
+    {
+      "project": "eye-rim",
+      "width": 80,
+      "height": 80,
+      "semantic_layers": [
+        "Rim and spokes",
+        "Fixed hub"
+      ],
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 80,
+        "layers": [
+          "Layer 1",
+          "Fixed hub"
+        ],
+        "width": 80
+      },
+      "pxo_sha256": "2278b3c55811de8a05a28ee1911ea947411a3f4bc41f21d036443b6795d903db",
+      "png_sha256": "92e16dca44c7a0124c7aad074196aaa8d9ab31b74fbc8381a6957472d311bd92"
+    },
+    {
+      "project": "eye-cabin",
+      "width": 8,
+      "height": 8,
+      "semantic_layers": [
+        "Upright cabin shell",
+        "Window and suspension"
+      ],
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 8,
+        "layers": [
+          "Layer 1",
+          "Window and suspension"
+        ],
+        "width": 8
+      },
+      "pxo_sha256": "4fd17d2ec92cc381bb6d5d20c2bed1102b5e8f383b35612cfe9040b1d1786bcb",
+      "png_sha256": "77c9d88fc45e9e582fd6f34151dcf4472630461f1c9d08b23b38b203b810049e"
+    }
+  ],
+  "fresh_reopen_exports_match": true
+}

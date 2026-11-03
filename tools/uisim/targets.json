@@ -2652,6 +2652,69 @@
           "test": true
         }
       }
+    },
+    "orlando_v3": {
+      "kind": "page",
+      "description": "Real interactive Orlando HOME with Tour A original assets and real event lifecycle tests",
+      "sources": [
+        "main/ui_home.c",
+        "main/ui_kit.c",
+        "main/ui_menu.c",
+        "main/ui_adventure.c",
+        "main/ui_story_dialogue.c",
+        "main/voice_listening_widget.c"
+      ],
+      "headers": [
+        "ui_home.h",
+        "ui_adventure.h",
+        "orlando_landmarks.h",
+        "orlando_v3.h"
+      ],
+      "adapter": "tools/uisim/targets/orlando_v3.c",
+      "fields": {
+        "action": {
+          "type": "str",
+          "default": ""
+        },
+        "test": {
+          "type": "bool",
+          "default": false
+        },
+        "capture_dir": {
+          "type": "str",
+          "default": ""
+        }
+      },
+      "fixtures": {
+        "wheel": {
+          "action": "wheel"
+        },
+        "castle": {
+          "action": "castle"
+        },
+        "coaster": {
+          "action": "coaster"
+        },
+        "guide": {
+          "action": "guide"
+        },
+        "menu": {
+          "action": "menu"
+        },
+        "tour": {
+          "action": "tour"
+        },
+        "all": {
+          "action": "all"
+        },
+        "default": {},
+        "test": {
+          "test": true
+        },
+        "guide2": {
+          "action": "guide2"
+        }
+      }
     }
   }
 }

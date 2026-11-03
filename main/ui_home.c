@@ -5,12 +5,14 @@
 #include "orlando_landmarks.h"
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
+#include "orlando_v3.h"
 
 enum { ACT_HOME=1,ACT_TOUR,ACT_INTRO,ACT_WHEEL,ACT_CASTLE,ACT_COASTER,
        ACT_MENU,ACT_ALL,ACT_TALK,ACT_DISMISS,ACT_NEXT,ACT_CLOSE };
 static struct {
  lv_obj_t *root,*wheel,*car,*peek,*princess,*mouse,*sign,*shade,*tray,*menu_label;
- lv_obj_t *dialog,*dialog_text,*audio_hint;
+ lv_obj_t *dialog,*dialog_text,*audio_hint,*cabins[12],*cues[3];
  lv_timer_t *timer;
  lv_event_cb_t home_cb,tour_cb,intro_cb,menu_cb,talk_cb;
  uint32_t elapsed,wheel_start,castle_start,car_start,last_tick,intro_dismissed;
@@ -19,6 +21,13 @@ static struct {
  bool active,spinning,peeking,launching,menu_open;
 } s;
 static void action(lv_event_t *e);
+static void wheel_position(int angle) {
+ lv_image_set_rotation(s.wheel,angle);
+ for(int i=0;i<12;i++) {
+  float a=(angle/10.0f+i*30)*0.0174532925f;
+  lv_obj_set_pos(s.cabins[i],266+(int)lroundf(35*cosf(a)),97+(int)lroundf(35*sinf(a)));
+ }
+}
 static void visible(lv_obj_t *o,bool show) {
  if(!o)return;
  if(show)lv_obj_remove_flag(o,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(o,LV_OBJ_FLAG_HIDDEN);
@@ -64,18 +73,21 @@ static void open_intro(lv_event_t *e) {
  close_menu();visible(s.sign,false);s.intro_page=0;
  s.dialog=flat(s.root,0,0,320,240,0x142331,180);lv_obj_add_flag(s.dialog,LV_OBJ_FLAG_CLICKABLE);
  lv_obj_t *paper=flat(s.dialog,10,27,300,204,0xF3E9CF,LV_OPA_COVER);lv_obj_set_style_radius(paper,10,0);
- label(paper,"Hello, traveler!",12,9,276,&lv_font_montserrat_20,0x25303D);
- s.dialog_text=label(paper,guide[0],12,40,276,&lv_font_montserrat_14,0x25303D);
- s.audio_hint=label(paper,"Written guide; original voice if available.",12,115,276,&lv_font_montserrat_12,0x45535A);
+ lv_obj_t *portrait=lv_image_create(paper);lv_image_set_src(portrait,ui_adventure_original_asset(TOUR_ASSET_MOUSE,0));
+ lv_image_set_pivot(portrait,0,0);lv_image_set_scale(portrait,512);lv_image_set_antialias(portrait,false);lv_obj_set_pos(portrait,12,8);
+ label(paper,"Hello, traveler!",54,14,234,&lv_font_montserrat_20,0x25303D);
+ s.dialog_text=label(paper,guide[0],12,58,276,&lv_font_montserrat_14,0x25303D);
+ /* Routine audio availability is not part of the welcome copy. */
  button(paper,"Next",12,151,128,42,ACT_NEXT);button(paper,"Close guide",158,151,130,42,ACT_CLOSE);
  if(s.intro_cb)s.intro_cb(e);
 }
 void ui_home_intro_audio_result(bool accepted) {
- if(s.audio_hint)lv_label_set_text(s.audio_hint,accepted?"Original greeting requested.":"Voice busy or unavailable; read the guide.");
+ (void)accepted; /* Written guide remains complete whether voice accepts or is busy. */
 }
 static void reset_scene(void) {
  s.spinning=s.peeking=s.launching=false;s.wheel_angle=0;
- if(s.wheel)lv_image_set_rotation(s.wheel,0);
+ if(s.wheel)wheel_position(0);
+ for(int i=0;i<3;i++)visible(s.cues[i],false);
  visible(s.car,false);visible(s.peek,false);visible(s.princess,false);
  close_intro();close_menu();visible(s.sign,false);s.intro_dismissed=s.elapsed;
 }
@@ -110,7 +122,7 @@ static void tick(lv_timer_t *t) {
   uint32_t d=s.elapsed-s.wheel_start;
   if(d>=3200){d=3200;s.spinning=false;}
   s.wheel_angle=(s.wheel_base+(int)(d*3600/3200))%3600;
-  lv_image_set_rotation(s.wheel,s.wheel_angle);
+  wheel_position(s.wheel_angle);
  }
  if(s.peeking) {
   uint32_t d=s.elapsed-s.castle_start;
@@ -121,14 +133,23 @@ static void tick(lv_timer_t *t) {
  }
  if(s.launching) {
   uint32_t d=s.elapsed-s.car_start;
-  int distance=(int)(d*d/8000); /* short accelerating launch along the ramp */
-  if(distance>90)distance=90;
-  lv_obj_set_pos(s.car,8+distance,111-distance*65/81);
-  visible(s.car,d<850);
-  if(d>=850)s.launching=false;
+  /* Follow the exact native-authored continuous rails, ending inside the return tunnel. */
+  unsigned n=sizeof(orlando_route)/sizeof(orlando_route[0]);
+  unsigned k=d<700?(d*d*40u/(700u*700u)):40u+(d-700u)*(n-41u)/1300u;
+  if(k>=n-1)k=n-1;
+  unsigned a=k?k-1:0,b=k<n-1?k+1:k;
+  int dx=orlando_route[b][0]-orlando_route[a][0],dy=orlando_route[b][1]-orlando_route[a][1];
+  lv_image_set_rotation(s.car,(int)(atan2f(dy,dx)*572.957795f+3600)%3600);
+  lv_obj_set_pos(s.car,orlando_route[k][0]-14,orlando_route[k][1]+20-13);
+  visible(s.car,d<2000);
+  if(d>=2000)s.launching=false;
  }
  bool sign=!s.dialog&&!s.menu_open && s.elapsed-s.intro_dismissed>=6000 && (s.elapsed%14000)>=9000;
  visible(s.sign,sign);
+ if(sign)lv_image_set_src(s.mouse,ui_adventure_original_asset(TOUR_ASSET_MOUSE,0));
+ /* Brief hint strokes, no extra permanent buttons; suppressed during overlays/motion. */
+ unsigned cue=s.elapsed%18000;
+ for(int i=0;i<3;i++)visible(s.cues[i],!s.dialog&&!s.menu_open&&!s.spinning&&!s.peeking&&!s.launching && cue>=4000u+i*900u && cue<4400u+i*900u);
 }
 static void deleted(lv_event_t *e) {
  (void)e;if(s.timer)lv_timer_delete(s.timer);memset(&s,0,sizeof(s));
@@ -157,13 +178,15 @@ void ui_home_build(ui_home_t *h,lv_obj_t *page,lv_event_cb_t talk_cb,lv_event_cb
  /* Extend the original flat road below its 192px background, without altering it. */
  lv_obj_set_style_bg_color(page,lv_color_hex(0xACA183),0);lv_obj_set_style_bg_opa(page,LV_OPA_COVER,0);
  sprite(ui_adventure_original_asset(TOUR_ASSET_HOME,0),0,0,256);
- sprite(&hulk_launch,0,37,256);
+ sprite(&hulk_route,0,20,256);
  sprite(&eye_base,240,99,256);
- s.wheel=sprite(&eye_wheel,230,59,256);lv_image_set_pivot(s.wheel,40,40);
- s.peek=sprite(&peek_mouse,120,74,256);visible(s.peek,false);
+ s.wheel=sprite(&eye_rim,230,59,256);lv_image_set_pivot(s.wheel,40,40);
+ for(int i=0;i<12;i++)s.cabins[i]=sprite(&eye_cabin,0,0,256);wheel_position(0);
+ s.peek=sprite(&castle_silhouette,120,74,256);visible(s.peek,false);
  sprite(&center_castle,112,20,256);
- s.princess=sprite(&window_princess,152,85,256);visible(s.princess,false);
- s.car=sprite(&coaster_car,8,111,256);visible(s.car,false);
+ s.princess=sprite(&window_princess_v3,151,82,256);visible(s.princess,false);
+ s.car=sprite(&coaster_car,8,111,160);lv_image_set_pivot(s.car,14,13);visible(s.car,false);
+ sprite(&return_tunnel,88,103,256);
  sprite(ui_adventure_original_asset(TOUR_ASSET_HOUSE,0),12,130,384);
  sprite(ui_adventure_original_asset(TOUR_ASSET_VAN,0),211,150,384);
  s.mouse=sprite(ui_adventure_original_asset(TOUR_ASSET_MOUSE,0),126,170,768);
@@ -175,15 +198,20 @@ void ui_home_build(ui_home_t *h,lv_obj_t *page,lv_event_cb_t talk_cb,lv_event_cb
  hit(119,160,62,68,ACT_INTRO);hit(227,55,88,85,ACT_WHEEL);
  hit(109,18,100,120,ACT_CASTLE);hit(0,37,108,95,ACT_COASTER);
  /* A held sign is a separate overlay, preserving the original mouse pixels. */
- s.sign=flat(page,113,145,73,40,0,LV_OPA_TRANSP);
- lv_obj_t *board=flat(s.sign,0,0,73,28,0xF3E9CF,LV_OPA_COVER);lv_obj_set_style_border_width(board,1,0);
+ s.sign=flat(page,153,190,89,40,0,LV_OPA_TRANSP);
+ flat(s.sign,0,15,24,3,0x866E50,LV_OPA_COVER);
+ lv_obj_t *board=flat(s.sign,21,11,68,28,0xF3E9CF,LV_OPA_COVER);lv_obj_set_style_border_width(board,1,0);
  lv_obj_set_style_border_color(board,lv_color_hex(0x866E50),0);
- label(s.sign,"Tap me",7,5,64,&lv_font_montserrat_14,0x25303D);
- flat(s.sign,34,28,3,18,0x866E50,LV_OPA_COVER);lv_obj_add_flag(s.sign,LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+ label(board,"Guide",10,5,58,&lv_font_montserrat_14,0x25303D);
  lv_obj_add_flag(s.sign,LV_OBJ_FLAG_CLICKABLE);lv_obj_add_event_cb(s.sign,action,LV_EVENT_CLICKED,(void *)(intptr_t)ACT_INTRO);visible(s.sign,false);
+ const int cx[]={56,160,271},cy[]={42,25,66};
+ for(int i=0;i<3;i++) {
+  s.cues[i]=flat(page,cx[i]-7,cy[i]-7,14,14,0,LV_OPA_TRANSP);
+  lv_obj_set_style_border_width(s.cues[i],2,0);lv_obj_set_style_border_color(s.cues[i],lv_color_hex(0xF3D59A),0);lv_obj_set_style_radius(s.cues[i],7,0);visible(s.cues[i],false);
+ }
  s.shade=hit(0,0,320,240,ACT_DISMISS);visible(s.shade,false);
  s.tray=flat(page,190,101,122,90,0x172533,LV_OPA_COVER);lv_obj_set_style_radius(s.tray,8,0);
- button(s.tray,"All controls",4,4,114,40,ACT_ALL);button(s.tray,"Talk",4,47,114,40,ACT_TALK);visible(s.tray,false);
+ button(s.tray,"Main menu",4,4,114,40,ACT_ALL);button(s.tray,"Talk",4,47,114,40,ACT_TALK);visible(s.tray,false);
  lv_obj_t *menu=flat(page,248,194,64,40,0,LV_OPA_TRANSP);
  lv_obj_add_flag(menu,LV_OBJ_FLAG_CLICKABLE);
  lv_obj_add_event_cb(menu,action,LV_EVENT_CLICKED,(void *)(intptr_t)ACT_MENU);
