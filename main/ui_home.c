@@ -175,14 +175,15 @@ void ui_home_build(ui_home_t *h,lv_obj_t *page,lv_event_cb_t talk_cb,lv_event_cb
  hit(119,160,62,68,ACT_INTRO);hit(227,55,88,85,ACT_WHEEL);
  hit(109,18,100,120,ACT_CASTLE);hit(0,37,108,95,ACT_COASTER);
  /* A held sign is a separate overlay, preserving the original mouse pixels. */
- s.sign=flat(page,113,145,73,28,0xF3E9CF,LV_OPA_COVER);lv_obj_set_style_border_width(s.sign,1,0);
- lv_obj_set_style_border_color(s.sign,lv_color_hex(0x866E50),0);
+ s.sign=flat(page,113,145,73,40,0,LV_OPA_TRANSP);
+ lv_obj_t *board=flat(s.sign,0,0,73,28,0xF3E9CF,LV_OPA_COVER);lv_obj_set_style_border_width(board,1,0);
+ lv_obj_set_style_border_color(board,lv_color_hex(0x866E50),0);
  label(s.sign,"Tap me",7,5,64,&lv_font_montserrat_14,0x25303D);
  flat(s.sign,34,28,3,18,0x866E50,LV_OPA_COVER);lv_obj_add_flag(s.sign,LV_OBJ_FLAG_OVERFLOW_VISIBLE);
  lv_obj_add_flag(s.sign,LV_OBJ_FLAG_CLICKABLE);lv_obj_add_event_cb(s.sign,action,LV_EVENT_CLICKED,(void *)(intptr_t)ACT_INTRO);visible(s.sign,false);
  s.shade=hit(0,0,320,240,ACT_DISMISS);visible(s.shade,false);
  s.tray=flat(page,190,101,122,90,0x172533,LV_OPA_COVER);lv_obj_set_style_radius(s.tray,8,0);
- button(s.tray,"All controls",4,4,114,40,ACT_ALL);button(s.tray,"Talk",4,47,114,39,ACT_TALK);visible(s.tray,false);
+ button(s.tray,"All controls",4,4,114,40,ACT_ALL);button(s.tray,"Talk",4,47,114,40,ACT_TALK);visible(s.tray,false);
  lv_obj_t *menu=flat(page,248,194,64,40,0,LV_OPA_TRANSP);
  lv_obj_add_flag(menu,LV_OBJ_FLAG_CLICKABLE);
  lv_obj_add_event_cb(menu,action,LV_EVENT_CLICKED,(void *)(intptr_t)ACT_MENU);
