@@ -737,6 +737,11 @@ def main(argv=None) -> int:
                                  "integrated_files": changed}
 
     # 5. renders ---------------------------------------------------------------------
+    if evidence == "checkpoint validation" and not res.stage_ok("art"):
+        # Renders depend on the selected art; with it blocked they would show other pixels.
+        for g in sorted(required & {"stills", "motion", "tests"}):
+            res.add(g, "group", UNAVAILABLE, "not rendered: the selected art checkpoint is blocked (see art stage)", required=True)
+        return finish(out, work, plan, manifest, res, commands, evidence=evidence)
     simr = Sim(simdir, snap, commands)
     groups = set(a.only or ["stills", "motion", "tests", "references"])
     for g in sorted(required & {"stills", "motion", "tests", "references"} - groups):
