@@ -60,6 +60,11 @@ sed -n '/^static bool json_string_field(/,/^}/p' "$REPO/main/notification_client
 gcc -std=gnu11 -g -O2 -Wall -Wextra -fsanitize=address,undefined -fno-sanitize-recover=undefined \
     -fno-omit-frame-pointer -I"$OUT" "$HERE/test_notify_text.c" -o "$OUT/notifytext"
 "$OUT/notifytext"
+# Artifacts & Instruments radar welcome (main/presence_logic.c): same flags.
+gcc -std=gnu11 -g -O2 -Wall -Wextra -Werror=format-truncation -fsanitize=address,undefined \
+    -fno-sanitize-recover=undefined -fno-omit-frame-pointer \
+    -I"$REPO/main" "$HERE/test_presence.c" "$REPO/main/presence_logic.c" -o "$OUT/presence"
+"$OUT/presence"
 # diag_init() runs once per boot on the device; the test boots it 4 times,
 # so its one PSRAM copy of last_words per boot "leaks" by design here.
 ASAN_OPTIONS=detect_leaks=0 "$OUT/hosttest"

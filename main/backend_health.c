@@ -21,8 +21,6 @@
 #include "device_config.h"
 #include "firmware_identity.h"
 #include "ota_service.h"
-#include "audio_capture.h"
-#include "voice_control.h"
 
 #if __has_include("backend_config.h")
 #include "backend_config.h"
@@ -243,28 +241,6 @@ static const char *restart_blocker(void)
     default:
         break;
     }
-    audio_cap_status_t cap;
-    audio_capture_get_status(&cap);
-    switch (cap.state) {
-    case AUDIO_CAP_ARMING:
-    case AUDIO_CAP_RECORDING:
-    case AUDIO_CAP_COMPLETE:
-    case AUDIO_CAP_UPLOADING:
-        return "audio capture/upload";
-    default:
-        break;
-    }
-    voice_status_t vs;
-    voice_control_get_status(&vs);
-    switch (vs.state) {
-    case VOICE_STATE_SEND_ACTIVE:
-    case VOICE_STATE_NOTE_ACTIVE:
-    case VOICE_STATE_GRAPH_ACTIVE:
-    case VOICE_STATE_NOTIFICATION_ACTIVE:
-        return "voice command active";
-    default:
-        break;
-    }
     return NULL;
 }
 
@@ -292,6 +268,13 @@ static void check_self_restart(void)
 
     backend_health_status_t st;
     backend_health_get_status(&st);
+    /* 1.6.0 exhibit: only a backend that answered this boot and then went
+     * silent is a stuck state a restart can clear. Off the home LAN (an
+     * exhibit hall: no CLAWBOX, maybe no Wi-Fi at all) it never answers, and
+     * the 1.2.0 rule restarted the exhibit every ten minutes mid-visit. */
+    if (st.last_ok_uptime_s == 0) {
+        return;
+    }
     uint32_t silent_s = uptime_s() - st.last_ok_uptime_s;
     if (silent_s < HEALTH_SELF_RESTART_S) {
         s_deferred_logged = false;

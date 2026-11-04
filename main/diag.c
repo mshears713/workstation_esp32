@@ -395,9 +395,10 @@ void diag_after_crash_delivered(void)
  * Looked up by name so no module has to export its handle; a task that does
  * not exist (not started, or failed) is simply skipped. */
 static const char *const s_task_names[] = {
-    "taskLVGL", "ota", "report", "backend_health", "catalog", "notif_poll",
-    "remote_poll", "audio_worker", "audio_uploader", "voice_detect", "voice_feed",
-    "handshake_worker", "tiT", "wifi", "sys_evt", "esp_timer", "ipc0", "ipc1",
+    /* 1.6.0 exhibit build: exhibit_audio replaces the voice/capture/upload
+     * tasks; catalog, notification and remote polling are not linked. */
+    "taskLVGL", "ota", "report", "backend_health", "exhibit_audio",
+    "tiT", "wifi", "sys_evt", "esp_timer", "ipc0", "ipc1",
     "IDLE0", "IDLE1",
 };
 

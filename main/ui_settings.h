@@ -35,19 +35,20 @@ typedef struct {
     bool api_ever_ok;
     uint32_t api_secs_since_ok;
     int volume;                   /* 0..100, steps of 10 */
-    const char *repo;             /* catalog label (<= 12 chars), "..." loading, "NONE" empty */
-    int repo_count;               /* 0 while loading or empty: the arrows cannot move */
+    const char *radar;            /* "6 / 10", or "NOT FOUND" without the SENSOR dock radar */
+    bool radar_present;           /* false: the arrows cannot move */
+    int radar_reach;              /* 1..10: arrows go outline-only at the ends */
 } ui_settings_view_t;
 
 typedef struct {
-    lv_event_cb_t volume_down, volume_up, repo_prev, repo_next, projects, firmware;
+    lv_event_cb_t volume_down, volume_up, radar_down, radar_up, sensors, firmware;
 } ui_settings_actions_t;
 
 typedef struct {
     lv_obj_t *api_tape, *api_block, *api_word, *api_detail;
     lv_obj_t *wifi_tape, *wifi_block, *wifi_word, *wifi_detail;
     lv_obj_t *vol_value, *vol_cells[10], *vol_down, *vol_up;
-    lv_obj_t *repo_name, *repo_prev, *repo_next;
+    lv_obj_t *radar_value, *radar_down, *radar_up;
     lv_obj_t *band_text;
 } ui_settings_page_t;
 

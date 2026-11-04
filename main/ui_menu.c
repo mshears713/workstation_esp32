@@ -100,7 +100,8 @@ void ui_menu_build_pictures(lv_obj_t *page,const char *title,const ui_menu_pictu
         lv_obj_remove_flag(ground,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_t *pic=lv_image_create(scene);lv_image_set_src(pic,items[i].image);lv_image_set_scale(pic,items[i].scale);lv_image_set_antialias(pic,false);lv_obj_align(pic,LV_ALIGN_CENTER,0,0);
         lv_obj_t *label=lv_label_create(card);lv_label_set_text(label,items[i].label);
-        lv_obj_set_style_text_font(label,&lv_font_montserrat_14,0);lv_obj_set_style_text_color(label,lv_color_hex(0x172533),0);
-        lv_obj_align(label,LV_ALIGN_BOTTOM_MID,0,-12);
+        /* 20 px: the card names are read from arm's length, like every key. */
+        lv_obj_set_style_text_font(label,&lv_font_montserrat_20,0);lv_obj_set_style_text_color(label,lv_color_hex(0x172533),0);
+        lv_obj_align(label,LV_ALIGN_BOTTOM_MID,0,-10);
     }
 }

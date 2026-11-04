@@ -162,49 +162,31 @@
 #include "esp_mac.h"
 #include "bsp/esp-bsp.h"
 #include "wifi_manager.h"
-#include "handshake_client.h"
-#include "audio_capture.h"
-#include "voice_control.h"
-#include "voice_listening_widget.h"
 #include "ui_kit.h"
 #include "ui_home.h"
 #include "ui_menu.h"
 #include "ui_theme.h"
-#include "weather_client.h"
-#include "weather_icons.h"
-#include "ui_weather_page.h"
 #include "ui_firmware_page.h"
 #include "ui_diagnostics.h"
 #include "ui_sensors.h"
 #include "ui_log.h"
 #include "ui_settings.h"
-#include "ui_recording.h"
-#include "ui_notify.h"
-#include "ui_survey.h"
 #include "ui_adventure.h"
-#include "ui_adventure_b.h"
-#include "ui_tour_selector.h"
-#include "ui_music.h"
-#include "ui_audio_test.h"
 #include "audio_test_session.h"
+#include "exhibit_audio.h"
+#include "radar_presence.h"
+#include "presence_logic.h"
 #include "ui_newton.h"
 #include "ui_lincoln.h"
 #include "lincoln_art.h"
 #include "newton_art.h"
 #include "newton_store.h"
-#include "ui_music_mock.h"
-#include "ui_mouse.h"
 #include "esp_wifi.h"
 #include "backend_health.h"
-#include "backend_catalog.h"
-#include "notification_client.h"
-#include "remote_client.h"
 #include "firmware_identity.h"
 #include "ota_service.h"
 #include "device_config.h"
 #include "audio_playback.h"
-#include "project_selector.h"
-#include "backend_catalog.h"
 #include "report_client.h"
 #include "diag.h"
 #include "lvgl_psram_alloc.h"
@@ -624,46 +606,6 @@ static void humiture_event_handler(void *arg, sensor_event_base_t base, int32_t 
     portEXIT_CRITICAL(&humiture_mux);
 }
 
-/* ---- Accel sample ring buffer: last ACCEL_SAMPLE_COUNT readings for the
- * Handshake payload ------------------------------------------------------
- * Separate from the chart's own LVGL-owned ring buffer above - that one
- * exists to draw a trend line and isn't readable back out; this one exists
- * purely so send_handshake_button_cb has real recent samples to ship.
- * Pushed from sensor_timer_cb (LVGL task, see below), same task that reads
- * it in send_handshake_button_cb, so no locking needed here unlike
- * last_accel_g/sensor_mux above, which cross from the sensor_hub task.
- * Tied to handshake_client.h's HANDSHAKE_MAX_ACCEL_SAMPLES (not a separate
- * "10" of its own) so this ring buffer and payload.accel_samples_g's
- * capacity can never drift out of sync - accel_samples_copy_ordered writes
- * up to accel_samples_count entries into a caller buffer sized by this
- * same constant. */
-#define ACCEL_SAMPLE_COUNT HANDSHAKE_MAX_ACCEL_SAMPLES
-
-static float accel_samples[ACCEL_SAMPLE_COUNT];
-static int accel_samples_count = 0; /* valid entries so far, caps at ACCEL_SAMPLE_COUNT */
-static int accel_samples_next = 0;  /* ring write index */
-
-static void accel_samples_push(float g)
-{
-    accel_samples[accel_samples_next] = g;
-    accel_samples_next = (accel_samples_next + 1) % ACCEL_SAMPLE_COUNT;
-    if (accel_samples_count < ACCEL_SAMPLE_COUNT) {
-        accel_samples_count++;
-    }
-}
-
-/* Copies out up to ACCEL_SAMPLE_COUNT samples, oldest first, into `out`.
- * Returns how many were copied - may be less than ACCEL_SAMPLE_COUNT
- * (e.g. shortly after boot); never pads with fabricated values. */
-static int accel_samples_copy_ordered(float *out)
-{
-    int start = (accel_samples_next - accel_samples_count + ACCEL_SAMPLE_COUNT) % ACCEL_SAMPLE_COUNT;
-    for (int i = 0; i < accel_samples_count; i++) {
-        out[i] = accel_samples[(start + i) % ACCEL_SAMPLE_COUNT];
-    }
-    return accel_samples_count;
-}
-
 /* ---- Connection Deck: Wi-Fi lifecycle, bridged from a foreign task ----
  * wifi_manager.c's callback runs on the ESP-IDF event-loop task (or, for a
  * manual reconnect, whichever task pressed the NET button) - never the
@@ -701,102 +643,6 @@ static void wifi_status_changed_cb(wifi_mgr_state_t new_state, const char *messa
         wifi_pending_count++;
     }
     portEXIT_CRITICAL(&wifi_pending_mux);
-}
-
-/* ---- Handshake: backend request lifecycle, bridged from a foreign task -
- * handshake_client.c's callback runs on its own worker task - never the
- * LVGL task. Same bridge shape as the Connection Deck queue above, kept as
- * a separate queue/mutex/timer rather than a shared abstraction: Wi-Fi and
- * handshake events are unrelated foreign tasks with unrelated timing, and
- * two small independent queues are easier to reason about than one shared
- * one two subsystems would need to coordinate over. */
-#define HANDSHAKE_PENDING_LEN 4
-
-typedef struct {
-    char message[EVENT_MSG_LEN];
-} handshake_pending_evt_t;
-
-static handshake_pending_evt_t handshake_pending[HANDSHAKE_PENDING_LEN];
-static int handshake_pending_count = 0;
-static portMUX_TYPE handshake_pending_mux = portMUX_INITIALIZER_UNLOCKED;
-
-/* Dormant since 1.2.0: handshake_client_init() is no longer called (its
- * button became RPT, and its 6KB worker stack went to report_client). Kept
- * compiled so the handshake can be brought back by restoring one call. */
-__attribute__((unused))
-static void handshake_status_changed_cb(handshake_state_t new_state, const char *message, void *ctx)
-{
-    (void)new_state;
-    (void)ctx;
-    portENTER_CRITICAL(&handshake_pending_mux);
-    if (handshake_pending_count < HANDSHAKE_PENDING_LEN) {
-        strncpy(handshake_pending[handshake_pending_count].message, message, EVENT_MSG_LEN - 1);
-        handshake_pending[handshake_pending_count].message[EVENT_MSG_LEN - 1] = '\0';
-        handshake_pending_count++;
-    }
-    portEXIT_CRITICAL(&handshake_pending_mux);
-}
-
-/* ---- Audio Capture Deck: microphone state, bridged from a foreign task -
- * audio_capture.c's callback runs on its own worker task - never the LVGL
- * task. Same bridge shape as Connection Deck/Handshake above, and the same
- * reasoning for keeping it a separate queue rather than a shared one:
- * unrelated foreign task, unrelated timing. Only discrete transitions
- * (ARM/START/COMPLETE/FAILED/READY) go through this queue to become Black
- * Box events - fast-changing progress (elapsed_ms/bytes_captured) while
- * RECORDING has no on-screen reader as of Mission 17 (see audio_ui_timer_cb
- * below), but render_recording_overlay() still reads it directly from
- * audio_capture_get_status() for the recording overlay's live timer. */
-#define AUDIO_PENDING_LEN 4
-
-typedef struct {
-    char message[EVENT_MSG_LEN];
-} audio_pending_evt_t;
-
-static audio_pending_evt_t audio_pending[AUDIO_PENDING_LEN];
-static int audio_pending_count = 0;
-static portMUX_TYPE audio_pending_mux = portMUX_INITIALIZER_UNLOCKED;
-
-static void audio_status_changed_cb(audio_cap_state_t new_state, const char *message, void *ctx)
-{
-    (void)new_state;
-    (void)ctx;
-    portENTER_CRITICAL(&audio_pending_mux);
-    if (audio_pending_count < AUDIO_PENDING_LEN) {
-        strncpy(audio_pending[audio_pending_count].message, message, EVENT_MSG_LEN - 1);
-        audio_pending[audio_pending_count].message[EVENT_MSG_LEN - 1] = '\0';
-        audio_pending_count++;
-    }
-    portEXIT_CRITICAL(&audio_pending_mux);
-}
-
-/* ---- Voice Deck (Mission 11): WakeNet/MultiNet state, bridged from the
- * voice_control.c detect task - never the LVGL task. Same bridge shape as
- * the Audio Capture Deck above; render_command_overlay/render_recording_overlay
- * below read voice_control_get_status() directly for current truth (state
- * word, last command), this queue only carries discrete transitions into
- * the Black Box. */
-#define VOICE_PENDING_LEN 4
-
-typedef struct {
-    char message[EVENT_MSG_LEN];
-} voice_pending_evt_t;
-
-static voice_pending_evt_t voice_pending[VOICE_PENDING_LEN];
-static int voice_pending_count = 0;
-static portMUX_TYPE voice_pending_mux = portMUX_INITIALIZER_UNLOCKED;
-
-static void voice_status_changed_cb(voice_state_t new_state, const char *message, void *ctx)
-{
-    (void)new_state;
-    (void)ctx;
-    portENTER_CRITICAL(&voice_pending_mux);
-    if (voice_pending_count < VOICE_PENDING_LEN) {
-        strncpy(voice_pending[voice_pending_count].message, message, EVENT_MSG_LEN - 1);
-        voice_pending[voice_pending_count].message[EVENT_MSG_LEN - 1] = '\0';
-        voice_pending_count++;
-    }
-    portEXIT_CRITICAL(&voice_pending_mux);
 }
 
 /* ---- Backend connection (1.2.0), bridged from a foreign task ----------
@@ -856,8 +702,6 @@ static const char *get_device_id(void)
     return device_id_cache;
 }
 
-static uint32_t handshake_sequence = 0;
-
 /* ---- UI widgets (set once in status_deck_ui) ------------------------- */
 
 /* UI suite pages (ui_sensors.c, ui_log.c, ui_settings.c, ui_notify.c) and
@@ -870,10 +714,6 @@ static struct {
     ui_sensors_page_t sens;
     ui_log_page_t log;
     ui_settings_page_t settings;
-    ui_notify_page_t notify;
-    ui_recording_t rec;
-    ui_notify_overlay_t notif;
-    ui_notify_done_t notify_done[4];   /* NOTIFY_HISTORY_LEN; the card stack borrows them */
 } *ui;
 
 /* Mission 14: three pages behind a bottom nav bar, replacing the single
@@ -881,48 +721,32 @@ static struct {
  * lv_obj_t container, shown/hidden as a group via set_active_page() below;
  * nav_buttons[] holds the three tab buttons (HOME/SENS/LOG only - TALK is a
  * one-shot action, not a tab, so it isn't highlighted). */
+/* Artifacts & Instruments: HOME (the Orlando scene) is the hub. The house
+ * opens EXPLORE (picture cards: the tour and the exhibit scenes) and EXPLORE's
+ * WORKSHOP key opens the maintenance pages. Adding a page still means the enum,
+ * pages[] in set_active_page() and the pages_init[] block in status_deck_ui(). */
 typedef enum {
     APP_PAGE_HOME = 0,
     APP_PAGE_SENS,
     APP_PAGE_LOG,
     APP_PAGE_SET,
-    /* Reached from a button on SETTINGS rather than from a corner of its own -
-     * there are only four corners, and browsing projects is something you do
-     * occasionally, not something you need one tap away from anywhere. */
-    APP_PAGE_PROJECTS,
-    /* Firmware identity and wireless-update state. Same reasoning as
-     * PROJECTS: reached from a button on SETTINGS, not from a corner of its
-     * own. You look at this page when you are deploying, or working out why
-     * a deployment did not land - rare, deliberate, and not worth a corner. */
     APP_PAGE_FIRMWARE,
-    /* 1.3.0: HOME is weather + microphone + MENU, and MENU is how every page
-     * above is reached. Last so the earlier page numbers keep their values. */
-    APP_PAGE_MENU,
-    /* Link, sensor freshness, uptime, internal heap - reached from MENU. */
+    APP_PAGE_EXPLORE,    /* main menu: picture cards */
     APP_PAGE_DIAG,
-    /* UI suite: MENU's second page, and the notification card stack. */
-    APP_PAGE_MORE,
-    APP_PAGE_NOTIFY,
-    APP_PAGE_MORE3,
-    APP_PAGE_WEATHER,
+    APP_PAGE_WORKSHOP,   /* LOG / SETTINGS / FIRMWARE / DIAG / SENSORS */
     APP_PAGE_COUNT,
 } app_page_t;
 
 static lv_obj_t *page_home;
 static lv_obj_t *page_sens;
 static lv_obj_t *page_log;
-static lv_obj_t *page_set;          /* SETTINGS - replaced TALK in the nav */
-static lv_obj_t *page_projects;     /* PROJECTS - reached from SETTINGS */
-static lv_obj_t *page_firmware;     /* FIRMWARE - reached from SETTINGS */
-static lv_obj_t *page_menu;         /* MENU - 1.3.0, reached from HOME */
-static lv_obj_t *page_diag;         /* DIAGNOSTICS - reached from MENU */
-static lv_obj_t *page_more;         /* MENU's second page */
-static lv_obj_t *page_more3, *page_weather;
-static ui_home_t weather_ui;
-static bool weather_force_update;
+static lv_obj_t *page_set;
+static lv_obj_t *page_firmware;
+static lv_obj_t *page_explore;
+static lv_obj_t *page_diag;
+static lv_obj_t *page_workshop;
 static app_page_t current_app_page;
-static lv_obj_t *page_notify;       /* MESSAGES card stack - from MORE */
-static lv_obj_t *app_screen;        /* where experiments open full-screen */
+static lv_obj_t *app_screen;        /* where the tour and scenes open full-screen */
 
 /* DIAGNOSTICS page objects (ui_diagnostics.h). Refreshed on entry and once a
  * second while visible - see refresh_diag_page(). */
@@ -936,41 +760,11 @@ static ui_firmware_page_t fw_page;
  * button, shown on every page but HOME (ui_back_button_create()). */
 static lv_obj_t *back_button;
 
-/* Command Window overlay (Mission 12): four-button recognition-test grid,
- * hidden by default, shown full-screen over the dashboard for the ~10s
- * MultiNet command window - see render_command_overlay() below. */
-static lv_obj_t *cmd_overlay;
-static lv_obj_t *cmd_status_label;
-static lv_obj_t *cmd_buttons[VOICE_COMMAND_COUNT];
-
-/* The PROJECTS page's selection and its cue (the recording overlay shows the
- * same selection through ui_recording.c). */
-static lv_obj_t *projects_page_label;
-static lv_obj_t *projects_page_cue;
-
-/* HOME page's animated listening ring - kept as a file-scope handle (not
- * just a local in status_deck_ui()) so voice_ui_timer_cb can recolor it via
- * voice_listening_widget_set_notification() every tick. */
-static lv_obj_t *voice_widget;
-/* 1.3.0: HOME's objects - weather column, the widget above (home_ui.mic) and
- * its link caption. Filled by render_weather() and voice_ui_timer_cb. */
+/* 1.3.0: HOME's objects (the Orlando scene owns them - see ui_home.c). */
 static ui_home_t home_ui;
 
-/* Notifications handled this boot, newest first, for the card stack's
- * "earlier" cards: the device keeps no other history of them. PSRAM. */
-#define NOTIFY_HISTORY_LEN 4
-typedef struct {
-    ui_notify_outcome_t outcome;
-    uint32_t uptime_s;
-    char text[NOTIFICATION_TEXT_LEN];
-    char reason[48];
-    bool has_text;
-} notify_done_t;
-static notify_done_t *notify_history;
-static int notify_history_used;
-/* The message text the card stack and the playback overlay show (PSRAM). */
-static char *notify_front_text;
-static char *notify_playing_text;
+/* Radar welcome (presence_logic.h). LVGL task only. */
+static presence_logic_t presence;
 
 /* SENS trends: the charts live in ui_sensors.c (LVGL-owned ring buffers),
  * fed a point per acquisition. */
@@ -1135,9 +929,16 @@ static void refresh_settings_page(void)
         .api_ever_ok = bs.ever_ok,
         .api_secs_since_ok = bs.secs_since_ok,
         .volume = audio_playback_get_volume(),
-        .repo = backend_catalog_repo_label(),
-        .repo_count = backend_catalog_repo_count(),
     };
+    radar_status_t rs;
+    radar_presence_get(&rs);
+    char reach[16];
+    /* Live output beside the level, for walk tests: SEEN while the AT581X says so. */
+    if (rs.present) snprintf(reach, sizeof(reach), "%d/%d  %s", rs.reach, RADAR_REACH_LEVELS, rs.detected ? "SEEN" : "--");
+    else strlcpy(reach, "NOT FOUND", sizeof(reach));
+    v.radar = reach;
+    v.radar_present = rs.present;
+    v.radar_reach = rs.reach;
     ui_settings_apply(&ui->settings, &v);
 }
 
@@ -1185,33 +986,11 @@ static void wifi_ui_timer_cb(lv_timer_t *t)
     }
 }
 
-/* Mission 15: no more on-screen HS status label (dropped from HOME along
- * with hs_label - see the file header comment) - handshake transitions
- * still reach the operator, just only through the Black Box/LOG page now,
- * via the drain loop below. */
-
-/* LVGL-task drain of handshake_pending, populated by
- * handshake_status_changed_cb on the handshake worker task. 300ms rather
- * than the Connection Deck's 500ms: a LAN request can complete in well
- * under a second, and SENDING-to-result feedback benefits more from a
- * quicker drain than a slow-changing Wi-Fi retry countdown does. */
-static void handshake_ui_timer_cb(lv_timer_t *t)
+/* 300 ms: the device report's result becomes a Black Box line (this timer
+ * used to drain the dormant handshake queue too). */
+static void report_ui_timer_cb(lv_timer_t *t)
 {
-    handshake_pending_evt_t drained[HANDSHAKE_PENDING_LEN];
-    int count;
-
-    portENTER_CRITICAL(&handshake_pending_mux);
-    count = handshake_pending_count;
-    if (count > 0) {
-        memcpy(drained, handshake_pending, sizeof(handshake_pending_evt_t) * (size_t)count);
-        handshake_pending_count = 0;
-    }
-    portEXIT_CRITICAL(&handshake_pending_mux);
-
-    for (int i = 0; i < count; i++) {
-        log_event(EVT_HANDSHAKE, drained[i].message);
-    }
-
+    (void)t;
     /* 1.2.0: the device report's result, as a Black Box line at the top of
      * the LOG page - "REPORT SENT #12" or "REPORT FAIL: HTTP_CONNECT". */
     report_status_t rs;
@@ -1222,388 +1001,8 @@ static void handshake_ui_timer_cb(lv_timer_t *t)
     }
 }
 
-/* Mission 17: no more on-screen AUD status label (dropped from HOME to give
- * the VoiceListeningWidget most of the page - see the file header comment)
- * - same tradeoff already made for ACC/HS/VOICE's old text rows: capture
- * transitions still reach the operator, just only through the Black
- * Box/LOG page now, via the drain loop below. */
-
-/* LVGL-task drain of audio_pending, populated by audio_status_changed_cb on
- * the audio worker task. 200ms: faster than Handshake's 300ms because a 4s
- * RECORDING window benefits from a livelier on-screen elapsed-time readout,
- * without going so fast it becomes a per-chunk log (the worker task itself
- * still only pushes transitions here, not progress - see above). */
-static void audio_ui_timer_cb(lv_timer_t *t)
-{
-    audio_pending_evt_t drained[AUDIO_PENDING_LEN];
-    int count;
-
-    portENTER_CRITICAL(&audio_pending_mux);
-    count = audio_pending_count;
-    if (count > 0) {
-        memcpy(drained, audio_pending, sizeof(audio_pending_evt_t) * (size_t)count);
-        audio_pending_count = 0;
-    }
-    portEXIT_CRITICAL(&audio_pending_mux);
-
-    for (int i = 0; i < count; i++) {
-        log_event(EVT_AUDIO, drained[i].message);
-    }
-}
-
-/* Mission 16: no more on-screen dynamic VOICE status label - the HOME page
- * center now shows a VoiceListeningWidget instead (a decorative, always-
- * animating ring; see voice_listening_widget.c), not a text readout of
- * voice_control_get_status(). Voice transitions still reach the operator:
- * the Command Window/recording/GO overlays already render their own state
- * directly from voice_control_get_status() independent of this, and every
- * transition still lands in the Black Box via the drain loop in
- * voice_ui_timer_cb below. The one thing genuinely lost is on-screen
- * DEGRADED visibility when no overlay is showing (previously this row's red
- * text) - that state is now only visible via the Black Box/LOG page. */
-
-/* Four Mission 13 command words (Mission 12 tested six; RUN/TEST didn't
- * read reliably and were dropped), in on-screen grid order (2 columns x 2
- * rows: SEND/NOTE, GO/YES). cmd_buttons[i] is built from cmd_defs[i] in
- * this same order, so render_command_overlay() below can find "the button
- * for id X" by scanning this array rather than assuming id-1 == index
- * (keeps the two decoupled in case a future pass reorders the grid).
- *
- * `hint` (added after Mike said he kept forgetting which word does what):
- * three words, one line at montserrat_12, saying where each command's
- * recording actually ends up. Kept current deliberately - these went stale
- * once already and a wrong hint is worse than none:
- *   SEND - 15s auto-stop  -> Notion Voice Inbox
- *   NOTE - long, manual   -> Notion Voice Inbox, with a project
- *   GO   - 15s auto-stop  -> a GitHub issue on the selected repository
- *   YES  - not a recording; answers a pending spoken notification */
-static const struct {
-    voice_command_id_t id;
-    const char *label;
-    const char *hint;
-} cmd_defs[VOICE_COMMAND_COUNT] = {
-    { VOICE_CMD_SEND, "SEND", "Quick voice note" },
-    { VOICE_CMD_NOTE, "NOTE", "Long note + project" },
-    { VOICE_CMD_GO,   "GO",   "New GitHub issue" },
-    { VOICE_CMD_YES,  "YES",  "Answer a message" },
-};
-
-#define CMD_BTN_INACTIVE_BG lv_palette_darken(LV_PALETTE_GREY, 2)
-#define CMD_BTN_ACTIVE_BG   lv_palette_main(LV_PALETTE_GREEN)
-
-/* Command Window overlay (Mission 12): shown full-screen the instant a
- * command window opens (or is about to - WAKE_DETECTED is included so
- * there is no one-tick flash of the plain dashboard between the wake word
- * and the button grid appearing), hidden the instant the console is back
- * to plain LISTENING. Countdown/status text and per-button highlight are
- * both derived from voice_control_get_status() current truth, same
- * current-truth-only split every other render_*_panel function here uses -
- * "how did we get here" is the Black Box's job, not this overlay's. Driven
- * off the same 200ms voice_ui_timer_cb as render_recording_overlay/
- * render_notification_overlay below, so all stay in lockstep. */
-static void render_command_overlay(void)
-{
-    voice_status_t st;
-    voice_control_get_status(&st);
-
-    bool show = true;
-    char status_buf[40];
-    lv_color_t status_color = lv_palette_main(LV_PALETTE_BLUE);
-
-    switch (st.state) {
-    case VOICE_STATE_WAKE_DETECTED:
-    case VOICE_STATE_COMMAND_WINDOW: {
-        int64_t remain_us = st.command_window_deadline_us - esp_timer_get_time();
-        int remain_s = remain_us > 0 ? (int)((remain_us + 999999) / 1000000) : 0;
-        snprintf(status_buf, sizeof(status_buf), "Listening... %d", remain_s);
-        status_color = lv_palette_main(LV_PALETTE_BLUE);
-        break;
-    }
-    case VOICE_STATE_COMMAND_RECOGNIZED:
-        snprintf(status_buf, sizeof(status_buf), "%s", st.last_command);
-        status_color = lv_palette_main(LV_PALETTE_GREEN);
-        break;
-    case VOICE_STATE_TIMEOUT:
-        snprintf(status_buf, sizeof(status_buf), "TIMEOUT");
-        status_color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    case VOICE_STATE_UNRECOGNIZED:
-        snprintf(status_buf, sizeof(status_buf), "UNRECOGNIZED");
-        status_color = lv_palette_main(LV_PALETTE_ORANGE);
-        break;
-    default:
-        show = false;
-        status_buf[0] = '\0';
-        break;
-    }
-
-    if (show) {
-        lv_obj_clear_flag(cmd_overlay, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(cmd_overlay);
-    } else {
-        lv_obj_add_flag(cmd_overlay, LV_OBJ_FLAG_HIDDEN);
-    }
-    lv_label_set_text(cmd_status_label, status_buf);
-    lv_obj_set_style_text_color(cmd_status_label, status_color, 0);
-
-    for (int i = 0; i < VOICE_COMMAND_COUNT; i++) {
-        bool highlighted = (st.state == VOICE_STATE_COMMAND_RECOGNIZED) && (cmd_defs[i].id == st.last_command_id);
-        lv_obj_set_style_bg_color(cmd_buttons[i], highlighted ? CMD_BTN_ACTIVE_BG : CMD_BTN_INACTIVE_BG, 0);
-    }
-}
-
-/* Voice-triggered recording overlay (Mission 13, generalized when NOTE
- * gained its own recording flow): visible for the whole SEND or NOTE cycle
- * (voice_control's VOICE_STATE_SEND_ACTIVE / VOICE_STATE_NOTE_ACTIVE /
- * VOICE_STATE_GRAPH_ACTIVE cover recording through the upload attempt and
- * its brief result hold - mic ownership is exclusive, so the three states
- * never overlap, and one shared overlay covers all three without losing
- * any information. GRAPH_ACTIVE joined SEND/NOTE here once GO became a
- * recording command like them - see run_go_command()'s comment in
- * voice_control.c). The recording/upload detail line is deliberately read
- * from audio_capture_get_status() directly, not from anything
- * voice_control.c stores - same current-truth-only split every other
- * render_*_panel here uses, and (as of Mission 17) it is the only
- * on-screen place that shows live capture progress at all, full-screen
- * with a STOP button. Which command triggered it (vst.last_command,
- * "SEND"/"NOTE"/"GO") drives the title and result text so none of the
- * three is mislabeled as another. */
-/* Defined further down with the rest of the project-selector helpers;
- * render_recording_overlay() needs it to keep the overlay's copy of the
- * label in step while a NOTE is recording. */
-/* Above this, a capture is long-form and ends when the operator says so
- * (NOTE's cap is 20 minutes); at or below it, the capture stops itself.
- * Used to decide whether the SEND button is meaningful and whether the
- * counter should show a target. */
-#define AUTO_STOP_MAX_MS 60000
-
-/* The panel look, page panel and page title live in ui_kit.c. */
-
-static void refresh_project_label(void);
 static void refresh_firmware_page(void);
 static void refresh_diag_page(void);
-
-/* Recording overlay (UI suite, ui_recording.c): voice_control says whether
- * a capture is on and which command it is, audio_capture what the mic and
- * uploader are doing, wifi_mgr / backend_health feed the rail. Shown and
- * hidden exactly when it was before: while SEND/NOTE/GO is active. */
-static void render_recording_overlay(void)
-{
-    if (ui == NULL) {
-        return;
-    }
-    voice_status_t vst;
-    voice_control_get_status(&vst);
-    bool show = (vst.state == VOICE_STATE_SEND_ACTIVE || vst.state == VOICE_STATE_NOTE_ACTIVE ||
-                 vst.state == VOICE_STATE_GRAPH_ACTIVE);
-    if (!show) {
-        ui_recording_hide(&ui->rec);
-        return;
-    }
-    audio_cap_status_t ast;
-    audio_capture_get_status(&ast);
-    wifi_mgr_status_t ws;
-    wifi_mgr_get_status(&ws);
-    backend_health_status_t bh;
-    backend_health_get_status(&bh);
-
-    ui_rec_phase_t phase;
-    switch (ast.state) {
-    case AUDIO_CAP_ARMING:    phase = UI_REC_ARMING; break;
-    case AUDIO_CAP_RECORDING: phase = UI_REC_RECORDING; break;
-    case AUDIO_CAP_COMPLETE:
-    case AUDIO_CAP_UPLOADING: phase = UI_REC_UPLOADING; break;
-    case AUDIO_CAP_READY:     phase = UI_REC_READY; break;
-    case AUDIO_CAP_CANCELLED: phase = UI_REC_CANCELLED; break;
-    case AUDIO_CAP_FAILED:    phase = UI_REC_FAILED; break;
-    case AUDIO_CAP_IDLE:
-    default:
-        /* Over, with voice_control holding the result up; or genuinely
-         * still starting (the worker has not picked the request up). */
-        phase = vst.last_result[0] != '\0' ? UI_REC_RESULT : UI_REC_STARTING;
-        break;
-    }
-    ui_rec_view_t v = {
-        .command = vst.last_command,
-        .phase = phase,
-        .elapsed_ms = ast.elapsed_ms,
-        .target_ms = ast.duration_target_ms,
-        .uploader_behind = ast.uploader_behind,
-        .fail_reason = ast.fail_reason,
-        .result = vst.last_result,
-        .selector = vst.state == VOICE_STATE_NOTE_ACTIVE  ? backend_catalog_project_label()
-                  : vst.state == VOICE_STATE_GRAPH_ACTIVE ? backend_catalog_repo_label()
-                                                          : NULL,
-        .wifi = ws.state == WIFI_MGR_ONLINE ? UI_DIAG_WIFI_ONLINE
-              : ws.state == WIFI_MGR_CONNECTING ? UI_DIAG_WIFI_JOINING
-              : ws.state == WIFI_MGR_RETRY_WAIT ? UI_DIAG_WIFI_RETRY : UI_DIAG_WIFI_OFF,
-        .api = bh.state == BACKEND_HEALTH_OK ? UI_DIAG_API_OK
-             : bh.state == BACKEND_HEALTH_DOWN ? UI_DIAG_API_DOWN
-             : bh.state == BACKEND_HEALTH_NO_NETWORK ? UI_DIAG_API_NO_NET : UI_DIAG_API_UNKNOWN,
-    };
-    ui_recording_apply(&ui->rec, &v);
-}
-
-/* Notification-playback overlay - see the static globals' comment above.
- * Same current-truth-from-voice_status_t reasoning as render_recording_overlay:
- * run_notification_command() blocks for the whole fetch+play+ack cycle. */
-static void refresh_notify_page(void);
-
-/* Records one finished playback for the card stack's "earlier" cards. */
-static void notify_history_push(ui_notify_outcome_t outcome, const char *text, const char *reason)
-{
-    if (notify_history == NULL) {
-        return;
-    }
-    int keep = notify_history_used < NOTIFY_HISTORY_LEN - 1 ? notify_history_used : NOTIFY_HISTORY_LEN - 1;
-    for (int i = keep; i > 0; i--) {
-        notify_history[i] = notify_history[i - 1];
-    }
-    notify_done_t *d = &notify_history[0];
-    d->outcome = outcome;
-    d->uptime_s = (uint32_t)(esp_timer_get_time() / 1000000ULL);
-    d->has_text = text && text[0];
-    strlcpy(d->text, d->has_text ? text : "", sizeof(d->text));
-    strlcpy(d->reason, reason ? reason : "", sizeof(d->reason));
-    if (notify_history_used < NOTIFY_HISTORY_LEN) {
-        notify_history_used++;
-    }
-}
-
-/* Notification playback overlay (UI suite, ui_notify.c). voice_control's
- * last_result is the only progress signal (run_notification_command() blocks
- * for the whole fetch+play+ack), mapped to FETCH -> PLAY -> ACK steps. The
- * message text is the one notification_client loaded for the front message,
- * kept from the moment playback starts (the front moves on after the ack). */
-static void render_notification_overlay(void)
-{
-    if (ui == NULL) {
-        return;
-    }
-    static bool active, recorded;
-    char *text = notify_playing_text;
-    if (text == NULL) {
-        return;
-    }
-    voice_status_t vst;
-    voice_control_get_status(&vst);
-
-    /* The house introduction is not a notification: keep the user's page
-     * visible and never add it to notification history. */
-    if (vst.state == VOICE_STATE_NOTIFICATION_ACTIVE &&
-        strcmp(vst.active_request_id, "__mouse_intro__") == 0) {
-        static bool warned;
-        active = false;
-        ui_notify_overlay_hide(&ui->notif);
-        if (strncmp(vst.last_result, "MOUSE AUDIO FAILED:", 19) == 0) {
-            if (!warned) ui_mouse_home_refresh_notice("VOICE UNAVAILABLE");
-            warned = true;
-        } else warned = false;
-        return;
-    }
-
-    if (vst.state != VOICE_STATE_NOTIFICATION_ACTIVE) {
-        active = false;
-        ui_notify_overlay_hide(&ui->notif);
-        return;
-    }
-    notification_status_t nst;
-    notification_client_get_status(&nst);
-    if (!active) {
-        active = true;
-        recorded = false;
-        bool same = strcmp(nst.notification_id, vst.active_request_id) == 0 && nst.text_state == 1;
-        if (same) {
-            notification_client_get_text(text, NOTIFICATION_TEXT_LEN);
-        } else {
-            text[0] = '\0';
-        }
-    }
-
-    const char *r = vst.last_result;
-    ui_notify_pb_view_t v = { .text = text[0] ? text : NULL, .remaining = nst.pending ? nst.count : 0 };
-    bool done = true;
-    if (strcmp(r, "FETCHING") == 0 || strcmp(r, "NOTIFICATION FETCHING") == 0) {
-        v.phase = UI_NOTIFY_PB_FETCHING;
-        done = false;
-    } else if (strcmp(r, "PLAYING") == 0) {
-        v.phase = UI_NOTIFY_PB_PLAYING;
-        done = false;
-    } else if (strcmp(r, "NOTIFICATION DELIVERED") == 0) {
-        v.phase = UI_NOTIFY_PB_DONE;
-        v.outcome = UI_NOTIFY_DELIVERED;
-    } else if (strcmp(r, "NOTIFICATION PLAYED - ACK FAILED") == 0) {
-        v.phase = UI_NOTIFY_PB_DONE;
-        v.outcome = UI_NOTIFY_ACK_FAILED;
-    } else if (strcmp(r, "NOTIFICATION PLAYBACK STOPPED") == 0) {
-        v.phase = UI_NOTIFY_PB_DONE;
-        v.outcome = UI_NOTIFY_STOPPED;
-    } else {
-        /* "NOTIFICATION FETCH FAILED: <reason>" and anything unexpected */
-        v.phase = UI_NOTIFY_PB_DONE;
-        v.outcome = UI_NOTIFY_FETCH_FAILED;
-        v.reason = r;
-    }
-    if (done && !recorded) {
-        recorded = true;
-        notify_history_push(v.outcome, text, v.outcome == UI_NOTIFY_FETCH_FAILED ? r : NULL);
-        refresh_notify_page();
-    }
-    ui_notify_overlay_apply(&ui->notif, &v);
-}
-
-/* LVGL-task drain of voice_pending, populated by voice_status_changed_cb on
- * the voice detect task. 200ms, same cadence as Audio Capture Deck - wake/
- * command transitions benefit from the same livelier feedback a 4s
- * RECORDING window does. */
-static void voice_ui_timer_cb(lv_timer_t *t)
-{
-    voice_pending_evt_t drained[VOICE_PENDING_LEN];
-    int count;
-
-    portENTER_CRITICAL(&voice_pending_mux);
-    count = voice_pending_count;
-    if (count > 0) {
-        memcpy(drained, voice_pending, sizeof(voice_pending_evt_t) * (size_t)count);
-        voice_pending_count = 0;
-    }
-    portEXIT_CRITICAL(&voice_pending_mux);
-
-    for (int i = 0; i < count; i++) {
-        log_event(EVT_VOICE, drained[i].message);
-    }
-    render_command_overlay();
-    render_recording_overlay();
-    render_notification_overlay();
-
-    /* Cheap thread-safe struct read, not a network call - the background
-     * poll task in notification_client.c is what actually talks to the
-     * backend (see its own interval). Just recolors the ring; never reads
-     * anything aloud on its own, per the directive. */
-    notification_status_t nst;
-    notification_client_get_status(&nst);
-    voice_listening_widget_set_notification(voice_widget, nst.pending);
-
-    /* Backend reachability, shown through the widget rather than another
-     * status row - see voice_listening_widget_set_link(). Wi-Fi state is
-     * shown separately on SETTINGS and DIAGNOSTICS; this is deliberately a
-     * different signal, because the two fail independently and "router is
-     * fine, uvicorn is not running" was previously indistinguishable from
-     * a healthy console. Another cheap struct read, not a network call:
-     * backend_health.c's own task does the probing. */
-    backend_health_status_t bh;
-    backend_health_get_status(&bh);
-    voice_widget_link_t link;
-    switch (bh.state) {
-    case BACKEND_HEALTH_OK:         link = VOICE_WIDGET_LINK_OK; break;
-    case BACKEND_HEALTH_DOWN:       link = VOICE_WIDGET_LINK_DOWN; break;
-    case BACKEND_HEALTH_NO_NETWORK: link = VOICE_WIDGET_LINK_NO_NET; break;
-    case BACKEND_HEALTH_UNKNOWN:
-    default:                        link = VOICE_WIDGET_LINK_UNKNOWN; break;
-    }
-    if (weather_ui.mic) { ui_weather_page_set_link(&weather_ui,link); voice_listening_widget_set_notification(weather_ui.mic,nst.pending); }
-    ui_home_set_link(&home_ui, link);   /* the widget, plus its caption */
-}
 
 /* ---- Button handlers: touch -> app_state -> render + serial log ----- */
 
@@ -1707,108 +1106,27 @@ static void volume_down_button_cb(lv_event_t *e)
     refresh_settings_page();
 }
 
-/* Project selector (Mission 20 side control), now driven by the catalog the
- * backend fetches from the AI-OS rather than a compiled-in list of four - see
- * backend_catalog.h. The options, their order and their labels all come from
- * Notion now, so there is nothing left here to keep in sync by hand.
- *
- * Two labels: the HOME control and the one on the recording overlay. Both are
- * driven from the same selection, so whichever is tapped, the other agrees -
- * there is one selection, shown in two places, never two to reconcile. (The
- * HOME one is currently unbuilt; the guard is what makes that harmless.) */
-static void refresh_project_label(void)
-{
-    const char *text = backend_catalog_project_label();
-    if (projects_page_label) {
-        lv_label_set_text(projects_page_label, text);
-    }
-    if (projects_page_cue) {
-        /* Say so plainly when there is no cue. An empty panel reads as broken;
-         * "no cue set" is a fact about that AI-OS page worth knowing, and the
-         * fix for it is one edit away in Notion. */
-        const char *cue = backend_catalog_project_cue();
-        lv_label_set_text(projects_page_cue, (cue && cue[0] != '\0') ? cue : "no cue set");
-    }
-}
-
-static void recording_repo_next_cb(lv_event_t *e)
-{
-    backend_catalog_repo_next();
-    refresh_settings_page();
-    render_recording_overlay();
-}
-
-static void recording_repo_prev_cb(lv_event_t *e)
-{
-    backend_catalog_repo_prev();
-    refresh_settings_page();
-    render_recording_overlay();
-}
-
-static void project_up_button_cb(lv_event_t *e)
+/* Radar reach on SETTINGS (the row that used to pick a GitHub repository).
+ * One step changes the AT581X threshold by 50 of its 1023 - see
+ * radar_presence.h for why this is a level, not centimetres. */
+static void radar_reach_down_cb(lv_event_t *e)
 {
     (void)e;
-    backend_catalog_project_next();
-    refresh_project_label();
+    radar_status_t rs;
+    radar_presence_get(&rs);
+    radar_presence_set_reach(rs.reach - 1);
+    handle_command("RADAR-", true);
+    refresh_settings_page();
 }
 
-static void project_down_button_cb(lv_event_t *e)
+static void radar_reach_up_cb(lv_event_t *e)
 {
     (void)e;
-    backend_catalog_project_prev();
-    refresh_project_label();
-}
-
-/* The recording overlay's one chooser: the project during a NOTE, the
- * repository during a GO (they were two overlapping widgets before). */
-static void rec_sel_prev_cb(lv_event_t *e)
-{
-    voice_status_t vst;
-    voice_control_get_status(&vst);
-    if (vst.state == VOICE_STATE_GRAPH_ACTIVE) {
-        recording_repo_prev_cb(e);
-    } else {
-        project_down_button_cb(e);
-        render_recording_overlay();
-    }
-}
-
-static void rec_sel_next_cb(lv_event_t *e)
-{
-    voice_status_t vst;
-    voice_control_get_status(&vst);
-    if (vst.state == VOICE_STATE_GRAPH_ACTIVE) {
-        recording_repo_next_cb(e);
-    } else {
-        project_up_button_cb(e);
-        render_recording_overlay();
-    }
-}
-
-/* SEND control. Ships the last ACCEL_SAMPLE_COUNT accelerometer readings
- * (whatever is actually in the ring buffer - 0 if the IMU isn't present or
- * no sample has landed yet, never fabricated) rather than a bare ping.
- * Only logs/counts as a command when handshake_client_send actually
- * accepts it - a press the in-flight guard rejects (a request is already
- * SENDING) had no effect, so it shouldn't show up in the command history
- * or Black Box as if it did. */
-__attribute__((unused))   /* dormant since 1.2.0 - see handshake_status_changed_cb */
-static void send_handshake_button_cb(lv_event_t *e)
-{
-    handshake_payload_t payload = { 0 };
-    strncpy(payload.device_id, get_device_id(), sizeof(payload.device_id) - 1);
-    strncpy(payload.event_type, "ACCEL_SAMPLES", sizeof(payload.event_type) - 1);
-    strncpy(payload.mission, "MISSION09", sizeof(payload.mission) - 1);
-    payload.device_uptime_ms = (uint32_t)(esp_timer_get_time() / 1000);
-    payload.sequence = ++handshake_sequence;
-    payload.sample_interval_ms = SENSOR_ACQUIRE_PERIOD_MS;
-    payload.accel_sample_count = accel_samples_copy_ordered(payload.accel_samples_g);
-
-    if (!handshake_client_send(&payload)) {
-        handshake_sequence--; /* not actually sent - don't burn a sequence number */
-        return;
-    }
-    handle_command("SND", true);
+    radar_status_t rs;
+    radar_presence_get(&rs);
+    radar_presence_set_reach(rs.reach + 1);
+    handle_command("RADAR+", true);
+    refresh_settings_page();
 }
 
 /* ---- Nav bar (Mission 14): HOME/SENS/LOG page switching + TALK -------
@@ -1819,17 +1137,15 @@ static void send_handshake_button_cb(lv_event_t *e)
 static void set_active_page(app_page_t page)
 {
     lv_obj_t *pages[APP_PAGE_COUNT] = {
-        page_home, page_sens, page_log, page_set, page_projects, page_firmware, page_menu, page_diag,
-        page_more, page_notify, page_more3, page_weather,
+        page_home, page_sens, page_log, page_set, page_firmware, page_explore, page_diag, page_workshop,
     };
     /* 1.2.1: which page was on screen, for the crash breadcrumb. Same
      * order as app_page_t. */
     static const char *const page_names[APP_PAGE_COUNT] = {
-        "HOME", "SENS", "LOG", "SET", "PROJECTS", "FIRMWARE", "MENU", "DIAG", "MORE", "NOTIFY", "MORE3", "WEATHER",
+        "HOME", "SENS", "LOG", "SET", "FIRMWARE", "EXPLORE", "DIAG", "WORKSHOP",
     };
-    current_app_page=page;
+    current_app_page = page;
     diag_set_page(page_names[page]);
-    ui_mouse_home_set_active(page == APP_PAGE_HOME);
     ui_home_set_active(page == APP_PAGE_HOME);
     for (int i = 0; i < APP_PAGE_COUNT; i++) {
         if (i == (int)page) {
@@ -1838,12 +1154,17 @@ static void set_active_page(app_page_t page)
             lv_obj_add_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
         }
     }
-    /* The way back is on every page except the one it leads to. */
-    if (page == APP_PAGE_HOME || page == APP_PAGE_WEATHER) {
+    /* The way back is on every page except HOME, one level up: EXPLORE ->
+     * HOME, WORKSHOP -> EXPLORE, the maintenance pages -> WORKSHOP. */
+    if (page == APP_PAGE_HOME) {
         lv_obj_add_flag(back_button, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_clear_flag(back_button, LV_OBJ_FLAG_HIDDEN);
-        lv_label_set_text(lv_obj_get_child(back_button,0),page==APP_PAGE_MORE?LV_SYMBOL_LEFT " MENU":page==APP_PAGE_MORE3?LV_SYMBOL_LEFT " MORE":LV_SYMBOL_LEFT " HOME");
+        lv_label_set_text(lv_obj_get_child(back_button, 0),
+                          page == APP_PAGE_EXPLORE  ? LV_SYMBOL_LEFT " HOME"
+                          : page == APP_PAGE_WORKSHOP ? LV_SYMBOL_LEFT " MENU"
+                                                      : LV_SYMBOL_LEFT " TOOLS");
+        lv_obj_move_foreground(back_button);
     }
 
     /* Mission 15: the LVGL-builtin FPS/CPU readout (CONFIG_LV_USE_PERF_
@@ -1865,55 +1186,50 @@ static void set_active_page(app_page_t page)
 
 static void home_nav_button_cb(lv_event_t *e)
 {
+    (void)e;
     set_active_page(APP_PAGE_HOME);
 }
 
 static void back_nav_cb(lv_event_t *e)
 {
     (void)e;
-    set_active_page(current_app_page==APP_PAGE_MORE?APP_PAGE_MENU:current_app_page==APP_PAGE_MORE3?APP_PAGE_MORE:APP_PAGE_HOME);
+    set_active_page(current_app_page == APP_PAGE_EXPLORE    ? APP_PAGE_HOME
+                    : current_app_page == APP_PAGE_WORKSHOP ? APP_PAGE_EXPLORE
+                                                            : APP_PAGE_WORKSHOP);
 }
 
+/* The house on HOME. */
 static void menu_button_cb(lv_event_t *e)
 {
     (void)e;
-    set_active_page(APP_PAGE_MENU);
+    presence_engaged(&presence, lv_tick_get());
+    set_active_page(APP_PAGE_EXPLORE);
+}
+
+static void workshop_nav_button_cb(lv_event_t *e)
+{
+    (void)e;
+    set_active_page(APP_PAGE_WORKSHOP);
 }
 
 static void sens_nav_button_cb(lv_event_t *e)
 {
+    (void)e;
     set_active_page(APP_PAGE_SENS);
 }
 
 static void log_nav_button_cb(lv_event_t *e)
 {
+    (void)e;
     set_active_page(APP_PAGE_LOG);
     render_event_log();   /* built only while on screen - see render_event_log() */
 }
 
-/* TALK: retires the old manual REC button. Rather than starting a capture
- * directly, this fakes a wake-word detection so the real MultiNet command
- * window opens (see voice_control_manual_wake()'s comment in
- * voice_control.c) - pressing TALK then saying "send" is now how a manual
- * capture happens. No in-flight guard needed here the way rec_button_cb had
- * one: voice_control_manual_wake() is a fire-and-forget request that
- * detect_task silently ignores if a window is already open or the pipeline
- * never started, so there is no "rejected press" case for handle_command to
- * avoid logging. */
 static void set_nav_button_cb(lv_event_t *e)
 {
     (void)e;
     refresh_settings_page();   /* current on the first frame, not 500 ms later */
     set_active_page(APP_PAGE_SET);
-}
-
-static void projects_nav_button_cb(lv_event_t *e)
-{
-    (void)e;
-    /* The list may have refreshed since this page was last drawn, and it is
-     * only redrawn on a selection change otherwise. */
-    refresh_project_label();
-    set_active_page(APP_PAGE_PROJECTS);
 }
 
 static void firmware_nav_button_cb(lv_event_t *e)
@@ -1930,144 +1246,59 @@ static void diag_nav_button_cb(lv_event_t *e)
     set_active_page(APP_PAGE_DIAG);
 }
 
-static void more_nav_button_cb(lv_event_t *e)
+/* ---- Tour A narration -------------------------------------------------
+ * Tour A itself stays visual-only (ui_adventure.c never touches audio); it
+ * reports each scene it shows, and this plays that scene's clip if the SD
+ * card has one (EXHIBIT_AUDIO_DIR/<name>.pcm). A missing clip is logged and
+ * the tour carries on silently with its written text. */
+/* One talk per region, started on the region's arrival scene and kept going
+ * through its later scenes (Next in Egypt does not cut Egypt off); leaving
+ * the region - Skip, the portal, Exit - stops it. */
+static const char *tour_region_clip(adventure_scene_t scene)
 {
-    (void)e;
-    set_active_page(APP_PAGE_MORE);
+    if (scene >= ADVENTURE_EGYPT && scene <= ADVENTURE_MUMMY) return "egypt";
+    if (scene >= ADVENTURE_GREECE && scene <= ADVENTURE_GREECE_COLUMNS) return "greece";
+    if ((scene >= ADVENTURE_GOTHIC && scene <= ADVENTURE_GOTHIC_GLASS) || scene == ADVENTURE_SING ||
+        scene == ADVENTURE_CLIMB) return "gothic";
+    return NULL;
 }
 
-static void render_weather(void);
-static void more3_nav_button_cb(lv_event_t *e) { (void)e; set_active_page(APP_PAGE_MORE3); }
-static void weather_nav_button_cb(lv_event_t *e) { (void)e; weather_force_update=true; set_active_page(APP_PAGE_WEATHER); render_weather(); }
-
-static __attribute__((unused)) void notify_nav_button_cb(lv_event_t *e)
-{
-    (void)e;
-    refresh_notify_page();
-    set_active_page(APP_PAGE_NOTIFY);
-}
-
-/* PLAY on the front card: the same fetch/play/ack a spoken YES runs. */
-static void notify_play_cb(lv_event_t *e)
-{
-    (void)e;
-    voice_control_play_notification();
-}
-
-/* ---- Experiments (UI suite): built full-screen on open, deleted on close,
- * so they cost nothing while unused. Each returns to MORE. ---------------- */
-
-/* SURVEY: sample questions; "saved" means kept on this device - one serial
- * log line per response and a Black Box line. Nothing is sent anywhere. */
-static uint32_t survey_responses;
-
-static bool survey_submit(const int *a, uint32_t *no, void *ctx)
+static void tour_scene_cb(adventure_scene_t scene, void *ctx)
 {
     (void)ctx;
-    *no = ++survey_responses;
-    ESP_LOGI(TAG, "SURVEY,%lu,%d,%d,%d (sample questions; kept on device only)", (unsigned long)*no, a[0], a[1],
-             a[2]);
-    char msg[EVENT_MSG_LEN];
-    snprintf(msg, sizeof(msg), "SURVEY RESPONSE #%lu", (unsigned long)*no);
-    log_event(EVT_SYSTEM, msg);
-    return true;
+    static const char *region;
+    const char *now = tour_region_clip(scene);
+    if (now == region) return;
+    exhibit_audio_stop_clip();
+    region = now;
+    bool arrival = scene == ADVENTURE_EGYPT || scene == ADVENTURE_GREECE || scene == ADVENTURE_GOTHIC;
+    if (now && arrival && !exhibit_audio_play_clip(now)) log_event(EVT_AUDIO, "TOUR CLIP BUSY");
 }
 
-static void experiment_closed(void *unused)
-{
-    (void)unused;
-    set_active_page(APP_PAGE_MORE);
-}
-
-static void survey_exit(void *ctx)
+static void tour_closed(void *ctx)
 {
     (void)ctx;
-    ui_survey_close();
-    experiment_closed(NULL);
+    exhibit_audio_stop_clip();
+    set_active_page(APP_PAGE_HOME);
 }
 
-static const ui_survey_config_t survey_cfg = {
-    .questions = ui_survey_sample_questions,
-    .qr_url = "https://example.com/feedback",        /* SAMPLE until the real link is decided */
-    .qr_caption = "Sample link:\nexample.com",
-    .saved_note = "Saved on this device only (sample mode).",
-    .submit = survey_submit,
-    .exit = survey_exit,
-    .idle_reset_s = 90,
-    .thanks_reset_s = 30,
-};
-
-static lv_obj_t *tour_selector;
-static void tour_selector_deleted(lv_event_t *e)
+/* EXPLORE's tour card: Tour A from its own start. */
+static void tour_open_cb(lv_event_t *e)
 {
     (void)e;
-    tour_selector = NULL;
-}
-static void tour_selector_close(void)
-{
-    if (tour_selector) lv_obj_delete(tour_selector);
-}
-static void tour_back_cb(lv_event_t *e)
-{
-    (void)e;
-    tour_selector_close();
-}
-static void tour_a_cb(lv_event_t *e)
-{
-    (void)e;
-    tour_selector_close();
-    ui_adventure_open(app_screen, experiment_closed, NULL);
-}
-static void tour_b_cb(lv_event_t *e)
-{
-    (void)e;
-    tour_selector_close();
-    ui_adventure_b_open(app_screen, experiment_closed, NULL);
-}
-static void adventure_open_cb(lv_event_t *e)
-{
-    (void)e;
-    if (tour_selector) return;
-    tour_selector = ui_tour_selector_create(app_screen, tour_a_cb, tour_b_cb,
-                                            tour_back_cb, tour_selector_deleted);
+    if (ui_adventure_is_open()) return;
+    ui_home_set_active(false);
+    ui_adventure_set_scene_cb(tour_scene_cb, NULL);
+    ui_adventure_open(app_screen, tour_closed, NULL);
 }
 
-static void survey_open_cb(lv_event_t *e)
+/* ---- Newton and Lincoln: the existing native scenes and their SD audio,
+ * now owned by exhibit_audio.c instead of the retired voice task. --------- */
+static void scene_closed(void)
 {
-    (void)e;
-    ui_survey_open(app_screen, &survey_cfg);
+    set_active_page(APP_PAGE_EXPLORE);
 }
 
-/* MUSIC: simulated - the mock answers, nothing reaches a laptop. */
-static ui_music_mock_t *music_mock;   /* PSRAM, only while MUSIC is open */
-
-static void music_exit(void *ctx)
-{
-    (void)ctx;
-    if (music_mock) {
-        ui_music_mock_stop(music_mock);
-    }
-    ui_music_close();
-    heap_caps_free(music_mock);
-    music_mock = NULL;
-    experiment_closed(NULL);
-}
-
-static void __attribute__((unused)) music_open_cb(lv_event_t *e)
-{
-    (void)e;
-    if (music_mock == NULL) {
-        music_mock = heap_caps_calloc(1, sizeof(*music_mock), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (music_mock == NULL) {
-            return;
-        }
-    }
-    ui_music_mock_init(music_mock);
-    ui_music_open(app_screen, &music_mock->view, ui_music_mock_command, music_exit, music_mock);
-}
-
-static lv_timer_t *audio_test_timer;
-static void audio_test_open_cb(lv_event_t *e);
 static lv_timer_t *newton_timer;
 static newton_scene_t newton_scene;
 static newton_saved_t newton_saved;
@@ -2124,7 +1355,7 @@ static void newton_action(ui_newton_action_t action,void *ctx)
             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-        audio_test_open_cb(NULL);
+        scene_closed();
     }
 }
 static void newton_open(void)
@@ -2188,7 +1419,7 @@ static void lincoln_action(ui_lincoln_event_t event,void *ctx)
         lincoln_timer=NULL;ui_lincoln_close();
         ESP_LOGI(TAG,"Lincoln exit: internal=%u largest=%u PSRAM=%u",(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),(unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-        audio_test_open_cb(NULL);
+        scene_closed();
     }
 }
 static void lincoln_open(void)
@@ -2204,34 +1435,23 @@ static void lincoln_open(void)
     ESP_LOGI(TAG,"Lincoln draft open: internal=%u largest=%u PSRAM=%u",(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),(unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 }
-static void audio_test_poll(lv_timer_t *timer)
+/* EXPLORE cards. The scene opens even if the speaker is busy for a moment:
+ * its own status line says "SD unavailable" / "busy" exactly as before. */
+static void newton_card_cb(lv_event_t *e)
 {
-    (void)timer;
-    ui_audio_test_view_t view={.message="Choose a scene"};ui_audio_test_update(&view);
-}
-static void audio_test_action(ui_audio_action_t action,void *ctx)
-{
-    (void)ctx;
-    if(action==UI_AUDIO_GARDEN||action==UI_AUDIO_LINCOLN){
-        bool accepted=action==UI_AUDIO_GARDEN?voice_control_request_audio_test():voice_control_request_lincoln();
-        if(!accepted){ui_audio_test_view_t view={.message="Audio busy - try again shortly"};ui_audio_test_update(&view);return;}
-        if(audio_test_timer)lv_timer_delete(audio_test_timer);
-        audio_test_timer=NULL;ui_audio_test_close();
-        if(action==UI_AUDIO_GARDEN)newton_open();else lincoln_open();
-    } else if(action==UI_AUDIO_BACK){
-        if(audio_test_timer)lv_timer_delete(audio_test_timer);
-        audio_test_timer=NULL;ui_audio_test_close();experiment_closed(NULL);
-    }
-}
-static void audio_test_open_cb(lv_event_t *e)
-{
-    (void)e;if(audio_test_timer)return;
-    ui_audio_test_open(app_screen,audio_test_action,NULL);
-    audio_test_timer=lv_timer_create(audio_test_poll,1000,NULL);audio_test_poll(NULL);
+    (void)e;
+    presence_engaged(&presence, lv_tick_get());
+    if (!exhibit_audio_request_scene(AUDIO_PROFILE_NEWTON)) audio_test_error("Audio busy - exit and retry");
+    newton_open();
 }
 
-/* The standalone Mouse and Face screens are retired. Shared HOME mouse and
- * notification/audio ownership remain in their existing modules. */
+static void lincoln_card_cb(lv_event_t *e)
+{
+    (void)e;
+    presence_engaged(&presence, lv_tick_get());
+    if (!exhibit_audio_request_scene(AUDIO_PROFILE_LINCOLN)) audio_test_error("Audio busy - exit and retry");
+    lincoln_open();
+}
 
 /* Asks the updater to fetch CLAWBOX's manifest now rather than waiting for
  * the next poll. It does NOT force an install - the device still installs
@@ -2241,47 +1461,6 @@ static void firmware_check_button_cb(lv_event_t *e)
 {
     (void)e;
     ota_service_request_check();
-}
-
-/* A tapped command tile. The command id rides in the event user data rather
- * than being looked up from the button, so the grid can be reordered without
- * this needing to know. */
-static void cmd_tile_cb(lv_event_t *e)
-{
-    voice_command_id_t id = (voice_command_id_t)(intptr_t)lv_event_get_user_data(e);
-    voice_control_manual_command(id);
-}
-
-static void talk_button_cb(lv_event_t *e)
-{
-    voice_control_manual_wake();
-}
-
-/* SEND control on the shared SEND/NOTE/GO recording overlay (Mission 13,
- * relabeled from STOP - see the button's own on-screen text). Calls
- * straight into audio_capture.c - no reason to route through
- * voice_control.c, which is already just polling audio_capture_get_status()
- * waiting for this to take effect. Harmless if pressed outside RECORDING
- * (see audio_capture_stop()'s doc comment). */
-static void recording_stop_button_cb(lv_event_t *e)
-{
-    audio_capture_stop();
-}
-
-/* CANCEL control on the shared SEND/NOTE/GO recording overlay - discards
- * the recording instead of sending it, see audio_capture_cancel()'s doc
- * comment. Same "call straight into audio_capture.c" shape as SEND above. */
-static void recording_cancel_button_cb(lv_event_t *e)
-{
-    audio_capture_cancel();
-}
-
-/* STOP control on the notification-playback overlay - same "call straight
- * into the owning module, harmless if pressed outside PLAYING" shape as
- * recording_stop_button_cb above. */
-static void notification_stop_button_cb(lv_event_t *e)
-{
-    audio_playback_stop();
 }
 
 /* ---- Telemetry: 1 Hz timer, UI-only, no serial log spam --------------
@@ -2379,134 +1558,62 @@ static void refresh_diag_page(void)
     ui_diagnostics_apply(&diag_page, &v);
 }
 
-/* MESSAGES card stack: notification_client's snapshot (count, front id and
- * its text) plus this boot's outcomes. */
-static void refresh_notify_page(void)
-{
-    if (ui == NULL || ui->notify.card == NULL) {
-        return;
-    }
-    ui_notify_done_t *done = ui->notify_done;   /* PSRAM; borrowed by the page until the next apply */
-    notification_status_t nst;
-    notification_client_get_status(&nst);
-    if (notify_front_text) {
-        notification_client_get_text(notify_front_text, NOTIFICATION_TEXT_LEN);
-    }
-    backend_health_status_t bh;
-    backend_health_get_status(&bh);
-    for (int i = 0; i < notify_history_used && notify_history; i++) {
-        done[i].outcome = notify_history[i].outcome;
-        done[i].uptime_s = notify_history[i].uptime_s;
-        done[i].text = notify_history[i].has_text ? notify_history[i].text : NULL;
-        done[i].reason = notify_history[i].reason[0] ? notify_history[i].reason : NULL;
-    }
-    ui_notify_view_t v = {
-        .link = !nst.polled ? UI_NOTIFY_LINK_UNKNOWN
-              : bh.state == BACKEND_HEALTH_OK ? UI_NOTIFY_LINK_OK
-              : bh.state == BACKEND_HEALTH_NO_NETWORK ? UI_NOTIFY_LINK_NO_NET
-              : bh.state == BACKEND_HEALTH_DOWN ? UI_NOTIFY_LINK_DOWN : UI_NOTIFY_LINK_UNKNOWN,
-        .pending = nst.pending ? nst.count : 0,
-        .front_text = nst.text_state == 1 && notify_front_text && notify_front_text[0] ? notify_front_text : NULL,
-        .front_text_failed = nst.text_state == 2,
-        .done = done,
-        .done_count = notify_history_used,
-        .now_s = (uint32_t)(esp_timer_get_time() / 1000000ULL),
-    };
-    ui_notify_apply(&ui->notify, &v);
-}
+/* ---- HOME: the guide, the van and the radar welcome ------------------ */
 
-/* ---- Weather (1.3.0): weather_client snapshot -> HOME ----------------
- * Checked once a second from telemetry_timer_cb, redrawn only when something
- * visible changes: a new answer, the data crossing the "old" line, or the
- * reason there is no data. Thirty minutes is three missed polls - one late
- * answer is normal, three in a row means the numbers on screen deserve a
- * timestamp. */
-#define WEATHER_STALE_S (30 * 60)
-
+/* The mouse: its written guide always opens (ui_home.c); this adds the spoken
+ * guide if the SD card has it. A tap is also "someone is already here". */
 static void home_intro_cb(lv_event_t *e)
 {
     (void)e;
-    ui_home_intro_audio_result(voice_control_request_mouse_intro());
+    presence_engaged(&presence, lv_tick_get());
+    if (!exhibit_audio_play_clip("guide")) log_event(EVT_AUDIO, "GUIDE CLIP BUSY");
 }
-static void home_tour_return(void *ctx)
-{
-    (void)ctx;
-    set_active_page(APP_PAGE_HOME);
-}
+
+/* The van has driven off HOME: continue in Tour A's own Egypt scene. */
 static void home_start_tour_cb(lv_event_t *e)
 {
     (void)e;
+    presence_engaged(&presence, lv_tick_get());
     if (ui_adventure_is_open()) return;
     ui_home_set_active(false);
-    ui_adventure_open(app_screen, home_tour_return, NULL);
+    ui_adventure_set_scene_cb(tour_scene_cb, NULL);
+    ui_adventure_open(app_screen, tour_closed, NULL);
     ui_adventure_seek(ADVENTURE_EGYPT);
 }
 
-static void render_weather(void)
+/* Radar: 100 ms poll of the AT581X output, fed to presence_logic. The welcome
+ * only fires on an idle HOME (no guide open, van parked, no tour/scene over it);
+ * a ready visitor waits in CANDIDATE until then. Any touch elsewhere counts as
+ * engaged (menu_button_cb, the cards, the mouse, the van). */
+static void radar_timer_cb(lv_timer_t *t)
 {
-    static uint32_t shown_seq = UINT32_MAX;
-    static uint32_t manual_ok, manual_fail;
-    static int shown_mode = -1;   /* 0 loading, 1 no weather, 2 fresh, 3 stale */
-
-    weather_status_t w;
-    weather_client_get(&w);
-    bool manual_changed = w.manual_success != manual_ok;
-    if (manual_changed) manual_ok=w.manual_success;
-    if (w.manual_failure != manual_fail) { manual_fail=w.manual_failure; ui_mouse_home_refresh_result(false); }
-    int mode;
-    if (w.valid) {
-        mode = w.age_s > WEATHER_STALE_S ? 3 : 2;
-    } else {
-        backend_health_status_t bh;
-        backend_health_get_status(&bh);
-        mode = (bh.state == BACKEND_HEALTH_DOWN || bh.state == BACKEND_HEALTH_NO_NETWORK) ? 1 : 0;
+    (void)t;
+    uint32_t now = lv_tick_get();
+    bool detected = radar_presence_poll(now);
+    ui_home_state_t hs = ui_home_state();
+    bool idle_home = current_app_page == APP_PAGE_HOME && !ui_adventure_is_open() && newton_timer == NULL &&
+                     lincoln_timer == NULL && hs.active && !hs.intro_open && !hs.van_running && !hs.menu_open;
+    if (presence_sample(&presence, detected, idle_home, now)) {
+        log_event(EVT_SENSOR, "RADAR WELCOME");
+        ui_home_show_welcome();
+        if (!exhibit_audio_play_clip("welcome")) log_event(EVT_AUDIO, "WELCOME CLIP BUSY");
     }
-    if (mode == shown_mode && w.seq == shown_seq && !weather_force_update) {
-        return;
-    }
-    /* A freshness-only change is not another weather snapshot. Revisit it
-     * after the active sequence completes instead of queuing a duplicate. */
-    if (ui_home_weather_stage_running() && w.seq == shown_seq) return;
-    shown_mode = mode;
-    shown_seq = w.seq;
-
-    ui_home_weather_t v = {
-        .valid = w.valid,
-        .status = mode == 1 ? "No weather" : "Loading weather",
-        .location = w.valid ? w.location : NULL,
-        .stale_as_of = mode == 3 ? w.as_of : NULL,
-        .now_temp = w.now_temp,
-        .now_icon = w.now_icon,
-        .now_text = w.now_text,
-        .now_rain = w.now_rain,
-        .tmrw_hi = w.tmrw_hi,
-        .tmrw_lo = w.tmrw_lo,
-        .tmrw_icon = w.tmrw_icon,
-        .tmrw_rain = w.tmrw_rain,
-    };
-    for (int i = 0; i < UI_HOME_SLOTS && i < WEATHER_SLOTS; i++) {
-        v.slot[i].label = w.slot[i].label;
-        v.slot[i].temp = w.slot[i].temp;
-        v.slot[i].icon = w.slot[i].icon;
-        v.slot[i].rain = w.slot[i].rain;
-    }
-    weather_force_update=false;
-    ui_weather_page_apply_weather(&weather_ui, &v);
-    /* A reply received after leaving HOME must not start a paused animation
-     * and strand the displayed data until the user returns. */
-    bool home_visible = page_home && lv_obj_is_visible(page_home);
-    if (home_visible && w.valid && (manual_changed || ui_home_weather_stage_running())) {
-        bool started = ui_home_weather_stage_offer(&w);
-        if (started) ui_mouse_home_refresh_result(true);
-        return;
-    }
-    if (ui_home_weather_stage_running()) ui_home_weather_stage_cancel();
-    ui_home_apply_weather(&home_ui, &v);
 }
 
 static void telemetry_timer_cb(lv_timer_t *t)
 {
-    render_weather();
+    (void)t;
+    /* Clip outcomes (played / no SD / file missing) become Black Box lines. */
+    static uint32_t clip_done, clip_failed;
+    exhibit_audio_status_t as;
+    exhibit_audio_get_status(&as);
+    if (as.clip_done_seq != clip_done || as.clip_failed_seq != clip_failed) {
+        clip_done = as.clip_done_seq;
+        clip_failed = as.clip_failed_seq;
+        char m[EVENT_MSG_LEN];
+        strlcpy(m, as.message, sizeof(m));
+        log_event(EVT_AUDIO, m);
+    }
 
     /* Only while it is on screen - this runs every second regardless of page,
      * and redrawing five hidden labels is work nobody sees. */
@@ -2518,9 +1625,6 @@ static void telemetry_timer_cb(lv_timer_t *t)
     }
 
     uint32_t uptime_s = (uint32_t)(esp_timer_get_time() / 1000000ULL);
-    if (page_notify != NULL && !lv_obj_has_flag(page_notify, LV_OBJ_FLAG_HIDDEN)) {
-        refresh_notify_page();   /* "4 min ago" and the queue move on their own */
-    }
 
     diag_tick();
     diag_report_schedule(uptime_s);
@@ -2586,7 +1690,6 @@ static void sensor_timer_cb(lv_timer_t *t)
         if (ui) {
             ui_sensors_push(&ui->sens, UI_SENS_ACCEL, sens_accel_x100);
         }
-        accel_samples_push(accel_snapshot);
         if (sensor_status == SRC_UNKNOWN) {
             sensor_status = SRC_CURRENT;
             log_sensor_event("FIRST DATA");
@@ -2777,142 +1880,64 @@ void status_deck_ui(lv_obj_t *scr)
              reset_reason_str(blackbox.prev_reset_reason), blackbox.last_significant_cmd,
              blackbox.last_fault[0] ? blackbox.last_fault : "(none)");
 
-    /* Mission 14: three pages (320 x 180, TOP_LEFT at 0,0 - same origin
-     * `scr` itself used before) stacked in the same area above the nav bar,
-     * only one visible at a time via set_active_page(). Borderless/
-     * transparent so their contents look exactly as they did floating
-     * directly on `scr` before this split. 180 matches the nav bar's own
-     * geometry below (56 tall, BOTTOM_MID -4 => top edge at 240-4-56 =
-     * 180), so pages and nav bar meet with no gap or overlap. */
+    /* Every page is a full-screen container, one visible at a time via
+     * set_active_page(); the "< ..." back key floats on top of all but HOME. */
     lv_obj_t *pages_init[APP_PAGE_COUNT];
     for (int i = 0; i < APP_PAGE_COUNT; i++) {
-        /* Full screen. The corner buttons float on top; each page is
-         * responsible for keeping its own content clear of them. */
         pages_init[i] = ui_page_create(scr);
     }
     page_home = pages_init[APP_PAGE_HOME];
     page_sens = pages_init[APP_PAGE_SENS];
     page_log = pages_init[APP_PAGE_LOG];
-    page_projects = pages_init[APP_PAGE_PROJECTS];
-    page_firmware = pages_init[APP_PAGE_FIRMWARE];
     page_set = pages_init[APP_PAGE_SET];
-    page_menu = pages_init[APP_PAGE_MENU];
+    page_firmware = pages_init[APP_PAGE_FIRMWARE];
+    page_explore = pages_init[APP_PAGE_EXPLORE];
     page_diag = pages_init[APP_PAGE_DIAG];
-    page_more = pages_init[APP_PAGE_MORE];
-    page_notify = pages_init[APP_PAGE_NOTIFY];
-    page_more3 = pages_init[APP_PAGE_MORE3];
-    page_weather = pages_init[APP_PAGE_WEATHER];
+    page_workshop = pages_init[APP_PAGE_WORKSHOP];
     app_screen = scr;
-    notify_history = heap_caps_calloc(NOTIFY_HISTORY_LEN, sizeof(notify_done_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    notify_front_text = heap_caps_calloc(1, NOTIFICATION_TEXT_LEN, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    notify_playing_text = heap_caps_calloc(1, NOTIFICATION_TEXT_LEN, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
     /* 1.3.0 dark look: black behind everything (ui_theme.h). */
     lv_obj_set_style_bg_color(scr, UI_BG, 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
-    /* ---- HOME: weather, the microphone, MENU (1.3.0) ------------------ */
-
-    /* The microphone still shows whether the workstation is listening and
-     * reachable, and is still the TALK button - now a quarter of the screen
-     * beside Orlando's weather. See ui_home.c. */
-    /* House is Home; mouse owns the existing introduction audio request. */
-    ui_home_build(&home_ui, page_home, talk_button_cb, menu_button_cb);
+    /* ---- HOME: the Orlando scene. House = EXPLORE, mouse = guide, van =
+     * Tour A at Egypt (ui_home.c). No microphone in the exhibit build. */
+    ui_home_build(&home_ui, page_home, NULL, menu_button_cb);
     ui_home_set_actions(home_nav_button_cb, home_start_tour_cb, home_intro_cb);
-    voice_widget = home_ui.mic;
 
-    /* ---- MENU: every other page, one tap from HOME -------------------- */
+    /* ---- EXPLORE: the main menu, as picture cards (ui_menu_build_pictures,
+     * the illustrated menu from 1.5.3+19381ab). WORKSHOP sits in the title
+     * band so the three exhibit cards keep their full size. */
+    const ui_menu_picture_item_t pictures[] = {
+        { "Tour", ui_adventure_original_asset(TOUR_ASSET_VAN, 0), 320, tour_open_cb },
+        /* The scenes' own native figures (idle Newton, Lincoln's first pose). */
+        { "Newton", newton_art_get()->person[0].images[0], 384, newton_card_cb },
+        { "Lincoln", lincoln_art_get()->actor[0], 384, lincoln_card_cb },
+    };
+    static const ui_menu_item_t workshop_key = { "TOOLS " LV_SYMBOL_RIGHT, workshop_nav_button_cb };
+    ui_menu_build_pictures(page_explore, "EXPLORE", pictures, (int)(sizeof(pictures) / sizeof(pictures[0])),
+                           &workshop_key);
 
-    static const ui_menu_item_t menu_items[] = {
+    /* ---- WORKSHOP: the maintenance pages, big text keys. */
+    static const ui_menu_item_t workshop_items[] = {
         { "SENSORS", sens_nav_button_cb },
         { "LOG", log_nav_button_cb },
-        { "PROJECTS", projects_nav_button_cb },
         { "FIRMWARE", firmware_nav_button_cb },
         { "SETTINGS", set_nav_button_cb },
         /* "DIAGNOSTICS" at 20 px fills a 151 px button edge to edge; the
          * page itself carries the full title. */
         { "DIAG", diag_nav_button_cb },
     };
-    static const ui_menu_item_t more_key = { "MORE " LV_SYMBOL_RIGHT, more_nav_button_cb };
-    ui_menu_build(page_menu, "MENU", menu_items, (int)(sizeof(menu_items) / sizeof(menu_items[0])), &more_key);
-
-    /* UI suite: the second page - the card stack and three experiments. */
-    static const ui_menu_item_t more_items[] = {
-        { "AUDIO TEST", audio_test_open_cb },
-        { "SURVEY", survey_open_cb },
-        { "ADVENTURE", adventure_open_cb },
-    };
-    static const ui_menu_item_t menu_key = { "NEXT " LV_SYMBOL_RIGHT, more3_nav_button_cb };
-    ui_menu_build(page_more, "MORE", more_items, (int)(sizeof(more_items) / sizeof(more_items[0])), &menu_key);
-    const ui_menu_picture_item_t pictures[] = {
-        { "Weather", weather_icon("partly",true), 320, weather_nav_button_cb },
-        { "Adventure", ui_adventure_original_asset(TOUR_ASSET_VAN,0), 320, adventure_open_cb },
-    };
-    ui_menu_build_pictures(page_more3,"EXPLORE",pictures,(int)(sizeof(pictures)/sizeof(pictures[0])),NULL);
-    ui_weather_page_build(&weather_ui,page_weather,talk_button_cb,more3_nav_button_cb);
-
-
-    static const ui_notify_actions_t notify_actions = { notify_play_cb };
-    (void)notify_actions; /* Messages screen retired; notification playback stays. */
+    ui_menu_build(page_workshop, "TOOLS", workshop_items, (int)(sizeof(workshop_items) / sizeof(workshop_items[0])),
+                  NULL);
 
     /* ---- SETTINGS (UI suite, ui_settings.c): Hazard Industrial blocks ---- */
 
     static const ui_settings_actions_t settings_actions = {
-        volume_down_button_cb, volume_up_button_cb, recording_repo_prev_cb, recording_repo_next_cb,
-        projects_nav_button_cb, firmware_nav_button_cb,
+        volume_down_button_cb, volume_up_button_cb, radar_reach_down_cb, radar_reach_up_cb,
+        sens_nav_button_cb, firmware_nav_button_cb,
     };
     ui_settings_build(&ui->settings, page_set, &settings_actions);
-
-    /* ---- PROJECTS: browse the AI-OS list, and read the cues ----------- */
-
-    /* This page exists because the cue had nowhere honest to live. It was a
-     * toast on the recording overlay, which meant it could only be read while
-     * a capture was running, and it covered the counter to do it. Here it is
-     * just shown - no tap, no timer, no overlap.
-     *
-     * The selection is the same one NOTE uses, so choosing here is choosing
-     * for the next NOTE. That is the point: pick the project while you are
-     * thinking about it, not while you are trying to talk.
-     *
-     *    y  58..126   the selector: < LABEL >
-     *    y 132..206   the cue for whatever is selected
-     */
-    ui_page_title(page_projects, "PROJECTS");
-
-    lv_obj_t *proj_ctrl = ui_page_panel(page_projects, 58, 68);
-
-    lv_obj_t *proj_prev = lv_btn_create(proj_ctrl);
-    lv_obj_set_size(proj_prev, 56, 56);
-    lv_obj_align(proj_prev, LV_ALIGN_LEFT_MID, 6, 0);
-    lv_obj_add_event_cb(proj_prev, project_down_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *proj_prev_label = lv_label_create(proj_prev);
-    lv_label_set_text(proj_prev_label, "<");
-    lv_obj_set_style_text_font(proj_prev_label, &lv_font_montserrat_32, 0);
-    lv_obj_center(proj_prev_label);
-
-    projects_page_label = lv_label_create(proj_ctrl);
-    lv_obj_set_style_text_font(projects_page_label, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(projects_page_label, lv_color_white(), 0);
-    lv_obj_align(projects_page_label, LV_ALIGN_CENTER, 0, 0);
-    lv_label_set_text(projects_page_label, "...");
-
-    lv_obj_t *proj_next = lv_btn_create(proj_ctrl);
-    lv_obj_set_size(proj_next, 56, 56);
-    lv_obj_align(proj_next, LV_ALIGN_RIGHT_MID, -6, 0);
-    lv_obj_add_event_cb(proj_next, project_up_button_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *proj_next_label = lv_label_create(proj_next);
-    lv_label_set_text(proj_next_label, ">");
-    lv_obj_set_style_text_font(proj_next_label, &lv_font_montserrat_32, 0);
-    lv_obj_center(proj_next_label);
-
-    lv_obj_t *cue_panel = ui_page_panel(page_projects, 132, 74);
-    projects_page_cue = lv_label_create(cue_panel);
-    lv_label_set_long_mode(projects_page_cue, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(projects_page_cue, 284);
-    lv_obj_set_style_text_align(projects_page_cue, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(projects_page_cue, &lv_font_montserrat_14, 0);
-    lv_obj_center(projects_page_cue);
-    lv_label_set_text(projects_page_cue, "");
 
     /* ---- FIRMWARE: what is running, and what the updater is doing ------ */
 
@@ -2955,168 +1980,39 @@ void status_deck_ui(lv_obj_t *scr)
         lv_obj_align(disp->perf_label, LV_ALIGN_TOP_RIGHT, 0, 0);
     }
 
-    /* ---- Nav bar: HOME/SENS/LOG/TALK, always on screen, own row on `scr`
-     * (not inside any page) - same size/position the old NET/SND/REC/CLR
-     * row used, so the overlays below (already sized to cover it) still
-     * cover exactly the same area. */
     /* 1.3.0: one "< HOME" button where the HOME corner always was - see
-     * ui_back_button_create(). MENU on HOME replaced the other three. */
+     * ui_back_button_create(). Its label follows the page (set_active_page). */
     back_button = ui_back_button_create(scr, back_nav_cb);
-
-    /* Command Window overlay (Mission 12): full-screen, built last so it
-     * naturally sits on top of the dashboard - render_command_overlay also
-     * calls lv_obj_move_foreground on every show, so this ordering isn't
-     * load-bearing on its own, just tidy. Hidden by default: LISTENING
-     * (the plain dashboard) is the normal state, this only appears for the
-     * ~10s command window plus its brief result/timeout indication. */
-    cmd_overlay = lv_obj_create(scr);
-    lv_obj_set_size(cmd_overlay, 320, 240);
-    lv_obj_align(cmd_overlay, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_set_style_bg_color(cmd_overlay, lv_palette_darken(LV_PALETTE_BLUE_GREY, 4), 0);
-    lv_obj_set_style_bg_opa(cmd_overlay, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(cmd_overlay, 0, 0);
-    lv_obj_set_style_border_width(cmd_overlay, 0, 0);
-    lv_obj_set_style_pad_all(cmd_overlay, 8, 0);
-    lv_obj_clear_flag(cmd_overlay, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(cmd_overlay, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_t *cmd_title = lv_label_create(cmd_overlay);
-    lv_label_set_text(cmd_title, "COMMAND");
-    lv_obj_set_style_text_font(cmd_title, &lv_font_montserrat_20, 0);
-    lv_obj_align(cmd_title, LV_ALIGN_TOP_MID, 0, 4);
-
-    /* 2 columns x 2 rows (SEND/NOTE, GO/YES) via flex wrap. Two 140px
-     * buttons plus an 8px gap is 288px, inside the 304px usable width.
-     *
-     * Grown for issue #13 - 140x74 buttons in a 296x158 grid, command word
-     * at montserrat_20, up from 136x56 in 288x120 at the default 14. Two
-     * rows of 74 plus the 8px gap is 156, so the grid still clears
-     * cmd_status_label along the bottom of the 240px overlay.
-     *
-     * Not clickable: clearing LV_OBJ_FLAG_CLICKABLE means a stray tap
-     * cannot be confused with a real MultiNet recognition highlight. */
-    lv_obj_t *cmd_grid = lv_obj_create(cmd_overlay);
-    lv_obj_set_size(cmd_grid, 296, 158);
-    lv_obj_align(cmd_grid, LV_ALIGN_TOP_MID, 0, 30);
-    lv_obj_set_style_pad_all(cmd_grid, 0, 0);
-    lv_obj_set_style_pad_row(cmd_grid, 8, 0);
-    lv_obj_set_style_pad_column(cmd_grid, 8, 0);
-    lv_obj_set_style_bg_opa(cmd_grid, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(cmd_grid, 0, 0);
-    lv_obj_clear_flag(cmd_grid, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(cmd_grid, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(cmd_grid, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    for (int i = 0; i < VOICE_COMMAND_COUNT; i++) {
-        lv_obj_t *btn = lv_btn_create(cmd_grid);
-        lv_obj_set_size(btn, 140, 74);
-        /* Tappable now. These were deliberately non-clickable when the
-         * command window was new, so a stray touch could not be mistaken
-         * for a MultiNet hit - the right call then, but it left this as the
-         * one screen that ignores touch entirely, which reads as broken.
-         *
-         * The tap does not run anything here: it raises a flag that
-         * detect_task consumes and dispatches exactly as it would a spoken
-         * word, because the mic handoff must not happen on the LVGL task. */
-        lv_obj_add_event_cb(btn, cmd_tile_cb, LV_EVENT_CLICKED,
-                            (void *)(intptr_t)cmd_defs[i].id);
-        lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_style_bg_color(btn, CMD_BTN_INACTIVE_BG, 0);
-        lv_obj_set_style_border_width(btn, 2, 0);
-        lv_obj_set_style_border_color(btn, lv_palette_main(LV_PALETTE_GREY), 0);
-        lv_obj_set_style_pad_all(btn, 4, 0);
-        lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-        lv_obj_t *btn_label = lv_label_create(btn);
-        lv_label_set_text(btn_label, cmd_defs[i].label);
-        /* Issue #13, in Mike's own words captured through GO: "they should
-         * be bigger so that I can see them better." 20 was still too small
-         * on the device - at montserrat_32 a four-letter word nearly fills
-         * the 140px tile, which is the intent. The hint under it stays at
-         * 12: it is a reminder, read once, not from across the room. */
-        lv_obj_set_style_text_font(btn_label, &lv_font_montserrat_32, 0);
-
-        lv_obj_t *btn_hint = lv_label_create(btn);
-        lv_label_set_text(btn_hint, cmd_defs[i].hint);
-        lv_obj_set_style_text_font(btn_hint, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(btn_hint, lv_palette_lighten(LV_PALETTE_GREY, 2), 0);
-
-        cmd_buttons[i] = btn;
-    }
-
-    /* Countdown while COMMAND_WINDOW is open ("Listening... 10" ... "...1"),
-     * then briefly replaced with the recognized word / TIMEOUT /
-     * UNRECOGNIZED - see render_command_overlay(). */
-    cmd_status_label = lv_label_create(cmd_overlay);
-    lv_label_set_text(cmd_status_label, "");
-    lv_obj_align(cmd_status_label, LV_ALIGN_BOTTOM_MID, 0, -8);
-
-    /* SEND/NOTE/GO recording overlay (UI suite, ui_recording.c): the timer,
-     * a health rail, CANCEL/SEND and the project/repository chooser. */
-    static const ui_rec_actions_t rec_actions = {
-        recording_cancel_button_cb, recording_stop_button_cb, rec_sel_prev_cb, rec_sel_next_cb,
-    };
-    ui_recording_build(&ui->rec, scr, &rec_actions);
-
-    /* Notification playback overlay (UI suite, ui_notify.c). */
-    ui_notify_overlay_build(&ui->notif, scr, notification_stop_button_cb);
 
     render_event_log();
 
     live_data_deck_init();
     humiture_deck_init();
+    /* After humiture_deck_init: the BSP has created the dock I2C bus by now. */
+    radar_presence_init();
+    {
+        radar_status_t rs;
+        radar_presence_get(&rs);
+        presence_init(&presence, (presence_params_t){ .dwell_ms = rs.dwell_ms, .rearm_ms = rs.rearm_ms });
+        log_sensor_event(rs.present ? "RADAR INIT" : "RADAR NOT FOUND");
+    }
 
     wifi_mgr_init(wifi_status_changed_cb, NULL);
 
-    /* 1.2.0: the report worker replaces the handshake worker here - the
-     * handshake is dormant (its SND button is now RPT), and its 6KB of
-     * internal stack pays for the report task's 5KB (6KB since 1.2.2). */
+    /* 1.2.0: the report worker replaces the handshake worker here. */
     report_client_init();
 
-    /* Mission 11: exactly one esp_codec_dev_handle_t for the ES7210 mic,
-     * created here and shared by audio_capture (bounded 4s capture) and
-     * voice_control (continuous WakeNet/MultiNet listening) - see both
-     * modules' Mission 11 comments for why a second
-     * bsp_audio_codec_microphone_init() call would create a second handle
-     * fighting the first over the same physical codec. NULL is a real,
-     * handled outcome for both (audio_capture logs MIC INIT FAILED and
-     * audio_capture_start() no-ops forever; voice_control reports
-     * VOICE_STATE_DEGRADED), not an unchecked assumption. */
-    esp_codec_dev_handle_t mic_dev = bsp_audio_codec_microphone_init();
-    if (!mic_dev) {
-        ESP_LOGE(TAG, "bsp_audio_codec_microphone_init failed - mic unavailable this boot");
-    }
-
-    audio_capture_init(mic_dev, audio_status_changed_cb, NULL);
-
-    /* Speaker path, new alongside the long-standing mic path above: a
-     * separate physical codec (ES8311, not the mic's ES7210), so this is an
-     * independent bsp_audio_codec_speaker_init() call, not a second handle
-     * fighting over the mic. NULL is handled the same way a missing mic_dev
-     * is - audio_playback_play() logs and no-ops forever, nothing else is
-     * affected. */
+    /* Speaker only: the ES8311 codec (the ES7210 microphone is not opened in
+     * the exhibit build). NULL is handled - playback logs and no-ops. */
     esp_codec_dev_handle_t spk_dev = bsp_audio_codec_speaker_init();
     if (!spk_dev) {
-        ESP_LOGE(TAG, "bsp_audio_codec_speaker_init failed - notification playback unavailable this boot");
+        ESP_LOGE(TAG, "bsp_audio_codec_speaker_init failed - speech unavailable this boot");
     }
     audio_playback_init(spk_dev);
-    notification_client_init();
-    remote_client_init();
+    exhibit_audio_init();
     /* After wifi_mgr_init above - the poll task reads wifi_mgr_get_status()
      * to avoid calling a backend it has no route to. */
     backend_health_init(backend_event_cb, NULL);
-    /* Also after wifi_mgr_init - it waits for ONLINE before its first fetch,
-     * and stops once the catalog loads. */
-    backend_catalog_init();
-    /* 1.3.0: PSRAM-stack task; waits for the first OTA check before it
-     * fetches anything (weather_client.h). */
-    weather_client_init();
-
-    render_command_overlay();
-    render_recording_overlay();
-    render_notification_overlay();
-    voice_control_init(mic_dev, voice_status_changed_cb, NULL);
 
     lv_timer_create(telemetry_timer_cb, 1000, NULL);
     lv_timer_create(sensor_timer_cb, SENSOR_ACQUIRE_PERIOD_MS, NULL);
@@ -3125,13 +2021,9 @@ void status_deck_ui(lv_obj_t *scr)
      * not the IMU's 100ms cadence - fast enough for a readable RETRY_WAIT
      * countdown without a dedicated fast timer. */
     lv_timer_create(wifi_ui_timer_cb, 500, NULL);
-    lv_timer_create(handshake_ui_timer_cb, 300, NULL);
-    /* 200ms: see the audio_ui_timer_cb comment above for why this is
-     * faster than Handshake's 300ms. */
-    lv_timer_create(audio_ui_timer_cb, 200, NULL);
-    /* Same 200ms cadence as Audio Capture Deck - see voice_ui_timer_cb's
-     * comment. */
-    lv_timer_create(voice_ui_timer_cb, 200, NULL);
+    lv_timer_create(report_ui_timer_cb, 300, NULL);
+    /* 100 ms: the AT581X output is a level, held ~1 s per detection. */
+    lv_timer_create(radar_timer_cb, 100, NULL);
 
     /* Boots on HOME - hides SENS/LOG and sets the nav bar's initial
      * highlight, same as set_active_page does on every later press. */

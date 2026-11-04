@@ -1,5 +1,7 @@
-/* Architecture Adventure A — visual-only, native Pixelorama artwork.
- * Independent simulator module. No microphone, audio, network or OTA calls.
+/* Architecture Adventure A — native Pixelorama artwork.
+ * Independent simulator module. No microphone, audio, network or OTA calls:
+ * narration is the app's job, told which scene is showing via the scene
+ * callback (ui_adventure_set_scene_cb).
  * Background panels are exported natively and assembled at exact 1:1 scale.
  */
 #include "ui_adventure.h"
@@ -28,6 +30,10 @@ static struct {
  bool touch_seen;
 } a;
 static lv_image_dsc_t mouse_frames[6];
+/* Outside `a` on purpose: ui_adventure_open() clears `a`. */
+static void (*scene_cb)(adventure_scene_t, void *);
+static void *scene_cb_ctx;
+void ui_adventure_set_scene_cb(void (*cb)(adventure_scene_t scene, void *ctx), void *ctx) { scene_cb=cb;scene_cb_ctx=ctx; }
 static const char *titles[ADVENTURE_SCENE_COUNT]={
  "A LITTLE ADVENTURE","MEET YOUR GUIDE","ALL ABOARD","THROUGH TIME",
  "EGYPT / THE PYRAMIDS","EGYPT / BUILDING IN STONE","A FRIENDLY SURPRISE",
@@ -92,6 +98,7 @@ void ui_adventure_close(void) {
 void ui_adventure_seek(adventure_scene_t scene) {
  if(!a.root || scene<0 || scene>=ADVENTURE_SCENE_COUNT)return;
  a.scene=scene;a.started=lv_tick_get();a.ticks=0;a.intro_line=-1;show_scene();pose(0);
+ if(scene_cb)scene_cb(scene,scene_cb_ctx);
 }
 void ui_adventure_next(void) {
  if(!a.root)return;

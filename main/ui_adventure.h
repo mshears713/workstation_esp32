@@ -1,7 +1,8 @@
 #pragma once
 #include <stdbool.h>
 #include "lvgl.h"
-/* Visual-only tour: never calls voice_control, recording, networking or OTA. */
+/* Tour A: never calls audio, recording, networking or OTA itself. The app
+ * narrates through the scene callback. */
 typedef enum {
  ADVENTURE_HOME, ADVENTURE_INTRO, ADVENTURE_DEPART, ADVENTURE_PORTAL,
  ADVENTURE_EGYPT, ADVENTURE_EGYPT_STONE, ADVENTURE_MUMMY,
@@ -16,6 +17,9 @@ void ui_adventure_skip(void);
 void ui_adventure_seek(adventure_scene_t scene);
 adventure_scene_t ui_adventure_scene(void);
 bool ui_adventure_is_open(void);
+/* Called after every scene change (including the first HOME scene on open).
+ * Survives open/close; pass NULL to clear. */
+void ui_adventure_set_scene_cb(void (*cb)(adventure_scene_t scene, void *ctx), void *ctx);
 unsigned ui_adventure_timer_count(void);
 
 /* Reuse the original accepted art without copying or redrawing its pixels. */

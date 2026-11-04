@@ -16,13 +16,13 @@
  *              disagree; latency is labelled as the last probe's;
  *            - anything not OK sits in hazard tape (shape, not only colour);
  *            - keys are 50-60 px, square, yellow; a key that cannot move
- *              (volume at an end, repository list not loaded) goes outline-only;
+ *              (volume or radar reach at an end, no radar) goes outline-only;
  *            - uptime reads "5h 03m", not minutes:seconds.
  *
- *    y   2.. 54   [shell's < HOME]  PROJECTS >  FIRMWARE >
+ *    y   2.. 54   [shell's < TOOLS]  SENSORS >  FIRMWARE >
  *    y  58..120   API block | WI-FI block: caption, word, detail
  *    y 124..168   [-]  VOLUME 70 + ten cells  [+]
- *    y 172..216   [<]  GO FILES TO (GITHUB) name  [>]
+ *    y 172..216   [-]  RADAR REACH 6 / 10  [+]   (Artifacts & Instruments)
  *    y 222..238   hazard band: SETTINGS | UP 5h 03m
  */
 
@@ -157,7 +157,7 @@ void ui_settings_build(ui_settings_page_t *p, lv_obj_t *page, const ui_settings_
     lv_obj_set_style_bg_opa(page, LV_OPA_COVER, 0);
 
     /* Beside the shell's HOME key: the two places SETTINGS leads to. */
-    key(page, 102, 2, 104, 52, "PROJECTS " LV_SYMBOL_RIGHT, &lv_font_montserrat_14, false, a ? a->projects : NULL);
+    key(page, 102, 2, 104, 52, "SENSORS " LV_SYMBOL_RIGHT, &lv_font_montserrat_14, false, a ? a->sensors : NULL);
     key(page, 210, 2, 106, 52, "FIRMWARE " LV_SYMBOL_RIGHT, &lv_font_montserrat_14, false, a ? a->firmware : NULL);
 
     status_block(page, 4, "API", &p->api_tape, &p->api_block, &p->api_word, &p->api_detail);
@@ -177,16 +177,17 @@ void ui_settings_build(ui_settings_page_t *p, lv_obj_t *page, const ui_settings_
         lv_obj_set_style_bg_opa(p->vol_cells[i], LV_OPA_COVER, 0);
     }
 
-    p->repo_prev = key(page, 4, 172, 60, 44, LV_SYMBOL_LEFT, &lv_font_montserrat_20, true, a ? a->repo_prev : NULL);
-    p->repo_next = key(page, 256, 172, 60, 44, LV_SYMBOL_RIGHT, &lv_font_montserrat_20, true, a ? a->repo_next : NULL);
+    p->radar_down = key(page, 4, 172, 60, 44, LV_SYMBOL_MINUS, &lv_font_montserrat_20, true, a ? a->radar_down : NULL);
+    p->radar_up = key(page, 256, 172, 60, 44, LV_SYMBOL_PLUS, &lv_font_montserrat_20, true, a ? a->radar_up : NULL);
     lv_obj_t *rb = box(page, 68, 172, 184, 44);
     lv_obj_set_style_border_color(rb, HZ_YELLOW, 0);
     lv_obj_set_style_border_width(rb, 2, 0);
-    /* GitHub repositories for GO - not the AI-OS projects NOTE uses. */
-    lv_obj_t *rc = text(rb, "GO FILES TO (GITHUB)", &lv_font_montserrat_12, HZ_YELLOW);
+    /* How far the welcome radar reaches - a sensitivity level, to be
+     * measured in centimetres at the exhibit, not a calibrated distance. */
+    lv_obj_t *rc = text(rb, "RADAR REACH", &lv_font_montserrat_12, HZ_YELLOW);
     lv_obj_set_pos(rc, 8, 3);
-    p->repo_name = text(rb, "", &lv_font_montserrat_20, HZ_WHITE);
-    lv_obj_set_pos(p->repo_name, 8, 18);
+    p->radar_value = text(rb, "", &lv_font_montserrat_20, HZ_WHITE);
+    lv_obj_set_pos(p->radar_value, 8, 18);
 
     tape(page, 0, 222, 320, 18);
     lv_obj_t *bb = box(page, 56, 222, 208, 18);
@@ -270,26 +271,10 @@ void ui_settings_apply(ui_settings_page_t *p, const ui_settings_view_t *v)
     key_enable(p->vol_down, vol > 0);
     key_enable(p->vol_up, vol < 100);
 
-    /* Labels are <= 12 characters, but 12 wide ones do not fit at 20 px:
-     * step down to 14, and only then cut with dots. */
-    lv_label_set_long_mode(p->repo_name, LV_LABEL_LONG_MODE_CLIP);
-    lv_obj_set_width(p->repo_name, LV_SIZE_CONTENT);
-    lv_obj_set_style_text_font(p->repo_name, &lv_font_montserrat_20, 0);
-    lv_label_set_text(p->repo_name, v->repo ? v->repo : "...");
-    lv_obj_update_layout(p->repo_name);
-    if (lv_obj_get_width(p->repo_name) > 168) {
-        lv_obj_set_style_text_font(p->repo_name, &lv_font_montserrat_14, 0);
-        lv_obj_set_pos(p->repo_name, 8, 21);
-        lv_obj_update_layout(p->repo_name);
-        if (lv_obj_get_width(p->repo_name) > 168) {
-            lv_label_set_long_mode(p->repo_name, LV_LABEL_LONG_MODE_DOTS);
-            lv_obj_set_size(p->repo_name, 168, 16);
-        }
-    } else {
-        lv_obj_set_pos(p->repo_name, 8, 18);
-    }
-    key_enable(p->repo_prev, v->repo_count > 1);
-    key_enable(p->repo_next, v->repo_count > 1);
+    /* Radar reach: a level, not a distance (radar_presence.h). */
+    lv_label_set_text(p->radar_value, v->radar ? v->radar : "...");
+    key_enable(p->radar_down, v->radar_present && v->radar_reach > 1);
+    key_enable(p->radar_up, v->radar_present && v->radar_reach < 10);
 
     char up[16];
     ui_settings_fmt_uptime(v->uptime_s, up, sizeof(up));
