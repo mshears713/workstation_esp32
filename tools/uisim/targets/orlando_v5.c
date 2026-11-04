@@ -87,6 +87,7 @@ void ws_render(lv_obj_t *scr){
  else if(!strcmp(a,"guide2")){tap(148,190);tap(70,200);}
  else if(!strcmp(a,"guide"))tap(148,190);
  else if(!strcmp(a,"menu"))tap(280,217);
+ else if(!strcmp(a,"home"))tap(50,155);
  else if(!strcmp(a,"tour"))tap(260,175);
  else if(!strcmp(a,"all")){tap(270,70);tap(160,60);tap(55,85);}
  if(ws_fx_bool("test",false)){
