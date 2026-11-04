@@ -46,3 +46,10 @@ Mike's evolving taste lives in the AI-OS page **"Workstation UI — Design Prefe
 ## Host tests
 
 `tools/hosttest/run.sh` must print ALL PASS (report/diag code under ASan/UBSan).
+
+## This branch: `artifacts-instruments` (1.6.x exhibit build)
+
+A lean exhibit build: no microphone/voice pipeline, no PROJECTS/survey/weather/IR. `exhibit_audio.c` owns
+the speaker and SD card; `radar_presence.c` + `presence_logic.c` do the SENSOR-dock radar welcome. Read
+`doc/ARTIFACTS_INSTRUMENTS.md` before changing it. The HOME art is generated - edit
+`tools/artifacts_art/` and run `build_art.py`, never hand-edit `main/orlando_artifacts.h`.
