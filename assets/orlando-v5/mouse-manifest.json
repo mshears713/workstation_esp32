@@ -1,0 +1,34 @@
+{
+  "creation": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "77d66864cdd43b02fb641fc4cc85eb6a",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "fresh": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "ec891b31f9621eb98393cc950cc4c384",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "project": {
+    "actions": [
+      {
+        "end": 5,
+        "name": "walk",
+        "start": 0
+      }
+    ],
+    "frames": 6,
+    "height": 48,
+    "layers": [
+      "Layer 1",
+      "Fur and face",
+      "Scarf and detail"
+    ],
+    "width": 48
+  },
+  "atlas_sha256": "49e3edfb3d2b4d49fe98fd2ad8ddb6828129ca843d7389332a4e3112379ea3e4"
+}

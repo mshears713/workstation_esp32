@@ -8,6 +8,9 @@
 #include <math.h>
 #include "orlando_v3.h"
 #include "orlando_v4.h"
+#include "orlando_v5_background.h"
+#include "orlando_v5_mouse.h"
+#include "orlando_v5_crest.h"
 
 enum { ACT_HOME=1,ACT_TOUR,ACT_INTRO,ACT_WHEEL,ACT_CASTLE,ACT_COASTER,
        ACT_MENU,ACT_ALL,ACT_TALK,ACT_DISMISS,ACT_NEXT,ACT_CLOSE };
@@ -26,7 +29,7 @@ static void wheel_position(int angle) {
  lv_image_set_rotation(s.wheel,angle);
  for(int i=0;i<12;i++) {
   float a=(angle/10.0f+i*30)*0.0174532925f;
-  lv_obj_set_pos(s.cabins[i],266+(int)lroundf(35*cosf(a)),97+(int)lroundf(35*sinf(a)));
+  lv_obj_set_pos(s.cabins[i],266+(int)lroundf(26*cosf(a)),89+(int)lroundf(26*sinf(a)));
  }
 }
 static void visible(lv_obj_t *o,bool show) {
@@ -66,7 +69,7 @@ static void close_intro(void) {
  s.dialog=NULL;s.dialog_text=NULL;s.audio_hint=NULL;s.guide_nav=NULL;s.intro_dismissed=s.elapsed;
 }
 static const char *guide[]={
- "I'm your curious mouse guide!\nThe house brings you Home.\nThe van starts our first tour.\nMenu opens the other controls.",
+ "I'm your curious mouse guide!\nHome and Menu open controls.\nMore adventures are coming.\nTap me whenever you like.",
  "Tap the Eye to give it a spin.\nThe castle has two shy guests.\nTap the coaster to launch a car.\nTap me again whenever you like."
 };
 static void open_intro(lv_event_t *e) {
@@ -97,8 +100,9 @@ static void action(lv_event_t *e) {
  if(!s.active)return;
  if(s.dialog && id!=ACT_NEXT && id!=ACT_CLOSE)return;
  switch(id) {
- case ACT_HOME:reset_scene();if(s.home_cb)s.home_cb(e);break;
- case ACT_TOUR:reset_scene();if(s.tour_cb)s.tour_cb(e);break;
+ case ACT_HOME:
+  s.menu_open=true;visible(s.shade,true);visible(s.tray,true);lv_label_set_text(s.menu_label,"Close");break;
+ case ACT_TOUR:break; /* Next scene intentionally deferred. */
  case ACT_INTRO:open_intro(e);break;
  case ACT_WHEEL:close_menu();s.wheel_start=s.elapsed;s.wheel_base=s.wheel_angle;s.spinning=true;break;
  case ACT_CASTLE:close_menu();s.castle_start=s.elapsed;s.peeking=true;break;
@@ -117,8 +121,8 @@ static void tick(lv_timer_t *t) {
  (void)t;uint32_t now=lv_tick_get(),dt=now-s.last_tick;s.last_tick=now;
  if(!s.active || !s.root || lv_obj_has_flag(s.root,LV_OBJ_FLAG_HIDDEN))return;
  s.elapsed+=dt;
- /* Use the original six poses without modifying their pixels. */
- lv_image_set_src(s.mouse,ui_adventure_original_asset(TOUR_ASSET_MOUSE,(s.elapsed/250)%6));
+ /* Native-resolution alternative; original six-pose source remains intact. */
+ lv_image_set_src(s.mouse,orlando_mouse_frames[(s.elapsed/250)%6]);
  if(s.spinning) {
   uint32_t d=s.elapsed-s.wheel_start;
   if(d>=3200){d=3200;s.spinning=false;}
@@ -128,22 +132,17 @@ static void tick(lv_timer_t *t) {
  if(s.peeking) {
   uint32_t d=s.elapsed-s.castle_start;
   int amount=d<600?(int)d*20/600:d<2000?20:d<2600?(int)(2600-d)*20/600:0;
-  lv_obj_set_x(s.peek,120-amount);visible(s.peek,d<2600);
+  lv_obj_set_x(s.peek,131-amount*3/4);visible(s.peek,d<2600);
   visible(s.princess,d>=400 && d<2200);
   if(d>=2600)s.peeking=false;
  }
  if(s.launching) {
   uint32_t d=s.elapsed-s.car_start;
-  /* Follow the exact native-authored continuous rails, ending inside the return tunnel. */
-  unsigned n=sizeof(orlando_route)/sizeof(orlando_route[0]);
-  unsigned k=d<700?(d*d*40u/(700u*700u)):40u+(d-700u)*(n-41u)/1300u;
-  if(k>=n-1)k=n-1;
-  unsigned a=k?k-1:0,b=k<n-1?k+1:k;
-  int dx=orlando_route[b][0]-orlando_route[a][0],dy=orlando_route[b][1]-orlando_route[a][1];
-  lv_image_set_rotation(s.car,(int)(atan2f(dy,dx)*572.957795f+3600)%3600);
-  lv_obj_set_pos(s.car,orlando_route[k][0]-14,orlando_route[k][1]+20-13);
-  visible(s.car,d<2000);
-  if(d>=2000)s.launching=false;
+  int distance=(int)(d*d/8000); if(distance>90)distance=90;
+  if(d<850){lv_image_set_rotation(s.car,3210);lv_obj_set_pos(s.car,12+distance*3/4,119-distance*65*3/(81*4));}
+  else {int t=(d-850)>350?350:(int)(d-850);lv_image_set_rotation(s.car,t<120?0:300);lv_obj_set_pos(s.car,79+t*30/350,65+t*15/350);}
+  visible(s.car,d<1200);
+  if(d>=1200)s.launching=false;
  }
  bool sign=!s.dialog&&!s.menu_open && s.elapsed-s.intro_dismissed>=6000 && (s.elapsed%14000)>=9000;
  visible(s.sign,sign);
@@ -176,29 +175,27 @@ void ui_home_build(ui_home_t *h,lv_obj_t *page,lv_event_cb_t talk_cb,lv_event_cb
  if(s.timer){lv_timer_delete(s.timer);s.timer=NULL;}
  memset(&s,0,sizeof(s));s.root=page;s.active=true;s.last_tick=lv_tick_get();s.menu_cb=menu_cb;s.talk_cb=talk_cb;
  lv_obj_add_event_cb(page,deleted,LV_EVENT_DELETE,NULL);
- /* Extend the original flat road below its 192px background, without altering it. */
- lv_obj_set_style_bg_color(page,lv_color_hex(0xACA183),0);lv_obj_set_style_bg_opa(page,LV_OPA_COVER,0);
- sprite(ui_adventure_original_asset(TOUR_ASSET_HOME,0),0,0,256);
- sprite(&hulk_route_v4,0,20,256);
- sprite(&eye_base,240,99,256);
- s.wheel=sprite(&eye_rim,230,59,256);lv_image_set_pivot(s.wheel,40,40);
- for(int i=0;i<12;i++){s.cabins[i]=sprite(&eye_cabin,0,0,256);}
+ lv_obj_set_style_bg_color(page,lv_color_hex(0x91AD7A),0);lv_obj_set_style_bg_opa(page,LV_OPA_COVER,0);
+ sprite(&orlando_v5_background,0,0,256);
+ sprite(&hulk_launch,6,64,192);
+ sprite(&orlando_crest,77,65,256);
+ sprite(&eye_base,247,91,192);
+ s.wheel=sprite(&eye_rim,239,61,192);lv_image_set_pivot(s.wheel,40,40);
+ for(int i=0;i<12;i++){s.cabins[i]=sprite(&eye_cabin,0,0,192);}
  wheel_position(0);
- s.peek=sprite(&castle_silhouette,120,74,256);visible(s.peek,false);
- sprite(&center_castle,112,20,256);
- s.princess=sprite(&window_princess_v3,151,82,256);visible(s.princess,false);
- s.car=sprite(&coaster_car,8,111,160);lv_image_set_pivot(s.car,14,13);visible(s.car,false);
- sprite(&return_tunnel,88,103,256);
- sprite(ui_adventure_original_asset(TOUR_ASSET_HOUSE,0),12,130,384);
+ s.peek=sprite(&castle_silhouette,131,81,192);visible(s.peek,false);
+ sprite(&center_castle,125,40,192);
+ s.princess=sprite(&window_princess_v3,154,87,192);visible(s.princess,false);
+ s.car=sprite(&coaster_car,12,119,120);lv_image_set_pivot(s.car,14,8);visible(s.car,false);
+ sprite(ui_adventure_original_asset(TOUR_ASSET_HOUSE,0),8,124,448);
  sprite(ui_adventure_original_asset(TOUR_ASSET_VAN,0),211,150,384);
- s.mouse=sprite(ui_adventure_original_asset(TOUR_ASSET_MOUSE,0),126,170,768);
+ s.mouse=sprite(orlando_mouse_frames[0],126,170,256);
  /* Small captions sit within the original objects' hit regions. */
- lv_obj_t *home=label(page,"Home",20,204,66,&lv_font_montserrat_14,0x172533);
+ lv_obj_t *home=label(page,"Home",17,208,66,&lv_font_montserrat_14,0x172533);
  lv_obj_set_style_text_align(home,LV_TEXT_ALIGN_CENTER,0);
- label(page,"Let's go",221,140,85,&lv_font_montserrat_14,0x172533);
- hit(6,132,84,92,ACT_HOME);hit(207,140,108,54,ACT_TOUR);
- hit(119,160,62,68,ACT_INTRO);hit(227,55,88,85,ACT_WHEEL);
- hit(109,18,100,120,ACT_CASTLE);hit(0,37,108,95,ACT_COASTER);
+ hit(6,132,84,92,ACT_HOME);
+ hit(119,160,62,68,ACT_INTRO);hit(235,55,75,75,ACT_WHEEL);
+ hit(120,35,82,100,ACT_CASTLE);hit(0,60,90,75,ACT_COASTER);
  /* A held sign is a separate overlay, preserving the original mouse pixels. */
  s.sign=flat(page,115,139,70,70,0,LV_OPA_TRANSP);
  /* Handle meets the mouse paw; board is raised away from bottom controls. */
@@ -215,7 +212,7 @@ void ui_home_build(ui_home_t *h,lv_obj_t *page,lv_event_cb_t talk_cb,lv_event_cb
  }
  s.shade=hit(0,0,320,240,ACT_DISMISS);visible(s.shade,false);
  s.tray=flat(page,190,101,122,90,0x172533,LV_OPA_COVER);lv_obj_set_style_radius(s.tray,8,0);
- button(s.tray,"Main menu",4,4,114,40,ACT_ALL);button(s.tray,"Talk",4,47,114,40,ACT_TALK);visible(s.tray,false);
+ button(s.tray,"Guide",4,4,114,40,ACT_INTRO);button(s.tray,"Main menu",4,47,114,40,ACT_ALL);visible(s.tray,false);
  lv_obj_t *menu=flat(page,248,194,64,40,0,LV_OPA_TRANSP);
  lv_obj_add_flag(menu,LV_OBJ_FLAG_CLICKABLE);
  lv_obj_add_event_cb(menu,action,LV_EVENT_CLICKED,(void *)(intptr_t)ACT_MENU);

@@ -2779,6 +2779,70 @@
           "action": "guide2"
         }
       }
+    },
+    "orlando_v5": {
+      "kind": "page",
+      "description": "Orlando v5 isolated interaction and lifecycle test",
+      "sources": [
+        "main/ui_home.c",
+        "main/ui_kit.c",
+        "main/ui_menu.c",
+        "main/ui_adventure.c",
+        "main/ui_story_dialogue.c",
+        "main/voice_listening_widget.c"
+      ],
+      "headers": [
+        "ui_home.h",
+        "ui_adventure.h",
+        "orlando_landmarks.h",
+        "orlando_v3.h",
+        "orlando_v4.h"
+      ],
+      "adapter": "tools/uisim/targets/orlando_v5.c",
+      "fields": {
+        "action": {
+          "type": "str",
+          "default": ""
+        },
+        "test": {
+          "type": "bool",
+          "default": false
+        },
+        "capture_dir": {
+          "type": "str",
+          "default": ""
+        }
+      },
+      "fixtures": {
+        "wheel": {
+          "action": "wheel"
+        },
+        "castle": {
+          "action": "castle"
+        },
+        "coaster": {
+          "action": "coaster"
+        },
+        "guide": {
+          "action": "guide"
+        },
+        "menu": {
+          "action": "menu"
+        },
+        "tour": {
+          "action": "tour"
+        },
+        "all": {
+          "action": "all"
+        },
+        "default": {},
+        "test": {
+          "test": true
+        },
+        "guide2": {
+          "action": "guide2"
+        }
+      }
     }
   }
 }

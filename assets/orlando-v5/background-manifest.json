@@ -1,0 +1,96 @@
+{
+  "creation": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "192a0d0804f3e815bc2ee60491b52972",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "fresh": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "3c6254e70682299aa0a7bf9a0c70ebfe",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "tiles": [
+    {
+      "project": "background-0-0",
+      "origin": [
+        0,
+        0
+      ],
+      "sha256": "e872dfa1265bf0959372d722803694d8b79943b2ecfea182254cbd2c7a826bbd"
+    },
+    {
+      "project": "background-1-0",
+      "origin": [
+        80,
+        0
+      ],
+      "sha256": "e872dfa1265bf0959372d722803694d8b79943b2ecfea182254cbd2c7a826bbd"
+    },
+    {
+      "project": "background-2-0",
+      "origin": [
+        160,
+        0
+      ],
+      "sha256": "e872dfa1265bf0959372d722803694d8b79943b2ecfea182254cbd2c7a826bbd"
+    },
+    {
+      "project": "background-3-0",
+      "origin": [
+        240,
+        0
+      ],
+      "sha256": "e872dfa1265bf0959372d722803694d8b79943b2ecfea182254cbd2c7a826bbd"
+    },
+    {
+      "project": "background-0-1",
+      "origin": [
+        0,
+        120
+      ],
+      "sha256": "c958fa2a38437c17f4a40106486c96338969324130851f0e1f3e743795cfbdb5"
+    },
+    {
+      "project": "background-1-1",
+      "origin": [
+        80,
+        120
+      ],
+      "sha256": "9db6ccc9a4f3cac33b7fdb4cb2740ff1f7ec219bc053f5f423b4b846bfed96e4"
+    },
+    {
+      "project": "background-2-1",
+      "origin": [
+        160,
+        120
+      ],
+      "sha256": "f0cd98ccadc0c04240d54a04893afb3628141603061cfe41831ce3142715c991"
+    },
+    {
+      "project": "background-3-1",
+      "origin": [
+        240,
+        120
+      ],
+      "sha256": "f0e4ec10ff7b8845352954740693d7c0eea110c0234e34813e1656ab7c1c8223"
+    }
+  ],
+  "correction_creation": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "081c46fabcc185ac0e37ae37156d532d",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "correction_fresh": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "397acac10d455de72a83bdb30bb8837c",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  }
+}

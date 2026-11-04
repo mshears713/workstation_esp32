@@ -1,0 +1,27 @@
+{
+  "creation": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "8e62f2e7d2b40ec9e60c92f9dd2b7a4e",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "fresh": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "0026f70d4ca2ff2279e87f625fa6af79",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "project": {
+    "actions": [],
+    "frames": 1,
+    "height": 70,
+    "layers": [
+      "Layer 1",
+      "Rails"
+    ],
+    "width": 42
+  },
+  "sha256": "0e7d12f95f0744bba8183e459b4c0acdc68df517ff19d61f159d88c1505309ff"
+}
