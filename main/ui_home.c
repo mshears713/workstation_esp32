@@ -1,5 +1,26 @@
 /* Interactive Orlando scene. Original Tour A pixels are shared, never redrawn.
- * New landmarks are native Pixelorama exports. No ESP subsystem dependencies. */
+ * New landmarks are native Pixelorama exports; the Artifacts & Instruments
+ * repaint (background, mound/moat/drawbridge, palms, bushes, lit castle,
+ * larger house, whisker-corrected mouse) is orlando_artifacts.h.
+ * No ESP subsystem dependencies. */
+
+/* Layout, in one place (the reviewed still's numbers). */
+#define HOUSE_X 5
+#define HOUSE_Y 117                 /* top-left fixed; grown 96 -> 116 px down/right */
+#define VAN_X 196                   /* 15 px left of the overnight position, on the sand */
+#define VAN_Y 150
+#define MOUSE_X 134
+#define MOUSE_Y 170
+#define MOUSE_BOARD_DX 69           /* walk from MOUSE_X to the van's rear door */
+#define BRIDGE_X 147
+#define BRIDGE_Y 92                 /* sprite row 24 = the gate sill, screen y 116 */
+/* Castle tap: the drawbridge lowers first, then the princess walks out on it,
+ * then she goes back in and it rises again. */
+#define BRIDGE_STEP_MS 250          /* 4 frames: raised .. down */
+#define BRIDGE_DOWN_MS (3 * BRIDGE_STEP_MS)
+#define PRINCESS_OUT_MS 1800
+#define PRINCESS_HOLD_MS 900
+#define CASTLE_TOTAL_MS (BRIDGE_DOWN_MS + PRINCESS_OUT_MS + PRINCESS_HOLD_MS + BRIDGE_DOWN_MS)
 #include "ui_home.h"
 #include "ui_adventure.h"
 #include "orlando_landmarks.h"
@@ -8,8 +29,7 @@
 #include <math.h>
 #include "orlando_v3.h"
 #include "orlando_v4.h"
-#include "orlando_v5_background.h"
-#include "orlando_v5_mouse.h"
+#include "orlando_artifacts.h"
 #include "orlando_v5_crest.h"
 #include "orlando_v5_end.h"
 #include "orlando_castle_overnight.h"
@@ -21,6 +41,8 @@ enum { ACT_HOME=1,ACT_TOUR,ACT_INTRO,ACT_WHEEL,ACT_CASTLE,ACT_COASTER,
        ACT_MENU,ACT_ALL,ACT_TALK,ACT_DISMISS,ACT_NEXT,ACT_CLOSE };
 static struct {
  lv_obj_t *root,*wheel,*car,*peek,*princess,*mouse,*van,*van_door,*van_hit,*sign,*shade,*tray,*menu_label;
+ lv_obj_t *bridge,*van_shadow,*mouse_shadow;
+ unsigned bridge_frame;
  lv_obj_t *dialog,*dialog_text,*audio_hint,*guide_nav,*cabins[12],*cues[3];
  lv_timer_t *timer;
  lv_event_cb_t home_cb,tour_cb,intro_cb,menu_cb,talk_cb;
@@ -82,7 +104,7 @@ static void open_intro(lv_event_t *e) {
  close_menu();visible(s.sign,false);s.intro_page=0;
  s.dialog=flat(s.root,0,0,320,240,0x142331,180);lv_obj_add_flag(s.dialog,LV_OBJ_FLAG_CLICKABLE);
  lv_obj_t *paper=flat(s.dialog,10,27,300,204,0xF3E9CF,LV_OPA_COVER);lv_obj_set_style_radius(paper,10,0);
- lv_obj_t *portrait=lv_image_create(paper);lv_image_set_src(portrait,orlando_mouse_frames[0]);
+ lv_obj_t *portrait=lv_image_create(paper);lv_image_set_src(portrait,ai_mouse_frames[0]);
  lv_image_set_pivot(portrait,0,0);lv_image_set_scale(portrait,171);lv_image_set_antialias(portrait,false);lv_obj_set_pos(portrait,12,8);
  label(paper,"Hello, traveler!",54,14,234,&lv_font_montserrat_20,0x25303D);
  s.dialog_text=label(paper,guide[0],12,58,276,&lv_font_montserrat_14,0x25303D);
@@ -98,10 +120,13 @@ static void reset_scene(void) {
  if(s.wheel)wheel_position(0);
  for(int i=0;i<3;i++)visible(s.cues[i],false);
  visible(s.car,false);visible(s.peek,false);visible(s.princess,false);
- if(s.van)lv_obj_set_pos(s.van,211,150);
+ if(s.van)lv_obj_set_pos(s.van,VAN_X,VAN_Y);
+ if(s.van_shadow)lv_obj_set_pos(s.van_shadow,VAN_X,VAN_Y+44);
+ s.bridge_frame=0;if(s.bridge)lv_image_set_src(s.bridge,ai_bridge_frames[0]);
  visible(s.van_door,false);
  visible(s.van_hit,true);
- if(s.mouse){lv_obj_set_pos(s.mouse,126,170);visible(s.mouse,true);if(s.sign)lv_obj_move_to_index(s.mouse,lv_obj_get_index(s.sign)+1);}
+ if(s.mouse){lv_obj_set_pos(s.mouse,MOUSE_X,MOUSE_Y);visible(s.mouse,true);if(s.sign)lv_obj_move_to_index(s.mouse,lv_obj_get_index(s.sign)+1);}
+ if(s.mouse_shadow){lv_obj_set_pos(s.mouse_shadow,MOUSE_X+10,MOUSE_Y+44);visible(s.mouse_shadow,true);}
  close_intro();close_menu();visible(s.sign,false);s.intro_dismissed=s.elapsed;
 }
 static void action(lv_event_t *e) {
@@ -132,7 +157,7 @@ static void tick(lv_timer_t *t) {
  if(!s.active || !s.root || lv_obj_has_flag(s.root,LV_OBJ_FLAG_HIDDEN))return;
  s.elapsed+=dt;
  /* Native-resolution alternative; original six-pose source remains intact. */
- lv_image_set_src(s.mouse,orlando_mouse_frames[(s.elapsed/250)%6]);
+ lv_image_set_src(s.mouse,ai_mouse_frames[(s.elapsed/250)%6]);
  if(s.spinning) {
   uint32_t d=s.elapsed-s.wheel_start;
   if(d>=3200){d=3200;s.spinning=false;}
@@ -145,10 +170,25 @@ static void tick(lv_timer_t *t) {
   uint32_t d=s.elapsed-s.castle_start;
   int amount=d<600?(int)d*8/600:d<2000?8:d<2600?(int)(2600-d)*8/600:0;
   lv_obj_set_x(s.peek,188-amount/2);visible(s.peek,d<2600);
-  lv_obj_set_pos(s.princess,151,98+(d<400?0:d<1800?(int)(d-400)*42/1400:42));
-  lv_image_set_src(s.princess,princess_walk_frames[(d/250)%2]);
-  visible(s.princess,!s.auto_peek && d>=400 && d<2200);
-  if(d>=2600)s.peeking=false;
+  if(s.auto_peek){ if(d>=2600)s.peeking=false; }
+  else {
+   /* bridge: down over BRIDGE_DOWN_MS, held, back up after the princess */
+   const uint32_t up_at=BRIDGE_DOWN_MS+PRINCESS_OUT_MS+PRINCESS_HOLD_MS;
+   unsigned f=d<BRIDGE_DOWN_MS?d/BRIDGE_STEP_MS:d<up_at?3:d<CASTLE_TOTAL_MS?3-(d-up_at)/BRIDGE_STEP_MS:0;
+   if(f>3)f=0;
+   if(f!=s.bridge_frame){s.bridge_frame=f;lv_image_set_src(s.bridge,ai_bridge_frames[f]);}
+   /* princess only once the bridge is fully down; feet from the sill (116)
+    * to the near bank (144), then back in before it rises */
+   bool out=s.bridge_frame==3 && d>=BRIDGE_DOWN_MS && d<up_at;
+   uint32_t w=d>=BRIDGE_DOWN_MS?d-BRIDGE_DOWN_MS:0;
+   /* out (half the walk), hold, back in (the other half) */
+   const uint32_t half=PRINCESS_OUT_MS/2;
+   int y=w<half?(int)(w*26/half):w<half+PRINCESS_HOLD_MS?26:w<PRINCESS_OUT_MS+PRINCESS_HOLD_MS?26-(int)((w-half-PRINCESS_HOLD_MS)*26/half):0;
+   lv_obj_set_pos(s.princess,151,84+y);
+   lv_image_set_src(s.princess,princess_walk_frames[(d/250)%2]);
+   visible(s.princess,out);
+   if(d>=CASTLE_TOTAL_MS){s.peeking=false;s.bridge_frame=0;lv_image_set_src(s.bridge,ai_bridge_frames[0]);}
+  }
  }
  if(s.launching) {
   uint32_t d=s.elapsed-s.car_start;
@@ -160,8 +200,11 @@ static void tick(lv_timer_t *t) {
  if(s.van_running){
   uint32_t d=s.elapsed-s.van_start;
   visible(s.van_door,d>=800 && d<1800);
-  if(d<1800){int climb=d>1000?(int)(d-1000)*20/800:0;lv_obj_set_pos(s.mouse,126+(int)d*92/1800,170-climb);visible(s.mouse,true);}
-  else {visible(s.mouse,false);lv_obj_set_x(s.van,211+(int)(d-1800)*130/1400);}
+  if(d<1800){int climb=d>1000?(int)(d-1000)*20/800:0;int mx=MOUSE_X+(int)d*MOUSE_BOARD_DX/1800;
+   lv_obj_set_pos(s.mouse,mx,MOUSE_Y-climb);visible(s.mouse,true);
+   lv_obj_set_pos(s.mouse_shadow,mx+10,MOUSE_Y+44);visible(s.mouse_shadow,climb==0);}
+  else {visible(s.mouse,false);visible(s.mouse_shadow,false);int vx=VAN_X+(int)(d-1800)*130/1400;
+   lv_obj_set_x(s.van,vx);lv_obj_set_x(s.van_shadow,vx);}
   if(d>=3200){
    s.van_running=false;s.van_departed=true;visible(s.van_hit,false);
    /* The same callback used by the app opens preserved Tour A at Egypt. */
@@ -201,6 +244,7 @@ ui_home_state_t ui_home_state(void) {
  .sign_visible=s.sign&&!lv_obj_has_flag(s.sign,LV_OBJ_FLAG_HIDDEN),.wheel_running=s.spinning,
  .castle_running=s.peeking,.launch_running=s.launching,.van_running=s.van_running,.van_door_open=s.van_door&&!lv_obj_has_flag(s.van_door,LV_OBJ_FLAG_HIDDEN),
  .castle_guest_visible=s.peek&&!lv_obj_has_flag(s.peek,LV_OBJ_FLAG_HIDDEN),.princess_visible=s.princess&&!lv_obj_has_flag(s.princess,LV_OBJ_FLAG_HIDDEN),.timers=s.timer?1u:0u,.intro_page=s.intro_page,
+ .drawbridge_down=s.bridge_frame==3,.bridge_frame=(int)s.bridge_frame,.princess_y=s.princess?lv_obj_get_y(s.princess):0,
  .wheel_angle=s.wheel_angle,.car_x=s.car?lv_obj_get_x(s.car):0,.peek_x=s.peek?lv_obj_get_x(s.peek):0,
  .mouse_x=s.mouse?lv_obj_get_x(s.mouse):0,.van_x=s.van?lv_obj_get_x(s.van):0};
 }
@@ -211,29 +255,37 @@ void ui_home_build(ui_home_t *h,lv_obj_t *page,lv_event_cb_t talk_cb,lv_event_cb
  memset(&s,0,sizeof(s));s.root=page;s.active=true;s.last_tick=lv_tick_get();s.last_peek_cycle=UINT32_MAX;s.menu_cb=menu_cb;s.talk_cb=talk_cb;
  lv_obj_add_event_cb(page,deleted,LV_EVENT_DELETE,NULL);
  lv_obj_set_style_bg_color(page,lv_color_hex(0x91AD7A),0);lv_obj_set_style_bg_opa(page,LV_OPA_COVER,0);
- sprite(&orlando_v5_background,0,0,256);
+ sprite(&ai_background,0,0,256);          /* sky, skyline, lake, mound, moat, path, beach, static shadows */
  sprite(&hulk_launch,6,64,192);
  sprite(&orlando_crest,77,65,256);
  sprite(&eye_base,242,99,256);
  s.wheel=sprite(&eye_rim,230,59,256);lv_image_set_pivot(s.wheel,40,40);
  for(int i=0;i<12;i++){s.cabins[i]=sprite(&eye_cabin,0,0,256);}
  wheel_position(0);
- sprite(&castle_overnight,112,0,256);
+ sprite(&ai_castle,112,0,256);
  sprite(&launch_bridge,78,54,256);
  s.peek=sprite(&castle_silhouette,188,54,96);visible(s.peek,false);
- s.princess=sprite(princess_walk_frames[0],151,98,256);visible(s.princess,false);
+ s.bridge=sprite(ai_bridge_frames[0],BRIDGE_X,BRIDGE_Y,256);
+ s.princess=sprite(princess_walk_frames[0],151,84,256);visible(s.princess,false);
  s.car=sprite(&coaster_car,12,119,120);lv_image_set_pivot(s.car,14,8);visible(s.car,false);
+ sprite(&ai_palm_c,178,70,256);
 
- sprite(ui_adventure_original_asset(TOUR_ASSET_HOUSE,0),5,117,512);
- s.van=sprite(ui_adventure_original_asset(TOUR_ASSET_VAN,0),211,150,384);
- s.van_door=sprite(&van_entry_door,220,161,256);visible(s.van_door,false);
- s.sign=sprite(&guide_sign,80,158,256);visible(s.sign,false);
- s.mouse=sprite(orlando_mouse_frames[0],126,170,256);
+ sprite(&ai_house,HOUSE_X,HOUSE_Y,256);
+ s.van_shadow=sprite(&ai_van_shadow,VAN_X,VAN_Y+44,256);
+ s.van=sprite(ui_adventure_original_asset(TOUR_ASSET_VAN,0),VAN_X,VAN_Y,384);
+ s.van_door=sprite(&van_entry_door,VAN_X+9,VAN_Y+11,256);visible(s.van_door,false);
+ sprite(&ai_palm_b,264,82,256);           /* the van drives off behind it */
+ sprite(&ai_palm_a,16,74,256);
+ sprite(&ai_bush_l,-6,210,256);
+ sprite(&ai_bush_r,96,210,256);
+ s.sign=sprite(&guide_sign,88,158,256);visible(s.sign,false);
+ s.mouse_shadow=sprite(&ai_mouse_shadow,MOUSE_X+10,MOUSE_Y+44,256);
+ s.mouse=sprite(ai_mouse_frames[0],MOUSE_X,MOUSE_Y,256);
  /* Small captions sit within the original objects' hit regions. */
- sprite(&home_plaque,42,156,256);
- hit(3,120,99,100,ACT_HOME);s.van_hit=hit(208,140,110,54,ACT_TOUR);
- hit(119,160,62,68,ACT_INTRO);hit(235,55,75,75,ACT_WHEEL);
- hit(120,35,82,100,ACT_CASTLE);hit(0,60,90,75,ACT_COASTER);
+ sprite(&home_plaque,51,164,256);
+ hit(3,118,120,112,ACT_HOME);s.van_hit=hit(193,140,110,56,ACT_TOUR);
+ hit(127,160,66,68,ACT_INTRO);hit(235,55,75,75,ACT_WHEEL);
+ hit(120,35,82,100,ACT_CASTLE);hit(0,60,90,58,ACT_COASTER);
  const int cx[]={56,160,271},cy[]={42,25,66};
  for(int i=0;i<3;i++) {
   s.cues[i]=flat(page,cx[i]-7,cy[i]-7,14,14,0,LV_OPA_TRANSP);
