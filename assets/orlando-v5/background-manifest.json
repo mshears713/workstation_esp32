@@ -52,7 +52,7 @@
         0,
         120
       ],
-      "sha256": "c958fa2a38437c17f4a40106486c96338969324130851f0e1f3e743795cfbdb5"
+      "sha256": "bce8282f5b618b2a5ee86535631abf9a385658e9911354b1ebba9ef61e227553"
     },
     {
       "project": "background-1-1",
@@ -60,7 +60,7 @@
         80,
         120
       ],
-      "sha256": "9db6ccc9a4f3cac33b7fdb4cb2740ff1f7ec219bc053f5f423b4b846bfed96e4"
+      "sha256": "934ace700d13f1e7118463ba445a01771820eb2b9fdf048506b9aae6c1d2c0b6"
     },
     {
       "project": "background-2-1",
@@ -68,7 +68,7 @@
         160,
         120
       ],
-      "sha256": "f0cd98ccadc0c04240d54a04893afb3628141603061cfe41831ce3142715c991"
+      "sha256": "8cb3be70cd8631bcfb55b79f549b8fc7d5b9707337e6e2e048e6043e47be6d1f"
     },
     {
       "project": "background-3-1",
@@ -76,7 +76,7 @@
         240,
         120
       ],
-      "sha256": "f0e4ec10ff7b8845352954740693d7c0eea110c0234e34813e1656ab7c1c8223"
+      "sha256": "cc7a37b8470f21f42e6e6f80bb5d08d2ecaa6ba33096888724c0300fe5686c05"
     }
   ],
   "correction_creation": {
@@ -90,6 +90,20 @@
     "api": 9,
     "backend": "Pixelorama",
     "boot_id": "397acac10d455de72a83bdb30bb8837c",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "flat_ground_creation": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "ac581b4bc4849511b79a0810d0de42a9",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "flat_ground_fresh": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "6e387e420f368ed9a002ff9636983036",
     "open_projects": 0,
     "version": "v1.2.3-stable"
   }
