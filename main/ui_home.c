@@ -11,6 +11,7 @@
 #include "orlando_v5_background.h"
 #include "orlando_v5_mouse.h"
 #include "orlando_v5_crest.h"
+#include "orlando_v5_end.h"
 
 enum { ACT_HOME=1,ACT_TOUR,ACT_INTRO,ACT_WHEEL,ACT_CASTLE,ACT_COASTER,
        ACT_MENU,ACT_ALL,ACT_TALK,ACT_DISMISS,ACT_NEXT,ACT_CLOSE };
@@ -187,6 +188,7 @@ void ui_home_build(ui_home_t *h,lv_obj_t *page,lv_event_cb_t talk_cb,lv_event_cb
  sprite(&center_castle,125,40,192);
  s.princess=sprite(&window_princess_v3,154,87,192);visible(s.princess,false);
  s.car=sprite(&coaster_car,12,119,120);lv_image_set_pivot(s.car,14,8);visible(s.car,false);
+ sprite(&orlando_end,104,74,256);
  sprite(ui_adventure_original_asset(TOUR_ASSET_HOUSE,0),8,124,448);
  sprite(ui_adventure_original_asset(TOUR_ASSET_VAN,0),211,150,384);
  s.mouse=sprite(orlando_mouse_frames[0],126,170,256);

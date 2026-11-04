@@ -1,0 +1,27 @@
+{
+  "creation": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "58d0393a369c03ee7b4a478d11d44fb7",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "fresh": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "3cf3b3a3c68217094dbd0f11d6816442",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "project": {
+    "actions": [],
+    "frames": 1,
+    "height": 30,
+    "layers": [
+      "Layer 1",
+      "Opening"
+    ],
+    "width": 26
+  },
+  "sha256": "5a9c761fc1ebecca4619c3ef8fabc1818c026044e47ad62f61cd4a643397424a"
+}
