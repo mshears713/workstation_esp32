@@ -1,0 +1,141 @@
+{
+  "name": "weather-page",
+  "ui": "WEATHER page (main/ui_weather_page.c, icons main/weather_icons.c)",
+  "target": "weather_preview",
+  "about": "Weather icons 48/30 px from Pixelorama projects weather-48 and weather-30 (frames 8-13, mapping from apply_weather.py of the 2026-10-28 native-art handoff).",
+  "stills": [
+    {
+      "name": "weather",
+      "advance_ms": 400
+    }
+  ],
+  "motion": [],
+  "tests": [],
+  "references": [],
+  "focus": [
+    {
+      "name": "now icon (partly, 48)",
+      "still": "weather",
+      "rect": [
+        8,
+        8,
+        64,
+        56
+      ],
+      "scale": 4
+    },
+    {
+      "name": "forecast icons (storm, partly, sun; 30)",
+      "still": "weather",
+      "rect": [
+        56,
+        112,
+        96,
+        240
+      ],
+      "scale": 4
+    }
+  ],
+  "visual_review": [
+    "Are the icons readable as their condition at arm's length (partly cloudy, storm, sun)?",
+    "Do icon palettes sit well on the dark cards, with no fringe or halo at the edges?"
+  ],
+  "art": [
+    {
+      "symbol": "weather_icon_cloud_48",
+      "file": "main/weather_icons.c",
+      "source": {
+        "project": "weather-48",
+        "frame": 8
+      }
+    },
+    {
+      "symbol": "weather_icon_moon_48",
+      "file": "main/weather_icons.c",
+      "source": {
+        "project": "weather-48",
+        "frame": 9
+      }
+    },
+    {
+      "symbol": "weather_icon_partly_48",
+      "file": "main/weather_icons.c",
+      "source": {
+        "project": "weather-48",
+        "frame": 10
+      }
+    },
+    {
+      "symbol": "weather_icon_partly_night_48",
+      "file": "main/weather_icons.c",
+      "source": {
+        "project": "weather-48",
+        "frame": 11
+      }
+    },
+    {
+      "symbol": "weather_icon_rain_48",
+      "file": "main/weather_icons.c",
+      "source": {
+        "project": "weather-48",
+        "frame": 12
+      }
+    },
+    {
+      "symbol": "weather_icon_storm_48",
+      "file": "main/weather_icons.c",
+      "source": {
+        "project": "weather-48",
+        "frame": 13
+      }
+    },
+    {
+      "symbol": "weather_icon_cloud_30",
+      "file": "main/weather_icons.c",
+      "source": {
+        "project": "weather-30",
+        "frame": 8
+      }
+    },
+    {
+      "symbol": "weather_icon_moon_30",
+      "file": "main/weather_icons.c",
+      "source": {
+        "project": "weather-30",
+        "frame": 9
+      }
+    },
+    {
+      "symbol": "weather_icon_partly_30",
+      "file": "main/weather_icons.c",
+      "source": {
+        "project": "weather-30",
+        "frame": 10
+      }
+    },
+    {
+      "symbol": "weather_icon_partly_night_30",
+      "file": "main/weather_icons.c",
+      "source": {
+        "project": "weather-30",
+        "frame": 11
+      }
+    },
+    {
+      "symbol": "weather_icon_rain_30",
+      "file": "main/weather_icons.c",
+      "source": {
+        "project": "weather-30",
+        "frame": 12
+      }
+    },
+    {
+      "symbol": "weather_icon_storm_30",
+      "file": "main/weather_icons.c",
+      "source": {
+        "project": "weather-30",
+        "frame": 13
+      }
+    }
+  ]
+}
