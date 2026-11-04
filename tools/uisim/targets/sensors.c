@@ -25,7 +25,7 @@ static ui_diag_src_t src(const char *key)
 static void reading(ui_sens_reading_t *r, ui_diag_src_t s, const char *age, const char *val)
 {
     r->src = s;
-    r->age_ms = (uint64_t)ws_fx_i64(age, 0);
+    r->age_ms = (uint64_t)ws_fx_int(age, 0);
     r->have_value = s == UI_DIAG_SRC_LIVE || s == UI_DIAG_SRC_STALE;
     r->value = ws_fx_int(val, 0);
 }
