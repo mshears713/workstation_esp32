@@ -61,8 +61,11 @@ static radar_status_t s_st;
 static bool s_last;
 static uint32_t s_high_since;
 
-/* Level 1..10 -> threshold 573..1023 in steps of 50; level 6 = 823 (default). */
-static int reach_threshold(int level) { return 523 + level * 50; }
+/* Level 1..10 -> threshold 623..983 in steps of 40, level 6 = 823 (the vendor
+ * default). Capped below 1023: the chip is written 1023 - threshold, and a
+ * zero margin plausibly triggers on noise (an always-on output would welcome
+ * an empty room once and then never re-arm). */
+static int reach_threshold(int level) { return 823 + (level - RADAR_REACH_DEFAULT) * 40; }
 
 static esp_err_t wr(uint8_t reg, uint8_t val)
 {

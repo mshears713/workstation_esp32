@@ -37,11 +37,18 @@ static void set_message(const char *m)
     ESP_LOGI(TAG, "%s", m);
 }
 
-/* Clip producer: plain file reads in 256-frame chunks (no 1.4 MB buffer). */
-typedef struct { FILE *f; } clip_ctx_t;
+/* Clip producer: plain file reads in 256-frame chunks (no 1.4 MB buffer).
+ * The generation is checked on every chunk: a stop that lands between the
+ * start check and audio_playback_stream() (which clears its own stop flag on
+ * entry) still ends the clip within one 10.7 ms chunk. */
+typedef struct { FILE *f; uint32_t gen; bool cancelled; } clip_ctx_t;
 static size_t clip_produce(int16_t *out, size_t count, void *ctx)
 {
     clip_ctx_t *c = ctx;
+    portENTER_CRITICAL(&s_mux);
+    bool stale = c->gen != s_gen;
+    portEXIT_CRITICAL(&s_mux);
+    if (stale) { c->cancelled = true; return 0; }
     return fread(out, sizeof(int16_t), count, c->f);
 }
 
@@ -74,12 +81,14 @@ static void run_clip(const char *name, uint32_t gen)
     if (!f) {
         snprintf(msg, sizeof(msg), "CLIP %s: FILE MISSING", name);
     } else {
+        char *io = NULL;
         long bytes = (fseek(f, 0, SEEK_END) == 0) ? ftell(f) : -1;
         if (bytes <= 0 || (bytes & 1) || (unsigned long)bytes > EXHIBIT_CLIP_MAX_BYTES || fseek(f, 0, SEEK_SET) != 0) {
             snprintf(msg, sizeof(msg), "CLIP %s: BAD FILE %ld B", name, bytes);
         } else {
-            static char io[1024];   /* stdio cache; this task is the only reader */
-            setvbuf(f, io, _IOFBF, sizeof(io));
+            /* stdio cache in PSRAM for this clip only (internal RAM is the ceiling) */
+            io = heap_caps_malloc(1024, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (io) setvbuf(f, io, _IOFBF, 1024);
             bool cancelled;
             portENTER_CRITICAL(&s_mux);
             cancelled = gen != s_gen;
@@ -88,12 +97,17 @@ static void run_clip(const char *name, uint32_t gen)
             if (cancelled) {
                 snprintf(msg, sizeof(msg), "CLIP %s CANCELLED", name);
             } else {
-                clip_ctx_t c = { f };
-                ok = audio_playback_stream(clip_produce, &c, audio_playback_get_volume());
-                snprintf(msg, sizeof(msg), ok ? "CLIP %s PLAYED" : "CLIP %s STOPPED", name);
+                clip_ctx_t c = { .f = f, .gen = gen };
+                bool streamed = audio_playback_stream(clip_produce, &c, audio_playback_get_volume());
+                portENTER_CRITICAL(&s_mux);
+                bool stopped = c.cancelled || gen != s_gen;   /* stop/replace, not the end of the file */
+                portEXIT_CRITICAL(&s_mux);
+                ok = streamed && !stopped;
+                snprintf(msg, sizeof(msg), !streamed ? "CLIP %s: SPEAKER FAILED" : stopped ? "CLIP %s STOPPED" : "CLIP %s PLAYED", name);
             }
         }
-        fclose(f);
+        fclose(f);          /* before free: the stream may still own io */
+        free(io);
     }
     if (bsp_sdcard_unmount() != ESP_OK) ESP_LOGW(TAG, "SD unmount failed");
 out:

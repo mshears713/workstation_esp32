@@ -6,7 +6,7 @@
  * sheet ("human presence detection, around 2 meters").
  *
  * It reports YES/NO, not a distance. The "reach" setting is the chip's
- * unitless detection threshold (0..1023, Espressif/espp default 823); what a
+ * unitless detection threshold (levels 1..10 = 623..983, default 823); what a
  * given level means in centimetres has to be measured at the exhibit.
  *
  * Reads are cheap (one GPIO level) and safe from the LVGL task; configuration

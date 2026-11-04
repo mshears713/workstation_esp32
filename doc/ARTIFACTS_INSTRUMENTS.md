@@ -38,14 +38,17 @@ MoreSense MS58-3909S68U4 = Airtouch AT581X, 5.8 GHz Doppler. Identified from
 Espressif's factory BSP for this dock (`BSP_RADAR_OUT_IO = GPIO21`, I2C 0x28 on
 the dock bus GPIO40/41) and the dock spec ("human presence detection, around
 2 meters"). **It outputs yes/no, not a distance.** SETTINGS > RADAR REACH 1-10
-maps to the chip threshold 573..1023 (level 6 = 823, the vendor default); what a
+maps to the chip threshold 623..983 in steps of 40 (level 6 = 823, the vendor
+default; 1023 is avoided - zero margin may trigger on noise); what a
 level means in centimetres has to be measured at the exhibit. The SETTINGS row
 shows the live output (SEEN / --) for walk tests.
 
 Welcome rule (`presence_logic.c`, host-tested): detected for 6 s (gaps under
 2.5 s forgiven - a still visitor can drop out of a Doppler sensor) on an idle
 HOME -> one welcome; it re-arms only after 30 s of continuous quiet; a touch
-anywhere counts as "already engaged". NVS `radar`: `reach` (1-10), `dwell_ms`
+anywhere counts as "already engaged". After 2 minutes without a touch (5 while
+the tour plays on its own) the screen returns to HOME, so the welcome works
+for the next visitor. NVS `radar`: `reach` (1-10), `dwell_ms`
 (2000-20000), `rearm_ms` (5000-600000).
 
 ## Spoken clips (SD card, offline)

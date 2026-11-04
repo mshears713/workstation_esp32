@@ -1575,6 +1575,10 @@ static void radar_timer_cb(lv_timer_t *t)
     (void)t;
     uint32_t now = lv_tick_get();
     bool detected = radar_presence_poll(now);
+    /* Any touch, on any page, means someone is already using it: no welcome
+     * for them, and a long tour watched in stillness cannot re-arm one that
+     * would greet the same person the moment they press Exit. */
+    if (lv_display_get_inactive_time(NULL) < 500) presence_engaged(&presence, now);
     ui_home_state_t hs = ui_home_state();
     bool idle_home = current_app_page == APP_PAGE_HOME && !ui_adventure_is_open() && newton_timer == NULL &&
                      lincoln_timer == NULL && hs.active && !hs.intro_open && !hs.van_running && !hs.menu_open;
@@ -1585,9 +1589,33 @@ static void radar_timer_cb(lv_timer_t *t)
     }
 }
 
+/* Exhibit: a visitor who walks away from the tour, a scene or a menu leaves
+ * the screen there, and the welcome only plays on HOME. After this long with
+ * no touch, go back. A running tour gets longer (it plays on its own), the
+ * tour's END card does not (it waits for a tap forever). */
+#define IDLE_HOME_MS (2 * 60 * 1000)
+#define IDLE_HOME_TOUR_MS (5 * 60 * 1000)
+static void idle_return_home(void)
+{
+    static bool returned;   /* once per idle spell; a touch re-arms it */
+    uint32_t idle = lv_display_get_inactive_time(NULL);
+    bool tour = ui_adventure_is_open();
+    bool tour_running = tour && ui_adventure_scene() != ADVENTURE_END;
+    if (idle < (tour_running ? IDLE_HOME_TOUR_MS : IDLE_HOME_MS)) { returned = false; return; }
+    if (returned) return;
+    returned = true;
+    if (current_app_page == APP_PAGE_HOME && !tour && newton_timer == NULL && lincoln_timer == NULL) return;
+    log_event(EVT_SYSTEM, "IDLE: BACK TO HOME");
+    if (tour) { exhibit_audio_stop_clip(); ui_adventure_close(); }
+    if (newton_timer) newton_action(UI_NEWTON_BACK, NULL);     /* same exits as BACK */
+    if (lincoln_timer) lincoln_action(UI_LINCOLN_BACK, NULL);
+    set_active_page(APP_PAGE_HOME);
+}
+
 static void telemetry_timer_cb(lv_timer_t *t)
 {
     (void)t;
+    idle_return_home();
     /* Clip outcomes (played / no SD / file missing) become Black Box lines. */
     static uint32_t clip_done, clip_failed;
     exhibit_audio_status_t as;
