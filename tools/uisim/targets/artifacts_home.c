@@ -51,7 +51,7 @@ static void step(lv_timer_t *timer){
  case 7: assert(s.van_running&&!s.van_door_open&&s.van_x>196); phase++; lv_timer_set_period(timer,1000); break;
  default:
   assert(tour_hits==1); /* van gone -> Tour A at Egypt (app callback) */
-  ui_home_set_active(false); assert(ui_home_state().van_x==196&&ui_home_state().mouse_x==134&&ui_home_state().bridge_frame==0);
+  ui_home_set_active(false); lv_obj_update_layout(page); assert(ui_home_state().van_x==196&&ui_home_state().mouse_x==134&&ui_home_state().bridge_frame==0);
   ui_home_set_active(true);
   assert(violations==0&&checks>150);
   printf("ARTIFACTS_HOME_PASS: drawbridge down before princess (%u checks, 0 violations), bridge back up, house menu, mouse guide+audio request, radar welcome card (not over van), van to Tour A, reset\n",checks);
