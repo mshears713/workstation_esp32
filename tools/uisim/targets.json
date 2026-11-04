@@ -3032,6 +3032,32 @@
           "idle_test": true
         }
       }
+    },
+    "orlando_web": {
+      "kind": "page",
+      "description": "Interactive Orlando HOME for the browser preview: real ui_home/ui_menu builders; MENU items return to HOME (stand-in)",
+      "sources": [
+        "main/ui_home.c",
+        "main/ui_kit.c",
+        "main/ui_menu.c",
+        "main/ui_adventure.c",
+        "main/ui_story_dialogue.c",
+        "main/voice_listening_widget.c"
+      ],
+      "headers": [
+        "ui_home.h",
+        "ui_adventure.h",
+        "orlando_landmarks.h",
+        "orlando_v3.h",
+        "orlando_v4.h",
+        "orlando_castle_overnight.h",
+        "orlando_sign_overnight.h"
+      ],
+      "adapter": "tools/uisim/targets/orlando_web.c",
+      "fields": {},
+      "fixtures": {
+        "default": {}
+      }
     }
   }
 }
