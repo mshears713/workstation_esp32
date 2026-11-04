@@ -15,11 +15,12 @@
 #include "orlando_castle_overnight.h"
 #include "orlando_sign_overnight.h"
 #include "orlando_princess_overnight.h"
+#include "orlando_van_door.h"
 
 enum { ACT_HOME=1,ACT_TOUR,ACT_INTRO,ACT_WHEEL,ACT_CASTLE,ACT_COASTER,
        ACT_MENU,ACT_ALL,ACT_TALK,ACT_DISMISS,ACT_NEXT,ACT_CLOSE };
 static struct {
- lv_obj_t *root,*wheel,*car,*peek,*princess,*mouse,*van,*van_hit,*sign,*shade,*tray,*menu_label;
+ lv_obj_t *root,*wheel,*car,*peek,*princess,*mouse,*van,*van_door,*van_hit,*sign,*shade,*tray,*menu_label;
  lv_obj_t *dialog,*dialog_text,*audio_hint,*guide_nav,*cabins[12],*cues[3];
  lv_timer_t *timer;
  lv_event_cb_t home_cb,tour_cb,intro_cb,menu_cb,talk_cb;
@@ -98,6 +99,7 @@ static void reset_scene(void) {
  for(int i=0;i<3;i++)visible(s.cues[i],false);
  visible(s.car,false);visible(s.peek,false);visible(s.princess,false);
  if(s.van)lv_obj_set_pos(s.van,211,150);
+ visible(s.van_door,false);
  visible(s.van_hit,true);
  if(s.mouse){lv_obj_set_pos(s.mouse,126,170);visible(s.mouse,true);if(s.sign)lv_obj_move_to_index(s.mouse,lv_obj_get_index(s.sign)+1);}
  close_intro();close_menu();visible(s.sign,false);s.intro_dismissed=s.elapsed;
@@ -157,6 +159,7 @@ static void tick(lv_timer_t *t) {
  }
  if(s.van_running){
   uint32_t d=s.elapsed-s.van_start;
+  visible(s.van_door,d>=800 && d<1800);
   if(d<1800){int climb=d>1000?(int)(d-1000)*20/800:0;lv_obj_set_pos(s.mouse,126+(int)d*92/1800,170-climb);visible(s.mouse,true);}
   else {visible(s.mouse,false);lv_obj_set_x(s.van,211+(int)(d-1800)*130/1400);}
   if(d>=3200){s.van_running=false;s.van_departed=true;visible(s.van_hit,false);}
@@ -184,7 +187,8 @@ void ui_home_set_actions(lv_event_cb_t home_cb,lv_event_cb_t tour_cb,lv_event_cb
 ui_home_state_t ui_home_state(void) {
  return (ui_home_state_t){.active=s.active,.menu_open=s.menu_open,.intro_open=s.dialog!=NULL,
  .sign_visible=s.sign&&!lv_obj_has_flag(s.sign,LV_OBJ_FLAG_HIDDEN),.wheel_running=s.spinning,
- .castle_running=s.peeking,.launch_running=s.launching,.van_running=s.van_running,.timers=s.timer?1u:0u,.intro_page=s.intro_page,
+ .castle_running=s.peeking,.launch_running=s.launching,.van_running=s.van_running,.van_door_open=s.van_door&&!lv_obj_has_flag(s.van_door,LV_OBJ_FLAG_HIDDEN),
+ .castle_guest_visible=s.peek&&!lv_obj_has_flag(s.peek,LV_OBJ_FLAG_HIDDEN),.princess_visible=s.princess&&!lv_obj_has_flag(s.princess,LV_OBJ_FLAG_HIDDEN),.timers=s.timer?1u:0u,.intro_page=s.intro_page,
  .wheel_angle=s.wheel_angle,.car_x=s.car?lv_obj_get_x(s.car):0,.peek_x=s.peek?lv_obj_get_x(s.peek):0,
  .mouse_x=s.mouse?lv_obj_get_x(s.mouse):0,.van_x=s.van?lv_obj_get_x(s.van):0};
 }
@@ -210,6 +214,7 @@ void ui_home_build(ui_home_t *h,lv_obj_t *page,lv_event_cb_t talk_cb,lv_event_cb
 
  sprite(ui_adventure_original_asset(TOUR_ASSET_HOUSE,0),5,117,512);
  s.van=sprite(ui_adventure_original_asset(TOUR_ASSET_VAN,0),211,150,384);
+ s.van_door=sprite(&van_entry_door,220,161,256);visible(s.van_door,false);
  s.sign=sprite(&guide_sign,80,158,256);visible(s.sign,false);
  s.mouse=sprite(orlando_mouse_frames[0],126,170,256);
  /* Small captions sit within the original objects' hit regions. */

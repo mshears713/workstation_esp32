@@ -2996,6 +2996,10 @@
         "capture_dir": {
           "type": "str",
           "default": ""
+        },
+        "idle_test": {
+          "type": "bool",
+          "default": false
         }
       },
       "fixtures": {
@@ -3023,6 +3027,9 @@
         "default": {},
         "test": {
           "test": true
+        },
+        "idle_test": {
+          "idle_test": true
         }
       }
     }

@@ -1,0 +1,28 @@
+{
+  "initial": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "b8dbbcfe2d963fcc6aad3e72d50e22f1",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "fresh": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "88cac2c68d429c0535b76ae696a0e460",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "info": {
+    "actions": [],
+    "frames": 1,
+    "height": 24,
+    "layers": [
+      "Layer 1",
+      "Door frame and threshold",
+      "Interior and handle"
+    ],
+    "width": 15
+  },
+  "png_sha256": "a88dd3d7ba1d89344edec5ff7748c6f306f0ca54053aa0faf3adec1045e4a97a"
+}
