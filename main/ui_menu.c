@@ -76,7 +76,15 @@ void ui_menu_build_pictures(lv_obj_t *page,const char *title,const ui_menu_pictu
     lv_obj_set_style_bg_grad_dir(page,LV_GRAD_DIR_VER,0);
     lv_obj_set_style_bg_opa(page,LV_OPA_COVER,0);
     ui_menu_build(page,title,NULL,0,corner);
-    lv_obj_set_style_text_color(lv_obj_get_child(page,0),lv_color_hex(0xf6edda),0);
+    lv_obj_t *t=lv_obj_get_child(page,0);
+    lv_obj_set_style_text_color(t,lv_color_hex(0xf6edda),0);
+    if (corner) {
+        /* Back key (96 px) and corner key (96 px) leave 124 px of band: the
+         * 32 px title would run under the corner key, so it steps to 20 px
+         * and centres between them. */
+        lv_obj_set_style_text_font(t,&lv_font_montserrat_20,0);
+        lv_obj_align(t,LV_ALIGN_TOP_MID,0,18);
+    }
     for (int i=0;i<count && i<3;i++) {
         lv_obj_t *card=lv_button_create(page);
         lv_obj_set_pos(card,8+i*104,70);lv_obj_set_size(card,96,150);
