@@ -3032,6 +3032,58 @@
           "idle_test": true
         }
       }
+    },
+    "artifacts_flow": {
+      "kind": "page",
+      "description": "Artifacts HOME injected presence and actual Tour A Egypt integration",
+      "sources": [
+        "main/ui_home.c",
+        "main/ui_kit.c",
+        "main/ui_menu.c",
+        "main/ui_adventure.c",
+        "main/ui_story_dialogue.c",
+        "main/voice_listening_widget.c"
+      ],
+      "headers": [
+        "ui_home.h",
+        "ui_adventure.h",
+        "orlando_landmarks.h",
+        "orlando_v3.h",
+        "orlando_v4.h",
+        "orlando_castle_overnight.h",
+        "orlando_sign_overnight.h"
+      ],
+      "adapter": "tools/uisim/targets/artifacts_flow.c",
+      "fields": {
+        "action": {
+          "type": "str",
+          "default": ""
+        },
+        "test": {
+          "type": "bool",
+          "default": false
+        },
+        "capture_dir": {
+          "type": "str",
+          "default": ""
+        },
+        "idle_test": {
+          "type": "bool",
+          "default": false
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "egypt": {
+          "action": "egypt"
+        },
+        "presence": {
+          "action": "presence"
+        },
+        "test": {
+          "action": "test"
+        }
+      }
     }
   }
 }

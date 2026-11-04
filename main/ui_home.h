@@ -86,6 +86,9 @@ void ui_home_set_link(ui_home_t *h, voice_widget_link_t link);
 
 /* Orlando scene owns one timer; suspend it behind pages or tour overlays. */
 void ui_home_set_active(bool active);
+/* Caller supplies real, timestamped range samples; no radar driver is assumed. */
+void ui_home_presence_configure(unsigned threshold_cm,unsigned dwell_ms,unsigned release_ms);
+void ui_home_presence_sample(bool valid,unsigned distance_cm,uint32_t now_ms);
 void ui_home_set_actions(lv_event_cb_t home_cb, lv_event_cb_t tour_cb, lv_event_cb_t intro_cb);
 void ui_home_intro_audio_result(bool accepted);
 typedef struct {

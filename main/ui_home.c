@@ -25,6 +25,8 @@ static struct {
  lv_timer_t *timer;
  lv_event_cb_t home_cb,tour_cb,intro_cb,menu_cb,talk_cb;
  uint32_t elapsed,wheel_start,castle_start,car_start,last_tick,intro_dismissed,van_start,last_peek_cycle;
+ uint32_t presence_since, absence_since; unsigned presence_cm, presence_dwell_ms, presence_release_ms;
+ bool presence_pending, absence_pending, presence_latched;
  int wheel_base,wheel_angle;
  unsigned intro_page;
  bool active,spinning,peeking,launching,menu_open,van_running,van_departed,auto_peek;
@@ -162,7 +164,11 @@ static void tick(lv_timer_t *t) {
   visible(s.van_door,d>=800 && d<1800);
   if(d<1800){int climb=d>1000?(int)(d-1000)*20/800:0;lv_obj_set_pos(s.mouse,126+(int)d*92/1800,170-climb);visible(s.mouse,true);}
   else {visible(s.mouse,false);lv_obj_set_x(s.van,211+(int)(d-1800)*130/1400);}
-  if(d>=3200){s.van_running=false;s.van_departed=true;visible(s.van_hit,false);}
+  if(d>=3200){
+   s.van_running=false;s.van_departed=true;visible(s.van_hit,false);
+   /* The same callback used by the app opens preserved Tour A at Egypt. */
+   if(s.tour_cb){s.tour_cb(NULL);return;}
+  }
  }
  bool sign=!s.van_running&&!s.van_departed&&!s.dialog&&!s.menu_open && s.elapsed-s.intro_dismissed>=6000 && (s.elapsed%14000)>=9000;
  visible(s.sign,sign);
@@ -178,8 +184,35 @@ static void deleted(lv_event_t *e) {
 void ui_home_set_active(bool active) {
  if(!s.root)return;
  s.active=active;s.last_tick=lv_tick_get();
- if(!active){reset_scene();if(s.timer)lv_timer_pause(s.timer);}
+ if(!active){s.presence_pending=false;s.absence_pending=false;reset_scene();if(s.timer)lv_timer_pause(s.timer);}
  else if(s.timer)lv_timer_resume(s.timer);
+}
+/* The source for physical distance must explicitly call this API; no sensor is assumed. */
+void ui_home_presence_configure(unsigned threshold_cm,unsigned dwell_ms,unsigned release_ms) {
+ s.presence_cm=threshold_cm?threshold_cm:150;
+ s.presence_dwell_ms=dwell_ms?dwell_ms:8000;
+ s.presence_release_ms=release_ms?release_ms:2000;
+ s.presence_pending=s.absence_pending=s.presence_latched=false;
+}
+void ui_home_presence_sample(bool valid,unsigned distance_cm,uint32_t now_ms) {
+ if(!s.root || !s.active)return;
+ bool near=valid && distance_cm<=s.presence_cm;
+ if(near){
+  s.absence_pending=false;
+  if(s.presence_latched)return;
+  if(!s.presence_pending){s.presence_pending=true;s.presence_since=now_ms;return;}
+  if(now_ms-s.presence_since>=s.presence_dwell_ms && !s.dialog && !s.van_running){
+   s.presence_pending=false;s.presence_latched=true;
+   open_intro(NULL);
+   if(s.dialog_text)lv_label_set_text(s.dialog_text,"Welcome to Artifacts & Instruments!\nTouch the screen to explore.\nTap the mouse for tour guidance.");
+  }
+ }else{
+  s.presence_pending=false;
+  /* Invalid samples cannot re-arm a trigger: absence must be measured. */
+  if(!valid){s.absence_pending=false;return;}
+  if(!s.absence_pending){s.absence_pending=true;s.absence_since=now_ms;return;}
+  if(now_ms-s.absence_since>=s.presence_release_ms){s.presence_latched=false;s.absence_pending=false;}
+ }
 }
 void ui_home_set_actions(lv_event_cb_t home_cb,lv_event_cb_t tour_cb,lv_event_cb_t intro_cb) {
  s.home_cb=home_cb;s.tour_cb=tour_cb;s.intro_cb=intro_cb;
@@ -196,7 +229,7 @@ void ui_home_build(ui_home_t *h,lv_obj_t *page,lv_event_cb_t talk_cb,lv_event_cb
  memset(h,0,sizeof(*h));
  /* One app HOME instance. Delete the old owned page before constructing another. */
  if(s.timer){lv_timer_delete(s.timer);s.timer=NULL;}
- memset(&s,0,sizeof(s));s.root=page;s.active=true;s.last_tick=lv_tick_get();s.last_peek_cycle=UINT32_MAX;s.menu_cb=menu_cb;s.talk_cb=talk_cb;
+ memset(&s,0,sizeof(s));s.root=page;s.active=true;s.last_tick=lv_tick_get();s.last_peek_cycle=UINT32_MAX;s.menu_cb=menu_cb;s.talk_cb=talk_cb;ui_home_presence_configure(150,8000,2000);
  lv_obj_add_event_cb(page,deleted,LV_EVENT_DELETE,NULL);
  lv_obj_set_style_bg_color(page,lv_color_hex(0x91AD7A),0);lv_obj_set_style_bg_opa(page,LV_OPA_COVER,0);
  sprite(&orlando_v5_background,0,0,256);

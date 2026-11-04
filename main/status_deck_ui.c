@@ -2439,6 +2439,7 @@ static void home_start_tour_cb(lv_event_t *e)
     if (ui_adventure_is_open()) return;
     ui_home_set_active(false);
     ui_adventure_open(app_screen, home_tour_return, NULL);
+    ui_adventure_seek(ADVENTURE_EGYPT);
 }
 
 static void render_weather(void)
