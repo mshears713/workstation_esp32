@@ -27,8 +27,8 @@ void ws_render(lv_obj_t *scr)
     } else {
         const ui_menu_picture_item_t pictures[] = {
             { "Tour", ui_adventure_original_asset(TOUR_ASSET_VAN, 0), 320, ws_noop_event_cb },
-            { "Newton", newton_art_get()->person[0].images[0], 384, ws_noop_event_cb },
-            { "Lincoln", lincoln_art_get()->actor[0], 384, ws_noop_event_cb },
+            { "Newton", newton_art_get()->person[0].images[0], 256, ws_noop_event_cb },
+            { "Lincoln", lincoln_art_get()->actor[0], 256, ws_noop_event_cb },
         };
         static const ui_menu_item_t tools = { "TOOLS " LV_SYMBOL_RIGHT, ws_noop_event_cb };
         ui_menu_build_pictures(page, "EXPLORE", pictures, 3, &tools);

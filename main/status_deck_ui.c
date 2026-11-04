@@ -687,21 +687,6 @@ static void backend_event_cb(backend_health_event_t ev, uint32_t outage_s, const
 static const char *report_pending_trigger = NULL;
 static uint32_t report_seen_seq = 0;
 
-/* Cached on first use from the eFuse-programmed base MAC (esp_mac.h) rather
- * than anything Wi-Fi-related - a real, stable per-device identifier that's
- * available whether or not the station is currently connected. */
-static char device_id_cache[24] = "";
-
-static const char *get_device_id(void)
-{
-    if (device_id_cache[0] == '\0') {
-        uint8_t mac[6];
-        esp_efuse_mac_get_default(mac);
-        snprintf(device_id_cache, sizeof(device_id_cache), "esp32-%02x%02x%02x", mac[3], mac[4], mac[5]);
-    }
-    return device_id_cache;
-}
-
 /* ---- UI widgets (set once in status_deck_ui) ------------------------- */
 
 /* UI suite pages (ui_sensors.c, ui_log.c, ui_settings.c, ui_notify.c) and
@@ -1910,9 +1895,10 @@ void status_deck_ui(lv_obj_t *scr)
      * band so the three exhibit cards keep their full size. */
     const ui_menu_picture_item_t pictures[] = {
         { "Tour", ui_adventure_original_asset(TOUR_ASSET_VAN, 0), 320, tour_open_cb },
-        /* The scenes' own native figures (idle Newton, Lincoln's first pose). */
-        { "Newton", newton_art_get()->person[0].images[0], 384, newton_card_cb },
-        { "Lincoln", lincoln_art_get()->actor[0], 384, lincoln_card_cb },
+        /* The scenes' own native figures (idle Newton, Lincoln's first pose), at
+         * 1:1 - Lincoln's frames are indexed (I8), which LVGL cannot scale. */
+        { "Newton", newton_art_get()->person[0].images[0], 256, newton_card_cb },
+        { "Lincoln", lincoln_art_get()->actor[0], 256, lincoln_card_cb },
     };
     static const ui_menu_item_t workshop_key = { "TOOLS " LV_SYMBOL_RIGHT, workshop_nav_button_cb };
     ui_menu_build_pictures(page_explore, "EXPLORE", pictures, (int)(sizeof(pictures) / sizeof(pictures[0])),

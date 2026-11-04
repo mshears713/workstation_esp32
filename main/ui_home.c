@@ -43,7 +43,7 @@ static struct {
  lv_obj_t *root,*wheel,*car,*peek,*princess,*mouse,*van,*van_door,*van_hit,*sign,*shade,*tray,*menu_label;
  lv_obj_t *bridge,*van_shadow,*mouse_shadow;
  unsigned bridge_frame;
- lv_obj_t *dialog,*dialog_text,*audio_hint,*guide_nav,*cabins[12],*cues[3];
+ lv_obj_t *dialog,*dialog_text,*dialog_title,*audio_hint,*guide_nav,*cabins[12],*cues[3];
  lv_timer_t *timer;
  lv_event_cb_t home_cb,tour_cb,intro_cb,menu_cb,talk_cb;
  uint32_t elapsed,wheel_start,castle_start,car_start,last_tick,intro_dismissed,van_start,last_peek_cycle;
@@ -93,7 +93,7 @@ static void close_menu(void) {
 }
 static void close_intro(void) {
  if(s.dialog)lv_obj_delete(s.dialog);
- s.dialog=NULL;s.dialog_text=NULL;s.audio_hint=NULL;s.guide_nav=NULL;s.intro_dismissed=s.elapsed;
+ s.dialog=NULL;s.dialog_text=NULL;s.dialog_title=NULL;s.audio_hint=NULL;s.guide_nav=NULL;s.intro_dismissed=s.elapsed;
 }
 static const char *guide[]={
  "Hello traveler, welcome to\nMaker Faire 2026!",
@@ -106,7 +106,7 @@ static void open_intro(lv_event_t *e) {
  lv_obj_t *paper=flat(s.dialog,10,27,300,204,0xF3E9CF,LV_OPA_COVER);lv_obj_set_style_radius(paper,10,0);
  lv_obj_t *portrait=lv_image_create(paper);lv_image_set_src(portrait,ai_mouse_frames[0]);
  lv_image_set_pivot(portrait,0,0);lv_image_set_scale(portrait,171);lv_image_set_antialias(portrait,false);lv_obj_set_pos(portrait,12,8);
- label(paper,"Hello, traveler!",54,14,234,&lv_font_montserrat_20,0x25303D);
+ s.dialog_title=label(paper,"Hello, traveler!",54,14,234,&lv_font_montserrat_20,0x25303D);
  s.dialog_text=label(paper,guide[0],12,58,276,&lv_font_montserrat_14,0x25303D);
  /* Routine audio availability is not part of the welcome copy. */
  button(paper,"Close guide",72,151,156,42,ACT_CLOSE);
@@ -234,6 +234,7 @@ static const char *welcome_text="Welcome to Artifacts & Instruments!\nThis scree
 void ui_home_show_welcome(void) {
  if(!s.root || !s.active || s.dialog || s.van_running)return;
  open_intro(NULL);
+ if(s.dialog_title)lv_label_set_text(s.dialog_title,"Welcome!");
  if(s.dialog_text)lv_label_set_text(s.dialog_text,welcome_text);
 }
 void ui_home_set_actions(lv_event_cb_t home_cb,lv_event_cb_t tour_cb,lv_event_cb_t intro_cb) {

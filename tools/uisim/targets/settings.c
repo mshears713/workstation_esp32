@@ -18,7 +18,7 @@ void ws_render(lv_obj_t *scr)
     static const char *const wifi[] = { "off", "joining", "online", "retry" };
     static const char *const api[] = { "unknown", "ok", "down", "no_net" };
     ui_settings_view_t v = {
-        .uptime_s = (uint32_t)ws_fx_i64("uptime_s", 2537),
+        .uptime_s = (uint32_t)ws_fx_int("uptime_s", 2537),
         .ip_octet = ws_fx_str("ip_octet", ".57"),
         .wifi_attempts = (uint32_t)ws_fx_int("wifi_attempts", 1),
         .wifi_reason = ws_fx_str("wifi_reason", ""),
