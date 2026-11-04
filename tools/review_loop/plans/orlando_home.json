@@ -2,43 +2,183 @@
   "name": "orlando-home",
   "ui": "HOME (main/ui_home.c, built by status_deck_ui.c ui_home_build)",
   "target": "orlando_overnight",
-  "about": "Moments are the ones tools/orlando_overnight/verify.py used for the overnight HOME candidate.",
+  "about": "Moments are the ones tools/orlando_overnight/verify.py used for the overnight HOME candidate. OLD BASELINE PLAN: valid for the November overnight firmware (ae8ff86 lineage); its targets are not registered in the exhibit build and it does not test Artifacts & Instruments.",
   "stills": [
-    {"name": "idle", "fixture": "default", "advance_ms": 500},
-    {"name": "sign", "fixture": "default", "advance_ms": 9500},
-    {"name": "menu", "fixture": "home", "advance_ms": 0},
-    {"name": "guide", "fixture": "guide", "advance_ms": 0},
-    {"name": "castle", "fixture": "castle", "advance_ms": 1000},
-    {"name": "wheel", "fixture": "wheel", "advance_ms": 500},
-    {"name": "coaster", "fixture": "coaster", "advance_ms": 1000},
-    {"name": "coaster-last-visible", "fixture": "coaster", "advance_ms": 1200},
-    {"name": "coaster-hidden", "fixture": "coaster", "advance_ms": 1250},
-    {"name": "van-boarding", "fixture": "van", "advance_ms": 1000},
-    {"name": "van-leaving", "fixture": "van", "advance_ms": 2400,
-     "accept": {"viewport": "the van drives off the right edge by design"}}
+    {
+      "name": "idle",
+      "fixture": "default",
+      "advance_ms": 500
+    },
+    {
+      "name": "sign",
+      "fixture": "default",
+      "advance_ms": 9500
+    },
+    {
+      "name": "menu",
+      "fixture": "home",
+      "advance_ms": 0
+    },
+    {
+      "name": "guide",
+      "fixture": "guide",
+      "advance_ms": 0
+    },
+    {
+      "name": "castle",
+      "fixture": "castle",
+      "advance_ms": 1000
+    },
+    {
+      "name": "wheel",
+      "fixture": "wheel",
+      "advance_ms": 500
+    },
+    {
+      "name": "coaster",
+      "fixture": "coaster",
+      "advance_ms": 1000
+    },
+    {
+      "name": "coaster-last-visible",
+      "fixture": "coaster",
+      "advance_ms": 1200
+    },
+    {
+      "name": "coaster-hidden",
+      "fixture": "coaster",
+      "advance_ms": 1250
+    },
+    {
+      "name": "van-boarding",
+      "fixture": "van",
+      "advance_ms": 1000
+    },
+    {
+      "name": "van-leaving",
+      "fixture": "van",
+      "advance_ms": 2400,
+      "accept": {
+        "viewport": "the van drives off the right edge by design"
+      }
+    }
   ],
   "motion": [
-    {"name": "coaster", "fixture": "coaster", "advance_ms": 1600},
-    {"name": "castle", "fixture": "castle", "advance_ms": 2700},
-    {"name": "van", "fixture": "van", "advance_ms": 3500},
-    {"name": "wheel", "fixture": "wheel", "advance_ms": 3300},
-    {"name": "idle-cycle", "fixture": "default", "advance_ms": 14200}
+    {
+      "name": "coaster",
+      "fixture": "coaster",
+      "advance_ms": 1600
+    },
+    {
+      "name": "castle",
+      "fixture": "castle",
+      "advance_ms": 2700
+    },
+    {
+      "name": "van",
+      "fixture": "van",
+      "advance_ms": 3500
+    },
+    {
+      "name": "wheel",
+      "fixture": "wheel",
+      "advance_ms": 3300
+    },
+    {
+      "name": "idle-cycle",
+      "fixture": "default",
+      "advance_ms": 14200
+    }
   ],
   "tests": [
-    {"name": "interaction", "fixture": "test", "advance_ms": 8000, "require": "ORLANDO_OVERNIGHT_PASS"},
-    {"name": "idle", "fixture": "idle_test", "advance_ms": 11000, "require": "IDLE_PEEK_PASS"}
+    {
+      "name": "interaction",
+      "fixture": "test",
+      "advance_ms": 8000,
+      "require": "ORLANDO_OVERNIGHT_PASS"
+    },
+    {
+      "name": "idle",
+      "fixture": "idle_test",
+      "advance_ms": 11000,
+      "require": "IDLE_PEEK_PASS"
+    }
   ],
   "references": [
-    {"name": "newton", "target": "newton", "advance_ms": 1200,
-     "why": "a scene Mike rated strong: shaded architecture, cast shadows, grounded figure"}
+    {
+      "name": "newton",
+      "target": "newton",
+      "advance_ms": 1200,
+      "why": "a scene Mike rated strong: shaded architecture, cast shadows, grounded figure"
+    }
   ],
   "focus": [
-    {"name": "castle base / ground contact", "still": "idle", "rect": [96, 88, 224, 140], "scale": 3},
-    {"name": "coaster car, last visible frame", "still": "coaster-last-visible", "rect": [96, 24, 224, 88], "scale": 3},
-    {"name": "same place 50 ms later (car hidden)", "still": "coaster-hidden", "rect": [96, 24, 224, 88], "scale": 3},
-    {"name": "mouse at van door", "still": "van-boarding", "rect": [180, 140, 300, 200], "scale": 3},
-    {"name": "van and ground", "still": "idle", "rect": [200, 145, 310, 200], "scale": 3},
-    {"name": "house base", "still": "idle", "rect": [10, 120, 90, 205], "scale": 3}
+    {
+      "name": "castle base / ground contact",
+      "still": "idle",
+      "rect": [
+        96,
+        88,
+        224,
+        140
+      ],
+      "scale": 3
+    },
+    {
+      "name": "coaster car, last visible frame",
+      "still": "coaster-last-visible",
+      "rect": [
+        96,
+        24,
+        224,
+        88
+      ],
+      "scale": 3
+    },
+    {
+      "name": "same place 50 ms later (car hidden)",
+      "still": "coaster-hidden",
+      "rect": [
+        96,
+        24,
+        224,
+        88
+      ],
+      "scale": 3
+    },
+    {
+      "name": "mouse at van door",
+      "still": "van-boarding",
+      "rect": [
+        180,
+        140,
+        300,
+        200
+      ],
+      "scale": 3
+    },
+    {
+      "name": "van and ground",
+      "still": "idle",
+      "rect": [
+        200,
+        145,
+        310,
+        200
+      ],
+      "scale": 3
+    },
+    {
+      "name": "house base",
+      "still": "idle",
+      "rect": [
+        10,
+        120,
+        90,
+        205
+      ],
+      "scale": 3
+    }
   ],
   "visual_review": [
     "Castle: does it stand on the ground, or float on a slab above the horizon? Look at focus crop 'castle base'.",
@@ -50,13 +190,66 @@
     "Menu and guide stills: is the text readable at arm's length and does the overlay fit the scene?"
   ],
   "art": [
-    {"symbol": "castle_overnight", "file": "main/orlando_castle_overnight.h", "source": {"project": "castle-overnight", "frame": 0}},
-    {"symbol": "launch_bridge", "file": "main/orlando_castle_overnight.h", "source": {"project": "launch-bridge", "frame": 0}},
-    {"symbol": "van_entry_door", "file": "main/orlando_van_door.h", "source": {"project": "van-entry-door", "frame": 0}},
-    {"symbol": "guide_sign", "file": "main/orlando_sign_overnight.h", "source": {"project": "guide-sign", "frame": 0}},
-    {"symbol": "home_plaque", "file": "main/orlando_sign_overnight.h", "source": {"project": "house-home-plaque", "frame": 0}},
-    {"symbol": "mouse0", "file": "main/orlando_v5_mouse.h", "source": {"project": "mouse-overnight-48", "frame": 0}},
-    {"symbol": "orlando_v5_background", "file": "main/orlando_v5_background.h",
-     "note": "assembled from Pixelorama tiles (tools/orlando_overnight/convert_scene.py, background-overnight2 manifest); tiled sources are not supported by review.py yet"}
+    {
+      "symbol": "castle_overnight",
+      "file": "main/orlando_castle_overnight.h",
+      "source": {
+        "project": "castle-overnight",
+        "frame": 0
+      }
+    },
+    {
+      "symbol": "launch_bridge",
+      "file": "main/orlando_castle_overnight.h",
+      "source": {
+        "project": "launch-bridge",
+        "frame": 0
+      }
+    },
+    {
+      "symbol": "van_entry_door",
+      "file": "main/orlando_van_door.h",
+      "source": {
+        "project": "van-entry-door",
+        "frame": 0
+      }
+    },
+    {
+      "symbol": "guide_sign",
+      "file": "main/orlando_sign_overnight.h",
+      "source": {
+        "project": "guide-sign",
+        "frame": 0
+      }
+    },
+    {
+      "symbol": "home_plaque",
+      "file": "main/orlando_sign_overnight.h",
+      "source": {
+        "project": "house-home-plaque",
+        "frame": 0
+      }
+    },
+    {
+      "symbol": "mouse0",
+      "file": "main/orlando_v5_mouse.h",
+      "source": {
+        "project": "mouse-overnight-48",
+        "frame": 0
+      }
+    },
+    {
+      "symbol": "orlando_v5_background",
+      "file": "main/orlando_v5_background.h",
+      "note": "assembled from Pixelorama tiles (tools/orlando_overnight/convert_scene.py, background-overnight2 manifest); tiled sources are not supported by review.py yet"
+    }
+  ],
+  "baseline": {
+    "label": "orlando-overnight",
+    "commit": "ae8ff86d3449d2e34f87140cf698bda9b91a3a05"
+  },
+  "required": [
+    "stills",
+    "tests"
   ]
 }

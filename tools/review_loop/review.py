@@ -1,27 +1,30 @@
 #!/usr/bin/env python3
-"""Workstation review loop: real firmware UI -> real LVGL simulator -> review bundle.
+"""Workstation review loop: exact inputs -> real LVGL simulator -> review bundle.
 
-    python3 tools/review_loop/review.py --plan orlando_home [--sim PATH] [--art DIR ...] [--integrate]
+    python3 tools/review_loop/review.py --plan artifacts_home --sim PATH --art-lock LOCK.json --art DIR
+    python3 tools/review_loop/review.py --plan artifacts_home --sim PATH --committed-art-diagnostic
 
-One run does, in order, and records every step:
+Evidence rules this tool enforces:
 
-  1. provenance   commits, branches, dirty files and SHA-256 of every file the render uses
-  2. target       the plan's registered simulator target exists, its files exist, and the
-                  firmware build (main/CMakeLists.txt) compiles the same sources
-  3. assets       every LVGL image descriptor the target can reach is self-consistent
-                  (format, width, height, stride, array length)
-  4. art          optional: Artwork Workshop exports (--art) compared byte-for-byte with the
-                  firmware arrays they should have produced; --integrate puts them into a
-                  disposable copy of the firmware and renders that copy instead
-  5. renders      stills, animation captures, interaction tests and reference scenes, each
-                  through the existing `ws-ui` CLI of the workstation-lvgl-sim checkout
-  6. bundle       native 320x240 PNGs, contact sheets, crops, a GIF, results.json,
-                  manifest.json, DOTTIE.md and a zip
+  * Inputs are frozen first. The firmware files a render can read (main/, tools/uisim/,
+    sdkconfig, build/lock files) are copied into the run's snapshot and hashed; every render
+    uses the snapshot. At the end the live checkout and simulator are hashed again: if
+    anything changed during the run the result FAILS (the evidence no longer matches them).
+  * Art selection is exact. --art-lock pins, per Workshop project, the delivery package's
+    revision, checkpoint, manifest SHA-256 and file SHA-256s. Only that package can satisfy
+    it. If it is missing, corrupt, ambiguous or the wrong size, that binding FAILS and the
+    run is blocked. Older packages and loose exports are never used instead.
+  * Committed-art renders are a separate, labelled diagnostic (--committed-art-diagnostic).
+    They never count as validation of a native checkpoint.
+  * A plan names its required stages. A required stage that failed, could not run or is
+    unsupported makes the technical result FAIL or INCOMPLETE (exit 1 / 2), never PASS.
+  * Firmware build membership is only claimed from a configured build (--build-dir with
+    compile_commands.json). Without one it is reported as not run.
+  * Readiness is reported on separate axes; this tool never sets visual acceptance,
+    delivery, firmware build or hardware acceptance.
 
-It never edits the firmware checkout, commits, converts art into firmware for keeps, builds
-with ESP-IDF, flashes or deploys. A stage that cannot run says UNAVAILABLE; nothing is
-mocked. Exit code: 0 = every deterministic check passed (warnings allowed), 1 = something
-failed, 2 = a required stage could not run.
+It never edits the firmware checkout (integration happens in the snapshot), commits,
+promotes art, runs an ESP-IDF build, flashes or deploys.
 """
 from __future__ import annotations
 
@@ -38,6 +41,7 @@ import zipfile
 from pathlib import Path
 
 try:
+    import PIL
     from PIL import Image, ImageChops, ImageDraw, ImageFont
 except ImportError:  # the art converters in tools/ need Pillow too
     sys.exit("review.py needs Pillow: python3 -m pip install pillow")
@@ -48,11 +52,30 @@ DEFAULT_REPO = HERE.parents[1]
 DEFAULT_SIM = Path(os.environ.get("WS_SIM", "/opt/workstation/lvgl-sim"))
 BPP = {"ARGB8888": 4, "XRGB8888": 4, "RGB888": 3, "RGB565": 2, "A8": 1, "L8": 1}
 
-PASS, WARN, FAIL, UNAVAILABLE, INFO = "PASS", "WARN", "FAIL", "UNAVAILABLE", "INFO"
+PASS, WARN, FAIL, UNAVAILABLE, UNSUPPORTED, INFO, SKIPPED = (
+    "PASS", "WARN", "FAIL", "UNAVAILABLE", "UNSUPPORTED", "INFO", "SKIPPED")
+BLOCKING = {FAIL, UNAVAILABLE, UNSUPPORTED}
+
+# What a render can read from the firmware checkout; frozen into the snapshot.
+SNAPSHOT_DIRS = ["main", "tools/uisim"]
+SNAPSHOT_FILES = ["sdkconfig", "sdkconfig.defaults", "CMakeLists.txt", "dependencies.lock", "partitions.csv"]
+# Never copied, hashed into the manifest or bundled (private device configuration).
+PRIVATE_NAMES = {"wifi_credentials.h"}
+PRIVATE_SUFFIXES = (".key", ".pem.key")
+SIM_IDENTITY = ["bin", "wsui", "simulator/main.c", "simulator/ws_fixture.c", "simulator/hal",
+                "simulator/export", "simulator/include"]
+SECRET_PATTERNS = [re.compile(p) for p in (
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----", r"\bgh[pousr]_[A-Za-z0-9]{30,}", r"\bgithub_pat_[A-Za-z0-9_]{30,}",
+    r"\bAKIA[0-9A-Z]{16}\b", r"\bsk-[A-Za-z0-9]{32,}", r"(?i)\b(password|passwd|api[_-]?key|secret|token)\s*[=:]\s*\S{8,}",
+    r"\bya29\.[A-Za-z0-9_-]{20,}", r"(?i)WIFI_(PASS|PASSWORD|SSID)\s+\"")]
 
 
 def sha256(path: Path) -> str:
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def now_utc() -> str:
@@ -69,23 +92,33 @@ def run(cmd: list[str], cwd: Path | None = None, timeout: int = 120) -> tuple[in
         return 124, f"timed out after {timeout}s"
 
 
+def is_private(path: Path) -> bool:
+    return path.name in PRIVATE_NAMES or path.name.endswith(PRIVATE_SUFFIXES)
+
+
 class Results:
     """Every stage result, in order. Nothing is reported as passing unless it ran."""
 
     def __init__(self):
         self.items: list[dict] = []
 
-    def add(self, stage: str, name: str, status: str, detail: str, **data):
-        self.items.append({"stage": stage, "name": name, "status": status, "detail": detail, **data})
-        print(f"  [{status:11}] {stage}/{name}: {detail}", flush=True)
+    def add(self, stage: str, name: str, status: str, detail: str, required: bool = False, **data):
+        self.items.append({"stage": stage, "name": name, "status": status, "required": required, "detail": detail, **data})
+        print(f"  [{status:11}] {stage}/{name}{' (required)' if required else ''}: {detail}", flush=True)
 
-    def overall(self) -> tuple[str, int]:
-        states = {i["status"] for i in self.items}
-        if FAIL in states:
+    def technical(self) -> tuple[str, int]:
+        """FAIL (1): something failed. INCOMPLETE (2): a required stage could not run or is
+        unsupported. PASS_WITH_WARNINGS / PASS (0) only when every required stage passed."""
+        if any(i["status"] == FAIL for i in self.items):
             return "FAIL", 1
-        if any(i["status"] == UNAVAILABLE and i.get("required") for i in self.items):
+        if any(i["status"] in BLOCKING and i["required"] for i in self.items):
             return "INCOMPLETE", 2
-        return ("PASS_WITH_WARNINGS" if WARN in states or UNAVAILABLE in states else "PASS"), 0
+        states = {i["status"] for i in self.items}
+        return ("PASS_WITH_WARNINGS" if states & {WARN, UNAVAILABLE, UNSUPPORTED} else "PASS"), 0
+
+    def stage_ok(self, stage: str) -> bool:
+        got = [i for i in self.items if i["stage"] == stage]
+        return bool(got) and all(i["status"] not in BLOCKING for i in got)
 
 
 # ------------------------------------------------------------------ provenance
@@ -95,11 +128,69 @@ def git_info(path: Path) -> dict:
         rc, out = run(["git", "-C", str(path), *args])
         return out.strip() if rc == 0 else None
     url = g("remote", "get-url", "origin") or ""
-    info = {"path": str(path), "commit": g("rev-parse", "HEAD"), "branch": g("rev-parse", "--abbrev-ref", "HEAD"),
-            "remote": re.sub(r"//[^/@]*@", "//", url)}
-    status = g("status", "--porcelain", "--untracked-files=no")
-    info["dirty_files"] = [ln[3:] for ln in (status or "").splitlines()]
-    return info
+    status = g("status", "--porcelain", "--untracked-files=all") or ""
+    return {"commit": g("rev-parse", "HEAD"), "branch": g("rev-parse", "--abbrev-ref", "HEAD"),
+            "remote": re.sub(r"//[^/@]*@", "//", url),
+            "dirty_files": [ln[3:] for ln in status.splitlines() if not ln.startswith("??")],
+            "untracked_files": [ln[3:] for ln in status.splitlines() if ln.startswith("??")]}
+
+
+def tree_hashes(root: Path, entries: list[str]) -> dict[str, str]:
+    out = {}
+    for e in entries:
+        p = root / e
+        files = [p] if p.is_file() else sorted(q for q in p.rglob("*") if q.is_file()) if p.is_dir() else []
+        for f in files:
+            if is_private(f) or "__pycache__" in f.parts:
+                continue
+            out[str(f.relative_to(root))] = sha256(f)
+    return out
+
+
+def digest(hashes: dict[str, str]) -> str:
+    return hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
+
+
+def drift(before: dict[str, str], after: dict[str, str]) -> list[str]:
+    """Files added, removed or changed between two hash maps."""
+    return sorted({k for k in before.keys() | after.keys() if before.get(k) != after.get(k)})
+
+
+def freeze(repo: Path, dest: Path) -> tuple[dict[str, str], list[str]]:
+    """Copy what a render can read into dest; return {file: sha256} and excluded private names."""
+    excluded = []
+    for d in SNAPSHOT_DIRS:
+        src = repo / d
+        for f in sorted(src.rglob("*")):
+            if not f.is_file() or "__pycache__" in f.parts:
+                continue
+            if is_private(f):
+                excluded.append(str(f.relative_to(repo)))
+                continue
+            t = dest / f.relative_to(repo)
+            t.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, t)
+    for f in SNAPSHOT_FILES:
+        if (repo / f).is_file():
+            shutil.copy2(repo / f, dest / f)
+    return tree_hashes(dest, SNAPSHOT_DIRS + SNAPSHOT_FILES), excluded
+
+
+def tool_identity(sim: Path, snapshot: Path) -> dict:
+    ident = {"python": sys.version.split()[0], "pillow": PIL.__version__,
+             "review_py_sha256": sha256(Path(__file__)),
+             "gcc": (run(["gcc", "--version"])[1].splitlines() or ["?"])[0],
+             "ar": (run(["ar", "--version"])[1].splitlines() or ["?"])[0]}
+    code = ("import sys,json;sys.path.insert(0,sys.argv[1]);from wsui import build as b;from pathlib import Path;"
+            "h=b.kconfig_header(Path(sys.argv[2])/'sdkconfig');c=b._lvgl_commit();f=' '.join([b.CC,*b.LIB_CFLAGS]);"
+            "print(json.dumps({'lvgl_version':b.lvgl_version(),'lvgl_commit':c,'lvgl_config_hash':b._sha(h.encode(),c.encode(),f.encode()),"
+            "'lvgl_cflags':f,'firmware_lvgl_lock':b.firmware_lvgl_version(Path(sys.argv[2]))}))")
+    rc, out = run([sys.executable, "-c", code, str(sim), str(snapshot)])
+    try:
+        ident.update(json.loads(out.strip().splitlines()[-1]) if rc == 0 else {"lvgl_identity_error": out.strip()[-300:]})
+    except (ValueError, IndexError):
+        ident["lvgl_identity_error"] = out.strip()[-300:]
+    return ident
 
 
 def target_files(repo: Path, target: dict) -> list[str]:
@@ -112,11 +203,28 @@ def target_files(repo: Path, target: dict) -> list[str]:
         for inc in re.findall(r'#include\s+"([^"]+)"', text):
             p = repo / "main" / inc
             rel = f"main/{inc}"
-            if p.is_file() and rel not in seen:
+            if p.is_file() and rel not in seen and not is_private(p):
                 seen.add(rel)
                 files.append(rel)
                 queue.append(p)
     return files
+
+
+def build_membership(build_dir: Path, repo: Path, sources: list[str]) -> tuple[str, str]:
+    """Effective configured build evidence: is each source a compile unit in compile_commands.json?"""
+    cc = build_dir / "compile_commands.json"
+    if not cc.is_file():
+        return UNAVAILABLE, f"{cc} not found: firmware build membership not verified (configure an ESP-IDF build first)"
+    try:
+        units = {Path(e["file"]).name if not Path(e["file"]).is_absolute() else str(Path(e["file"]).resolve())
+                 for e in json.loads(cc.read_text())}
+    except (ValueError, KeyError, TypeError) as e:
+        return FAIL, f"unreadable compile_commands.json: {e}"
+    names = {Path(u).name for u in units}
+    missing = [s for s in sources if Path(s).name not in names]
+    if missing:
+        return WARN, f"simulator links sources this configured build does not compile: {missing}"
+    return PASS, f"all {len(sources)} sources are compile units of the configured build {build_dir}"
 
 
 # ------------------------------------------------------------------ LVGL image arrays
@@ -195,61 +303,97 @@ def convert(img: Image.Image, fmt: str) -> bytes:
     raise ValueError(f"no converter for {fmt}")
 
 
-# ------------------------------------------------------------------ Artwork Workshop exports
+def replace_array(path: Path, name: str, data: bytes):
+    text = path.read_text()
+    start, end = find_array(text, name)
+    path.write_text(text[:start] + ",".join(map(str, data)) + text[end:])
 
-def find_export(art_dirs: list[Path], project: str, frame: int) -> tuple[Image.Image, dict] | tuple[None, str]:
-    """Locate frame `frame` of Workshop project `project`. Preference: a delivery package
-    (pixelorama-workshop/delivery-v1, hashes verified), then an exported frame_NNN.png, then
-    an atlas.png + atlas.json (atlas-v1) from the worker volume."""
-    problems = []
+
+# ------------------------------------------------------------------ exact art selection
+
+class ArtError(Exception):
+    pass
+
+
+def load_lock(path: Path) -> dict[str, dict]:
+    lock = json.loads(path.read_text())
+    if lock.get("schema") != "workstation-review/art-lock-v1":
+        raise ArtError(f"{path}: schema must be workstation-review/art-lock-v1")
+    out = {}
+    for e in lock.get("selection", []):
+        for k in ("project", "revision", "checkpoint", "manifest_sha256", "files"):
+            if k not in e:
+                raise ArtError(f"{path}: selection entry missing '{k}'")
+        if e["project"] in out:
+            raise ArtError(f"{path}: project {e['project']} selected twice")
+        out[e["project"]] = e
+    return out
+
+
+def select_package(art_dirs: list[Path], sel: dict) -> tuple[Path, dict, list[str]]:
+    """The one delivery package that is exactly `sel`, verified. Raises ArtError otherwise.
+    Other packages of the same project are reported, never used."""
+    project = sel["project"]
+    matches, others = [], []
     for root in art_dirs:
-        packages = []
-        for m in root.rglob("manifest.json"):
+        for m in sorted(root.rglob("manifest.json")):
             try:
                 j = json.loads(m.read_text())
             except (OSError, ValueError):
                 continue
-            if j.get("schema") == "pixelorama-workshop/delivery-v1" and j.get("project") == project:
-                packages.append((j.get("revision", 0), m, j))
-        for rev, m, j in sorted(packages, key=lambda t: t[0], reverse=True):
-            bad = [f["name"] for f in j.get("files", []) if not (m.parent / f["name"]).is_file()
-                   or sha256(m.parent / f["name"]) != f["sha256"]]
-            if bad:
-                problems.append(f"{m.parent}: files missing or not matching manifest SHA-256: {bad}")
+            if j.get("schema") != "pixelorama-workshop/delivery-v1" or j.get("project") != project:
                 continue
-            atlas = next((m.parent / f["name"] for f in j["files"] if f["name"].endswith("-atlas.png")), None)
-            rect = next((f for f in j["atlas"]["frames"] if f.get("index") == frame), None)
-            if atlas and rect:
-                img = Image.open(atlas).crop((rect["x"], rect["y"], rect["x"] + rect["width"], rect["y"] + rect["height"]))
-                return img, {"kind": "delivery package", "path": str(atlas), "sha256": sha256(atlas),
-                             "revision": rev, "checkpoint": j.get("checkpoint"), "frame": frame}
+            if j.get("revision") == sel["revision"] and j.get("checkpoint") == sel["checkpoint"]:
+                matches.append((m, j))
+            else:
+                others.append(f"r{j.get('revision')} {j.get('checkpoint')} at {m.parent}")
+    if not matches:
+        raise ArtError(f"selected package {project} r{sel['revision']} {sel['checkpoint']} not found"
+                       + (f" (ignored other packages: {others})" if others else ""))
+    if len(matches) > 1:
+        raise ArtError(f"selected package {project} r{sel['revision']} found {len(matches)} times: ambiguous "
+                       f"({[str(m.parent) for m, _ in matches]})")
+    m, j = matches[0]
+    if sha256(m) != sel["manifest_sha256"]:
+        raise ArtError(f"{m}: manifest SHA-256 {sha256(m)[:12]} is not the locked {sel['manifest_sha256'][:12]}")
+    listed = {f["name"]: f for f in j.get("files", [])}
+    if set(listed) != set(sel["files"]):
+        raise ArtError(f"{m}: package files {sorted(listed)} differ from the locked set {sorted(sel['files'])}")
+    for name, want in sel["files"].items():
+        p = m.parent / name
+        if not p.is_file():
+            raise ArtError(f"{p}: selected file missing")
+        got = sha256(p)
+        if got != want or got != listed[name]["sha256"] or p.stat().st_size != listed[name].get("bytes", p.stat().st_size):
+            raise ArtError(f"{p}: SHA-256 {got[:12]} does not match lock {want[:12]} / manifest {listed[name]['sha256'][:12]}")
+    return m.parent, j, others
+
+
+def frame_from_package(pkg: Path, manifest: dict, frame: int) -> Image.Image:
+    atlas = next((pkg / f["name"] for f in manifest["files"] if f["name"].endswith("-atlas.png")), None)
+    rect = next((f for f in manifest.get("atlas", {}).get("frames", []) if f.get("index") == frame), None)
+    if atlas is None or rect is None:
+        raise ArtError(f"{pkg}: no atlas or no frame {frame} in the manifest")
+    img = Image.open(atlas)
+    want = (manifest["atlas"].get("width"), manifest["atlas"].get("height"))
+    if img.size != want:
+        raise ArtError(f"{atlas}: atlas is {img.size}, manifest says {want}")
+    return img.crop((rect["x"], rect["y"], rect["x"] + rect["width"], rect["y"] + rect["height"]))
+
+
+def find_loose(art_dirs: list[Path], project: str, frame: int):
+    """Diagnostic only: a loose exported frame or worker atlas. Never satisfies an art lock."""
+    for root in art_dirs:
         for p in root.rglob(f"{project}/frame_{frame:03}.png"):
-            return Image.open(p), {"kind": "exported frame", "path": str(p), "sha256": sha256(p), "frame": frame}
+            return Image.open(p), {"kind": "loose exported frame (diagnostic)", "path": str(p), "sha256": sha256(p)}
         for aj in root.rglob(f"{project}/atlas.json"):
             j = json.loads(aj.read_text())
             rect = next((f for f in j.get("frames", []) if f.get("index") == frame), None)
             png = aj.parent / j.get("image", "atlas.png")
             if rect and png.is_file():
-                img = Image.open(png).crop((rect["x"], rect["y"], rect["x"] + rect["width"], rect["y"] + rect["height"]))
-                return img, {"kind": "worker atlas", "path": str(png), "sha256": sha256(png), "frame": frame}
-    return None, "; ".join(problems) or f"no export of {project} frame {frame} under {', '.join(map(str, art_dirs))}"
-
-
-def make_work_copy(repo: Path, dest: Path) -> Path:
-    """The smallest copy the renderer needs: main/, tools/uisim/, sdkconfig. Never the original."""
-    if dest.exists():
-        shutil.rmtree(dest)
-    dest.mkdir(parents=True)
-    shutil.copytree(repo / "main", dest / "main")
-    shutil.copytree(repo / "tools" / "uisim", dest / "tools" / "uisim")
-    shutil.copy2(repo / "sdkconfig", dest / "sdkconfig")
-    return dest
-
-
-def replace_array(path: Path, name: str, data: bytes):
-    text = path.read_text()
-    start, end = find_array(text, name)
-    path.write_text(text[:start] + ",".join(map(str, data)) + text[end:])
+                return (Image.open(png).crop((rect["x"], rect["y"], rect["x"] + rect["width"], rect["y"] + rect["height"])),
+                        {"kind": "loose worker atlas (diagnostic)", "path": str(png), "sha256": sha256(png)})
+    return None, f"no loose export of {project} frame {frame}"
 
 
 # ------------------------------------------------------------------ simulator calls
@@ -270,14 +414,15 @@ class Sim:
         m = re.search(r"files: (.*?)/screen\.png", out)
         rdir = Path(m.group(1)) if m else None
         if rdir is None:
-            m = re.search(r"render (\S+?): ", out)
-            rdir = self.cache / m.group(1) if m else None
-        return {"cmd": cmd, "rc": rc, "ok": rc == 0 and m is not None and (rdir / "screen.png").is_file(),
-                "dir": rdir, "output": out}
+            m2 = re.search(r"render (\S+?)[):]", out)
+            rdir = self.cache / m2.group(1) if m2 else None
+        ok = rc == 0 and m is not None and rdir is not None and (rdir / "screen.png").is_file()
+        return {"cmd": cmd, "rc": rc, "ok": ok, "dir": rdir, "output": out}
 
 
 def keep(render: dict, dest: Path, stem: str) -> dict:
-    """Copy the render record into the bundle at once (the renderer keeps only 60)."""
+    """Copy the render record into the bundle at once (the renderer keeps only 60), including
+    the log and adapter source of a FAILED render."""
     dest.mkdir(parents=True, exist_ok=True)
     kept = {}
     src = render["dir"]
@@ -286,9 +431,10 @@ def keep(render: dict, dest: Path, stem: str) -> dict:
         if src and (src / fname).is_file():
             shutil.copy2(src / fname, dest / out)
             kept[fname] = dest / out
+    (dest / f"{stem}.cli.txt").write_text(" ".join(render["cmd"]) + f"\nexit {render['rc']}\n" + render["output"])
+    kept["cli"] = dest / f"{stem}.cli.txt"
     if not kept.get("log.txt"):
-        (dest / f"{stem}.log.txt").write_text(render["output"])
-        kept["log.txt"] = dest / f"{stem}.log.txt"
+        kept["log.txt"] = kept["cli"]
     return kept
 
 
@@ -353,7 +499,6 @@ def motion_stats(frames: list[tuple[int, Image.Image]]) -> dict:
                                     + ("; that area keeps moving next frame (a jump or a cut)" if continues else
                                        "; nothing moves there in the next frame: something appeared, vanished or "
                                        "stopped dead here" if nxt else "; last captured step")})
-    # last change: where motion settles (an exit that ends abruptly shows up here too)
     last = max((s["to_ms"] for s in steps if s["changed_px"]), default=None)
     return {"frames": len(frames), "median_moving_step_px": median, "last_change_ms": last, "steps": steps, "hints": hints}
 
@@ -368,6 +513,22 @@ def pick(frames: list, flagged_ms: set, limit: int = 20) -> list:
     return [frames[i] for i in sorted(idx)]
 
 
+def secret_scan(root: Path) -> list[str]:
+    hits = []
+    for p in sorted(root.rglob("*")):
+        if not p.is_file() or p.suffix in (".png", ".gif", ".rgb", ".zip"):
+            continue
+        if is_private(p):
+            hits.append(f"{p.relative_to(root)}: private file name")
+            continue
+        text = p.read_text(errors="replace")
+        for rx in SECRET_PATTERNS:
+            if rx.search(text):
+                hits.append(f"{p.relative_to(root)}: matches {rx.pattern[:30]}")
+                break
+    return hits
+
+
 # ------------------------------------------------------------------ the run
 
 def main(argv=None) -> int:
@@ -375,160 +536,221 @@ def main(argv=None) -> int:
     ap.add_argument("--plan", required=True, help="plan name in tools/review_loop/plans/ or a path")
     ap.add_argument("--repo", type=Path, default=DEFAULT_REPO, help="firmware checkout (default: this one)")
     ap.add_argument("--sim", type=Path, default=DEFAULT_SIM, help="workstation-lvgl-sim checkout ($WS_SIM)")
-    ap.add_argument("--art", type=Path, action="append", default=[], help="folder with Artwork Workshop exports or delivery packages")
-    ap.add_argument("--integrate", action="store_true", help="render a disposable firmware copy with the --art exports put in")
-    ap.add_argument("--out", type=Path, help="bundle folder (default ~/workstation-reviews/<time>-<plan>)")
+    ap.add_argument("--art-lock", type=Path, help="art-lock-v1 JSON pinning the exact Workshop packages")
+    ap.add_argument("--art", type=Path, action="append", default=[], help="folder(s) holding Workshop delivery packages")
+    ap.add_argument("--art-loose", type=Path, action="append", default=[],
+                    help="DIAGNOSTIC: compare loose exports (frame_NNN.png / worker atlas); never validates a checkpoint")
+    ap.add_argument("--committed-art-diagnostic", action="store_true",
+                    help="render the art already committed in firmware, labelled as a diagnostic, not checkpoint validation")
+    ap.add_argument("--build-dir", type=Path, help="configured ESP-IDF build dir (compile_commands.json) for build membership")
+    ap.add_argument("--out", type=Path, help="run folder (default ~/workstation-reviews/<time>-<plan>)")
     ap.add_argument("--only", choices=["stills", "motion", "tests", "references"], action="append",
-                    help="run only these render groups (default: all)")
+                    help="run only these render groups (the skipped required groups make the run INCOMPLETE)")
     a = ap.parse_args(argv)
 
-    plan_path = a.plan if a.plan.endswith(".json") else HERE / "plans" / f"{a.plan}.json"
-    plan = json.loads(Path(plan_path).read_text())
-    repo = a.repo.resolve()
+    plan_path = Path(a.plan if a.plan.endswith(".json") else HERE / "plans" / f"{a.plan}.json")
+    plan = json.loads(plan_path.read_text())
+    repo, simdir = a.repo.resolve(), a.sim.resolve()
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
     out = (a.out or Path.home() / "workstation-reviews" / f"{stamp}-{plan['name']}").resolve()
-    work = out.parent / f".{out.name}-work"
     if out.exists() and any(out.iterdir()):
         sys.exit(f"refusing to overwrite non-empty {out}")
+    work = out.parent / f".{out.name}-work"
+    shutil.rmtree(work, ignore_errors=True)
     out.mkdir(parents=True, exist_ok=True)
-    work.mkdir(parents=True, exist_ok=True)
+    work.mkdir(parents=True)
     res, commands = Results(), []
-    started = now_utc()
+    required = set(plan.get("required", ["stills", "tests"]))
     print(f"review {plan['name']} -> {out}")
+    manifest = {"schema": "workstation-review/v2", "run_id": out.name, "plan": plan["name"],
+                "plan_sha256": sha256(plan_path), "started_utc": now_utc(), "required_stages": sorted(required),
+                "arguments": {k: (str(v) if isinstance(v, Path) else [str(x) for x in v] if isinstance(v, list) else v)
+                              for k, v in vars(a).items()}}
 
-    # 1. provenance --------------------------------------------------------------
-    fw = git_info(repo)
-    sim = git_info(a.sim) if (a.sim / ".git").exists() else {"path": str(a.sim), "commit": None}
-    lvgl = git_info(a.sim / "simulator" / "lib" / "lvgl") if (a.sim / "simulator/lib/lvgl/.git").exists() else None
-    manifest = {"schema": "workstation-review/v1", "plan": plan["name"], "plan_file": str(plan_path),
-                "plan_sha256": sha256(plan_path), "started_utc": started, "firmware": fw, "simulator": sim,
-                "lvgl": lvgl, "art_inputs": [str(p) for p in a.art], "integrate": a.integrate,
-                "tools": {"python": sys.version.split()[0], "gcc": run(["gcc", "--version"])[1].splitlines()[0]}}
-    if not a.sim.joinpath("bin", "ws-ui").is_file():
-        res.add("provenance", "simulator", UNAVAILABLE, f"no ws-ui at {a.sim}/bin (pass --sim or set WS_SIM)", required=True)
+    # 1. freeze inputs --------------------------------------------------------
+    if not (simdir / "bin" / "ws-ui").is_file():
+        res.add("inputs", "simulator", UNAVAILABLE, f"no ws-ui at {simdir}/bin (pass --sim or set WS_SIM)", required=True)
         return finish(out, work, plan, manifest, res, commands)
-    res.add("provenance", "firmware", PASS if not fw["dirty_files"] else WARN,
-            f"{fw['branch']} {fw['commit'][:12]}" + (f", {len(fw['dirty_files'])} uncommitted file(s) included" if fw["dirty_files"] else ", clean"))
-    res.add("provenance", "simulator", PASS if sim.get("commit") else WARN,
-            f"{sim.get('branch')} {(sim.get('commit') or 'not a git checkout')[:12]}; LVGL {(lvgl or {}).get('commit', '?')[:12]}")
+    if not (repo / "tools/uisim/targets.json").is_file():
+        res.add("inputs", "firmware", FAIL, f"{repo} has no tools/uisim/targets.json")
+        return finish(out, work, plan, manifest, res, commands)
+    fw = git_info(repo)
+    snap = work / "firmware-snapshot"
+    fw_hashes, excluded = freeze(repo, snap)
+    sim_before = tree_hashes(simdir, SIM_IDENTITY)
+    sim = git_info(simdir)
+    lvgl = git_info(simdir / "simulator" / "lib" / "lvgl") if (simdir / "simulator/lib/lvgl/.git").exists() else {}
+    dirty = fw["dirty_files"] + [u for u in fw["untracked_files"] if any(u.startswith(d) for d in SNAPSHOT_DIRS)]
+    (out / "inputs").mkdir()
+    if fw["dirty_files"]:
+        rc, diff = run(["git", "-C", str(repo), "diff", "HEAD", "--", *SNAPSHOT_DIRS, *SNAPSHOT_FILES])
+        (out / "inputs" / "firmware-dirty.diff").write_text(diff)
+    manifest["firmware"] = {**fw, "path": str(repo), "snapshot_digest": digest(fw_hashes), "snapshot_files": len(fw_hashes),
+                            "excluded_private_files": excluded,
+                            "dirty_diff_sha256": sha256(out / "inputs/firmware-dirty.diff") if fw["dirty_files"] else None}
+    manifest["simulator"] = {**sim, "path": str(simdir), "identity_digest": digest(sim_before),
+                             "lvgl_submodule": {"commit": lvgl.get("commit"), "dirty_files": lvgl.get("dirty_files")}}
+    (out / "inputs" / "firmware-files.sha256.json").write_text(json.dumps(fw_hashes, indent=0, sort_keys=True))
+    (out / "inputs" / "simulator-files.sha256.json").write_text(json.dumps(sim_before, indent=0, sort_keys=True))
+    manifest["tools"] = tool_identity(simdir, snap)
+    res.add("inputs", "firmware", PASS if not dirty else WARN,
+            f"{fw['branch']} {fw['commit'][:12]}; snapshot of {len(fw_hashes)} files (digest {digest(fw_hashes)[:12]})"
+            + (f"; PROVISIONAL: {len(dirty)} uncommitted/untracked file(s) included, diff kept" if dirty else ", clean")
+            + (f"; excluded private: {excluded}" if excluded else ""))
+    res.add("inputs", "simulator", PASS if sim.get("commit") and not sim["dirty_files"] else WARN,
+            f"{sim.get('branch')} {(sim.get('commit') or 'not git')[:12]}"
+            + (f", {len(sim['dirty_files'])} dirty" if sim.get("dirty_files") else "") + f"; LVGL {(lvgl.get('commit') or '?')[:12]}"
+            + (f"; LVGL config {manifest['tools'].get('lvgl_config_hash')}" if manifest["tools"].get("lvgl_config_hash") else ""))
+    if "lvgl_identity_error" in manifest["tools"]:
+        res.add("inputs", "lvgl-identity", FAIL, manifest["tools"]["lvgl_identity_error"])
 
-    # 2. target integrity -------------------------------------------------------
-    reg = json.loads((repo / "tools/uisim/targets.json").read_text())["targets"]
-    names = [plan["target"]] + [r["target"] for r in plan.get("references", [])]
-    for name in dict.fromkeys(names):
+    # 2. target, lineage and build membership --------------------------------------
+    reg = json.loads((snap / "tools/uisim/targets.json").read_text())["targets"]
+    targets_used = {plan["target"], *[x.get("target", plan["target"]) for g in ("stills", "motion", "tests")
+                                      for x in plan.get(g, [])], *[r["target"] for r in plan.get("references", [])]}
+    for name in sorted(targets_used):
         t = reg.get(name)
         if not t:
-            res.add("target", name, FAIL, "not registered in tools/uisim/targets.json")
+            res.add("target", name, FAIL, f"not registered in tools/uisim/targets.json of {fw['commit'][:12]}"
+                    + (" (this plan is for a different firmware baseline)" if plan.get("baseline") else ""))
             continue
-        missing = [p for p in [t["adapter"], *t["sources"]] if not (repo / p).is_file()]
-        missing += [f"main/{h}" for h in t.get("headers", []) if not (repo / "main" / h).is_file()]
-        cmake = (repo / "main/CMakeLists.txt").read_text()
-        unbuilt = [s for s in t["sources"] if f'"{Path(s).name}"' not in cmake]
-        if missing:
-            res.add("target", name, FAIL, f"missing files: {missing}")
-        elif unbuilt:
-            res.add("target", name, WARN, f"simulator links files the firmware build does not compile: {unbuilt}")
-        else:
-            res.add("target", name, PASS, f"{len(t['sources'])} firmware sources, all in main/CMakeLists.txt; adapter {t['adapter']}")
+        missing = [p for p in [t["adapter"], *t["sources"]] if not (snap / p).is_file()]
+        missing += [f"main/{h}" for h in t.get("headers", []) if not (snap / "main" / h).is_file()]
+        res.add("target", name, FAIL if missing else PASS,
+                f"missing files: {missing}" if missing else f"registered; adapter and {len(t['sources'])} sources present")
+    base = plan.get("baseline")
+    if base:
+        rc, _ = run(["git", "-C", str(repo), "merge-base", "--is-ancestor", base["commit"], "HEAD"])
+        res.add("target", "lineage", PASS if rc == 0 else FAIL,
+                f"HEAD descends from {base['label']} {base['commit'][:12]}" if rc == 0 else
+                f"HEAD {fw['commit'][:12]} is not a descendant of {base['label']} {base['commit'][:12]}: wrong firmware for this plan",
+                required=True)
     target = reg.get(plan["target"])
-    if not target:
+    if a.build_dir:
+        status, detail = build_membership(a.build_dir, repo, target["sources"] if target else [])
+        res.add("build", "membership", status, detail)
+        manifest["firmware_build"] = {"build_dir": str(a.build_dir), "membership": status}
+    else:
+        res.add("build", "membership", SKIPPED, "firmware build not run here: no configured ESP-IDF build supplied; "
+                "whether the firmware compiles these sources is NOT established by this run")
+        manifest["firmware_build"] = "not run"
+    if not target or any(i["status"] == FAIL for i in res.items if i["stage"] in ("target", "inputs")):
         return finish(out, work, plan, manifest, res, commands)
-    files = target_files(repo, target)
-    manifest["target"] = {"name": plan["target"], "ui": plan.get("ui"), "description": target.get("description"),
-                          "files": {f: sha256(repo / f) for f in files}}
+    files = target_files(snap, target)
+    manifest["target"] = {"name": plan["target"], "profile": plan.get("profile"), "ui": plan.get("ui"),
+                          "description": target.get("description"), "files": {f: fw_hashes.get(f) for f in files}}
 
-    # 3. asset integrity ----------------------------------------------------------
+    # 3. asset integrity -------------------------------------------------------------
     n_ok, bad, unchecked = 0, [], 0
     for f in files:
-        text = (repo / f).read_text(errors="replace")
+        text = (snap / f).read_text(errors="replace")
         if "lv_image_dsc_t" not in text:
             continue
         for d in descriptors(text):
             status, detail = check_descriptor(d, text)
-            if status == PASS:
-                n_ok += 1
-            elif status == FAIL:
+            n_ok += status == PASS
+            unchecked += status == INFO
+            if status == FAIL:
                 bad.append(f"{f}:{d['name']}: {detail}")
-            else:
-                unchecked += 1
     res.add("assets", "descriptors", FAIL if bad else PASS,
             "; ".join(bad) if bad else f"{n_ok} image descriptors consistent ({unchecked} not literal, not checked)")
 
-    # 4. art fidelity / integration ---------------------------------------------------
-    render_repo = repo
+    # 4. art: exact checkpoint validation, or a labelled diagnostic -------------------
     bindings = plan.get("art", [])
-    if bindings and not a.art:
-        res.add("art", "exports", UNAVAILABLE, f"{len(bindings)} art binding(s) in the plan, no --art folder given: "
-                "export fidelity NOT checked; renders show the art already committed in firmware")
-    elif a.art:
-        if a.integrate:
-            render_repo = make_work_copy(repo, work / "firmware-under-review")
-        receipts = []
+    art_required = "art" in required
+    evidence = "committed-art diagnostic"
+    receipts = []
+    if a.art_lock:
+        evidence = "checkpoint validation"
+        try:
+            lock = load_lock(a.art_lock)
+        except (ArtError, ValueError, OSError) as e:
+            lock = None
+            res.add("art", "lock", FAIL, str(e), required=True)
+        if lock is not None:
+            shutil.copy2(a.art_lock, out / "inputs" / "art-lock.json")
+            manifest["art_lock"] = {"path": str(a.art_lock), "sha256": sha256(a.art_lock), "selection": lock}
+            packages = {}
+            for project, sel in lock.items():
+                try:
+                    pkg, pj, others = select_package(a.art, sel)
+                    dest = out / "inputs" / "art" / f"{project}-r{sel['revision']:04d}"
+                    shutil.copytree(pkg, dest)   # the exact verified bytes, frozen with the run
+                    packages[project] = (dest, pj)
+                    res.add("art", f"package:{project}", PASS, f"r{sel['revision']} {sel['checkpoint']} verified "
+                            f"(manifest + {len(sel['files'])} files by SHA-256)" + (f"; ignored other packages: {others}" if others else ""),
+                            required=True)
+                except ArtError as e:
+                    res.add("art", f"package:{project}", FAIL, f"selected candidate BLOCKED: {e}", required=True)
+            for b in bindings:
+                src = b.get("source")
+                if not src:
+                    res.add("art", b["symbol"], UNSUPPORTED, b.get("note", "no Workshop source for this asset"), required=True)
+                    continue
+                if src["project"] not in lock:
+                    res.add("art", b["symbol"], UNAVAILABLE, f"project {src['project']} not selected in the art lock", required=True)
+                    continue
+                if src["project"] not in packages:
+                    res.add("art", b["symbol"], FAIL, f"its package {src['project']} is blocked (see above)", required=True)
+                    continue
+                pkg, pj = packages[src["project"]]
+                try:
+                    img = frame_from_package(pkg, pj, src.get("frame", 0))
+                except ArtError as e:
+                    res.add("art", b["symbol"], FAIL, str(e), required=True)
+                    continue
+                receipts.append(integrate(b, img, snap, res, required=True, origin={
+                    "kind": "delivery package", "project": src["project"], "revision": pj["revision"],
+                    "checkpoint": pj["checkpoint"], "frame": src.get("frame", 0)}))
+    elif a.art_loose:
+        evidence = "loose-export diagnostic"
         for b in bindings:
-            label = b["symbol"]
             src = b.get("source")
             if not src:
-                res.add("art", label, UNAVAILABLE, b.get("note", "no Workshop source recorded for this asset"))
+                res.add("art", b["symbol"], UNSUPPORTED, b.get("note", "no Workshop source for this asset"))
                 continue
-            img, info = find_export(a.art, src["project"], src.get("frame", 0))
+            img, info = find_loose(a.art_loose, src["project"], src.get("frame", 0))
             if img is None:
-                res.add("art", label, UNAVAILABLE, info)
+                res.add("art", b["symbol"], UNAVAILABLE, info)
                 continue
-            text = (repo / b["file"]).read_text()
-            d = next((d for d in descriptors(text) if d["name"] == label), None)
-            fw_bytes = array_bytes(text, d["data"]) if d else None
-            if fw_bytes is None:
-                res.add("art", label, FAIL, f"descriptor/array {label} not found in {b['file']}")
-                continue
-            if img.size != (d["w"], d["h"]):
-                res.add("art", label, FAIL, f"export is {img.size[0]}x{img.size[1]}, firmware slot is {d['w']}x{d['h']}", source=info)
-                continue
-            try:
-                want = convert(img, d["cf"])
-            except ValueError as e:
-                res.add("art", label, FAIL, str(e), source=info)
-                continue
-            bpp = BPP[d["cf"]]
-            diff_px = sum(want[i:i + bpp] != fw_bytes[i:i + bpp] for i in range(0, len(want), bpp))
-            receipts.append({"symbol": label, "file": b["file"], "source": info, "identical": diff_px == 0, "differing_px": diff_px})
-            if diff_px == 0:
-                res.add("art", label, PASS, f"firmware bytes identical to {info['kind']} {src['project']}#{src.get('frame', 0)}", source=info)
-            elif a.integrate:
-                replace_array(render_repo / b["file"], d["data"], want)
-                again = array_bytes((render_repo / b["file"]).read_text(), d["data"])
-                res.add("art", label, PASS if again == want else FAIL,
-                        f"{diff_px} px differed; integrated into the disposable copy only (renders below use it)", source=info)
-            else:
-                res.add("art", label, WARN, f"{diff_px} of {d['w'] * d['h']} px differ from {info['kind']} "
-                        f"{src['project']}#{src.get('frame', 0)}: renders show the OLD firmware art (use --integrate)", source=info)
-        manifest["art"] = receipts
-        if a.integrate:
-            for b in {b["file"] for b in bindings if b.get("source")}:
-                dest = out / "integrated" / b
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(render_repo / b, dest)
-            res.add("art", "integration", INFO, "renders below use a disposable firmware copy with the --art exports "
-                    "put in (changed files kept in integrated/); the firmware checkout was not modified")
-            manifest["rendered_from"] = {"kind": "disposable copy with integrated art", "path": str(render_repo),
-                                         "base_commit": fw["commit"],
-                                         "changed_files": {b["file"]: sha256(render_repo / b["file"]) for b in bindings}}
-    manifest.setdefault("rendered_from", {"kind": "firmware checkout", "path": str(repo), "commit": fw["commit"]})
+            receipts.append(integrate(b, img, snap, res, required=False, origin=info))
+        res.add("art", "checkpoint", UNAVAILABLE if art_required else INFO,
+                "loose exports compared for diagnosis only: no checkpoint was selected or validated", required=art_required)
+    elif a.committed_art_diagnostic:
+        res.add("art", "checkpoint", SKIPPED, "diagnostic run requested: renders show the art already committed in "
+                "firmware; this is NOT validation of a native checkpoint")
+    else:
+        native = plan.get("native_art", {})
+        res.add("art", "checkpoint", UNAVAILABLE, (native.get("status") or "no --art-lock given")
+                + ": native checkpoint validation cannot run; use --committed-art-diagnostic for a labelled diagnostic",
+                required=art_required)
+    manifest["art"] = {"evidence_kind": evidence, "native_art": plan.get("native_art"), "receipts": receipts}
+    changed = {f: sha256(snap / f) for f in {r["file"] for r in receipts if r.get("integrated")}}
+    if changed:
+        for f in changed:
+            dest = out / "integrated" / f
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(snap / f, dest)
+        res.add("art", "integration", INFO, f"integrated into the run snapshot only: {sorted(changed)}; checkout untouched")
+    manifest["rendered_from"] = {"kind": "run snapshot" + (" with integrated art" if changed else ""),
+                                 "base_commit": fw["commit"], "snapshot_digest": digest(fw_hashes),
+                                 "integrated_files": changed}
 
-    # 5. renders -----------------------------------------------------------------------
-    simr = Sim(a.sim, render_repo, commands)
+    # 5. renders ---------------------------------------------------------------------
+    simr = Sim(simdir, snap, commands)
     groups = set(a.only or ["stills", "motion", "tests", "references"])
-    stills_dir, motion_dir, tests_dir, ref_dir = out / "stills", out / "motion", out / "tests", out / "references"
-    stills, refs, motion_sheets = [], [], []
+    for g in sorted(required & {"stills", "motion", "tests", "references"} - groups):
+        res.add(g, "group", UNAVAILABLE, "required group not run in this invocation (--only)", required=True)
+    stills, refs = [], []
 
-    def native(kept, stage, name) -> Image.Image | None:
+    def native(kept, stage, name, req) -> Image.Image | None:
         img = Image.open(kept["screen.png"])
         if img.size != (W, H):
-            res.add(stage, name, FAIL, f"screen.png is {img.size}, not native {W}x{H}")
+            res.add(stage, name, FAIL, f"screen.png is {img.size}, not native {W}x{H}", required=req)
             return None
         return img
 
     def mech(kept, stage, name, accepted):
-        """accepted: {check: reason} from the plan, for findings that are intentional."""
         findings = json.loads(kept["checks.json"].read_text()) if kept.get("checks.json") else []
         warns = [f for f in findings if f["level"] == "warn" and f["check"] not in accepted]
         infos = [f for f in findings if f["level"] != "warn" or f["check"] in accepted]
@@ -541,102 +763,121 @@ def main(argv=None) -> int:
         res.add(stage, name + ":checks", WARN if warns else PASS, detail)
 
     if "stills" in groups:
+        req = "stills" in required
         for s in plan.get("stills", []):
-            r = simr.render(plan["target"], s.get("fixture"), s.get("advance_ms", 400), s.get("state"))
+            tname = s.get("target", plan["target"])
+            r = simr.render(tname, s.get("fixture"), s.get("advance_ms", 400), s.get("state"))
+            kept = keep(r, out / "stills" if r["ok"] else out / "failed", s["name"])
             if not r["ok"]:
-                res.add("still", s["name"], FAIL, "render failed: " + r["output"].strip()[-300:], command=r["cmd"])
+                res.add("still", s["name"], FAIL, "render failed: " + r["output"].strip()[-300:], required=req, command=r["cmd"])
                 continue
-            kept = keep(r, stills_dir, s["name"])
-            img = native(kept, "still", s["name"])
+            img = native(kept, "still", s["name"], req)
             if img:
-                res.add("still", s["name"], PASS, f"native {W}x{H} at {s.get('advance_ms', 400)} ms ({s.get('fixture') or 'default'})",
-                        command=r["cmd"], files=[str(p.relative_to(out)) for p in kept.values()])
-                stills.append((s, img, kept))
+                res.add("still", s["name"], PASS, f"{tname} native {W}x{H} at {s.get('advance_ms', 400)} ms "
+                        f"({s.get('fixture') or 'default'})", required=req, command=r["cmd"])
+                stills.append((s, img))
                 mech(kept, "still", s["name"], s.get("accept", {}))
 
     if "motion" in groups:
+        req = "motion" in required
         for m in plan.get("motion", []):
+            tname = m.get("target", plan["target"])
+            mdir = out / "motion" / m["name"]
+            cap = work / "capture" / m["name"]
+            cap.mkdir(parents=True)
+            r = simr.render(tname, m.get("fixture"), m["advance_ms"], {**m.get("state", {}), "capture_dir": str(cap)})
+            keep(r, mdir if r["ok"] else out / "failed", "final" if r["ok"] else f"motion-{m['name']}")
+            if not r["ok"]:
+                res.add("motion", m["name"], FAIL, "render failed: " + r["output"].strip()[-300:], required=req, command=r["cmd"])
+                continue
             frames = []
-            mdir = motion_dir / m["name"]
-            if m.get("mode", "capture") == "capture":
-                cap = work / "capture" / m["name"]
-                shutil.rmtree(cap, ignore_errors=True)
-                cap.mkdir(parents=True)
-                r = simr.render(plan["target"], m.get("fixture"), m["advance_ms"], {**m.get("state", {}), "capture_dir": str(cap)})
-                if not r["ok"]:
-                    res.add("motion", m["name"], FAIL, "render failed: " + r["output"].strip()[-300:], command=r["cmd"])
-                    continue
-                keep(r, mdir, "final")
-                for p in sorted(cap.glob("frame-*.rgb")):
-                    raw = p.read_bytes()
-                    if len(raw) == W * H * 3:
-                        frames.append((int(p.stem.split("-")[1]), Image.frombytes("RGB", (W, H), raw)))
-                cmd_note = r["cmd"]
-            else:
-                cmd_note = []
-                for t in m["sample_ms"]:
-                    r = simr.render(plan["target"], m.get("fixture"), t, m.get("state"))
-                    cmd_note.append(r["cmd"])
-                    if r["ok"]:
-                        frames.append((t, Image.open(r["dir"] / "screen.png").convert("RGB")))
+            for p in sorted(cap.glob("frame-*.rgb")):
+                raw = p.read_bytes()
+                if len(raw) == W * H * 3:
+                    frames.append((int(p.stem.split("-")[1]), Image.frombytes("RGB", (W, H), raw)))
             if len(frames) < 2:
-                res.add("motion", m["name"], FAIL, f"only {len(frames)} frame(s) captured: the adapter may not support "
-                        "capture_dir, or the render failed", command=cmd_note)
+                res.add("motion", m["name"], FAIL, f"only {len(frames)} frame(s): the adapter may not support capture_dir",
+                        required=req, command=r["cmd"])
                 continue
             (mdir / "frames").mkdir(parents=True, exist_ok=True)
             for t, img in frames:
                 img.save(mdir / "frames" / f"{t:05d}.png")
             st = motion_stats(frames)
-            (mdir / "motion.json").write_text(json.dumps({k: v for k, v in st.items()}, indent=1))
+            st["timing"] = ("simulated LVGL time: 5 ms ticks, a frame captured every 50 ms of simulated time; "
+                            "not the device's frame rate, and not native Pixelorama frame durations")
+            (mdir / "motion.json").write_text(json.dumps(st, indent=1))
             flagged = {h["at_ms"] for h in st["hints"] if "at_ms" in h}
             change = {s["to_ms"]: s["changed_px"] for s in st["steps"]}
             chosen = pick(frames, flagged)
-            sh = sheet([(img, f"{t} ms  d={change.get(t, 0)}px", t in flagged) for t, img in chosen], 4,
-                       f"{plan['name']} / motion {m['name']}: {len(chosen)} of {len(frames)} frames, native 320x240; "
-                       "red = large one-step change")
-            sh.save(mdir / "contact-sheet.png")
-            motion_sheets.append((m["name"], mdir / "contact-sheet.png"))
+            sheet([(img, f"{t} ms  d={change.get(t, 0)}px", t in flagged) for t, img in chosen], 4,
+                  f"{plan['name']} / motion {m['name']}: {len(chosen)} of {len(frames)} frames, native 320x240; "
+                  "red = large one-step change").save(mdir / "contact-sheet.png")
             durations = [max(20, b[0] - a_[0]) for a_, b in zip(frames, frames[1:])] + [400]
             frames[0][1].save(mdir / "animation.gif", save_all=True, append_images=[f for _, f in frames[1:]],
                               duration=durations, loop=0)
             res.add("motion", m["name"], WARN if st["hints"] else PASS,
-                    f"{len(frames)} frames {frames[0][0]}-{frames[-1][0]} ms; last change at {st['last_change_ms']} ms; "
-                    f"{len(st['hints'])} hint(s) for review" + (": " + "; ".join(
-                        f"{h['kind']}@{h.get('at_ms', '-')}ms" for h in st["hints"][:5]) if st["hints"] else ""),
-                    command=cmd_note, hints=st["hints"])
+                    f"{len(frames)} frames {frames[0][0]}-{frames[-1][0]} ms (simulated); last change {st['last_change_ms']} ms; "
+                    f"{len(st['hints'])} hint(s)" + (": " + "; ".join(f"{h['kind']}@{h.get('at_ms', '-')}ms"
+                                                       for h in st["hints"][:5]) if st["hints"] else ""),
+                    required=req, command=r["cmd"], hints=st["hints"])
 
     if "tests" in groups:
+        req = "tests" in required
         for t in plan.get("tests", []):
-            r = simr.render(plan["target"], t.get("fixture"), t["advance_ms"], t.get("state"))
-            kept = keep(r, tests_dir, t["name"]) if r["dir"] else {}
-            log = kept["log.txt"].read_text() if kept.get("log.txt") else r["output"]
-            if not r["ok"]:
-                res.add("test", t["name"], FAIL, "simulator run failed (an assert aborts the run): " + log.strip()[-400:], command=r["cmd"])
-            elif t["require"] not in log:
+            tname = t.get("target", plan["target"])
+            r = simr.render(tname, t.get("fixture"), t["advance_ms"], t.get("state"))
+            kept = keep(r, out / "tests", t["name"])
+            log = kept["log.txt"].read_text(errors="replace")
+            marker_seen = t["require"] in log
+            if t.get("expect") == "fail":   # negative control: the assertions must catch the fault
+                reached_run = r["ok"] or "run failed" in r["output"]       # not a compile/link error
+                want = t.get("expect_message")
+                caught = not (r["ok"] and marker_seen)
+                if not reached_run:
+                    res.add("test", t["name"], FAIL, "negative control did not reach the run stage (compile/link failure "
+                            "proves nothing): " + r["output"].strip()[-300:], required=req, command=r["cmd"])
+                elif not caught:
+                    res.add("test", t["name"], FAIL, f"negative control did NOT fail: '{t['require']}' printed although "
+                            f"{t.get('why', 'the fault was injected')}", required=req, command=r["cmd"])
+                elif want and want not in log:
+                    res.add("test", t["name"], FAIL, f"negative control failed for a different reason than expected "
+                            f"('{want}' not in the log): " + log.strip()[-300:], required=req, command=r["cmd"])
+                else:
+                    line = next((ln for ln in log.splitlines() if want and want in ln), None) or \
+                        f"'{t['require']}' never printed"
+                    res.add("test", t["name"], PASS, f"negative control caught as expected ({t.get('why', '')}): {line.strip()[:220]}",
+                            required=req, command=r["cmd"])
+            elif not r["ok"]:
+                res.add("test", t["name"], FAIL, "simulator run failed (an assert aborts the run): " + log.strip()[-400:],
+                        required=req, command=r["cmd"])
+            elif not marker_seen:
                 res.add("test", t["name"], FAIL, f"render finished but '{t['require']}' was never printed: the test did "
-                        f"not reach its end within {t['advance_ms']} ms", command=r["cmd"])
+                        f"not reach its end within {t['advance_ms']} ms", required=req, command=r["cmd"])
             else:
                 line = next(ln for ln in log.splitlines() if t["require"] in ln)
-                res.add("test", t["name"], PASS, line.strip(), command=r["cmd"])
+                res.add("test", t["name"], PASS, line.strip()[:300], required=req, command=r["cmd"],
+                        standins=t.get("standins"))
 
     if "references" in groups:
         for ref in plan.get("references", []):
             r = simr.render(ref["target"], ref.get("fixture"), ref.get("advance_ms", 400), ref.get("state"))
+            kept = keep(r, out / "references" if r["ok"] else out / "failed", ref["name"])
             if not r["ok"]:
                 res.add("reference", ref["name"], FAIL, "render failed: " + r["output"].strip()[-300:], command=r["cmd"])
                 continue
-            kept = keep(r, ref_dir, ref["name"])
             refs.append((ref, Image.open(kept["screen.png"])))
-            res.add("reference", ref["name"], INFO, f"rendered {ref['target']} for side-by-side comparison: {ref.get('why', '')}",
-                    command=r["cmd"])
+            res.add("reference", ref["name"], INFO, f"{ref['target']} for comparison: {ref.get('why', '')}", command=r["cmd"])
 
-    # 6. review images -------------------------------------------------------------
+    # 6. review images ---------------------------------------------------------------
     if stills:
-        cells = [(img, f"{s['name']}  ({s.get('fixture') or 'default'} @{s.get('advance_ms', 400)}ms)", False) for s, img, _ in stills]
+        label = "COMMITTED ART (diagnostic)" if evidence != "checkpoint validation" else "art from the locked checkpoint"
+        cells = [(img, f"{s['name']} ({s.get('target', plan['target'])}:{s.get('fixture') or 'default'} @{s.get('advance_ms', 400)}ms)", False)
+                 for s, img in stills]
         cells += [(img, f"REFERENCE {r['name']} (not under review)", False) for r, img in refs]
-        sheet(cells, 3, f"{plan['name']}: native 320x240 simulator stills, firmware {fw['commit'][:10]}").save(out / "review-sheet.png")
+        sheet(cells, 3, f"{plan['name']}: native 320x240 simulator stills, firmware {fw['commit'][:10]}, {label}"
+              ).save(out / "review-sheet.png")
         crops = []
-        by_name = {s["name"]: img for s, img, _ in stills}
+        by_name = {s["name"]: img for s, img in stills}
         for c in plan.get("focus", []):
             img = by_name.get(c["still"])
             if img:
@@ -646,61 +887,164 @@ def main(argv=None) -> int:
                               f"{c['name']}  [{c['still']} {x1},{y1}-{x2},{y2} x{k}]", False))
         if crops:
             sheet(crops, 2, f"{plan['name']}: focus crops (nearest-neighbour enlargements, no smoothing)").save(out / "focus-crops.png")
-    return finish(out, work, plan, manifest, res, commands)
+
+    # 7. did anything change while we ran? -------------------------------------------------
+    fw_after = tree_hashes(repo, SNAPSHOT_DIRS + SNAPSHOT_FILES)
+    moved = drift(fw_hashes, fw_after)   # snapshot hashes were taken before any integration
+    head_after = git_info(repo)["commit"]
+    sim_moved = drift(sim_before, tree_hashes(simdir, SIM_IDENTITY))
+    if moved or head_after != fw["commit"]:
+        res.add("inputs", "unchanged-during-run", FAIL, f"the firmware checkout changed while the run used its snapshot "
+                f"(HEAD {fw['commit'][:12]} -> {(head_after or '?')[:12]}; files: {moved[:8]}): evidence is for the snapshot only, rerun",
+                required=True)
+    else:
+        res.add("inputs", "unchanged-during-run", PASS, "firmware checkout identical at start and end", required=True)
+    if sim_moved:
+        res.add("inputs", "simulator-unchanged", FAIL, f"simulator files changed during the run: {sim_moved[:8]}", required=True)
+    return finish(out, work, plan, manifest, res, commands, evidence=evidence)
 
 
-def finish(out: Path, work: Path, plan: dict, manifest: dict, res: Results, commands: list) -> int:
-    overall, code = res.overall()
+def integrate(b: dict, img: Image.Image, snap: Path, res: Results, required: bool, origin: dict) -> dict:
+    """Compare one export with its firmware slot; put it into the snapshot when it differs."""
+    label, path = b["symbol"], snap / b["file"]
+    text = path.read_text()
+    d = next((d for d in descriptors(text) if d["name"] == label), None)
+    fw_bytes = array_bytes(text, d["data"]) if d else None
+    rec = {"symbol": label, "file": b["file"], "source": origin}
+    if fw_bytes is None:
+        res.add("art", label, FAIL, f"descriptor/array {label} not found in {b['file']}", required=required)
+        return {**rec, "result": "slot missing"}
+    if img.size != (d["w"], d["h"]):
+        res.add("art", label, FAIL, f"export is {img.size[0]}x{img.size[1]}, firmware slot is {d['w']}x{d['h']}", required=required)
+        return {**rec, "result": "wrong dimensions"}
+    try:
+        want = convert(img, d["cf"])
+    except ValueError as e:
+        res.add("art", label, FAIL, str(e), required=required)
+        return {**rec, "result": str(e)}
+    bpp = BPP[d["cf"]]
+    diff_px = sum(want[i:i + bpp] != fw_bytes[i:i + bpp] for i in range(0, len(want), bpp))
+    if diff_px == 0:
+        res.add("art", label, PASS, f"committed firmware bytes already identical to {origin.get('kind')}", required=required)
+        return {**rec, "result": "identical", "integrated": False}
+    replace_array(path, d["data"], want)
+    ok = array_bytes(path.read_text(), d["data"]) == want
+    res.add("art", label, PASS if ok else FAIL, f"{diff_px} px differed from the committed art; integrated into the run "
+            "snapshot (renders use it)", required=required)
+    return {**rec, "result": "integrated", "integrated": ok, "differing_px": diff_px}
+
+
+def readiness(res: Results, manifest: dict, technical: str, evidence: str) -> dict:
+    fw = manifest.get("firmware", {})
+    art_items = [i for i in res.items if i["stage"] == "art"]
+    if evidence == "checkpoint validation":
+        art = "verified" if art_items and all(i["status"] not in BLOCKING for i in art_items) else "blocked"
+    else:
+        art = f"not established ({evidence})"
+    reasons = []
+    if technical not in ("PASS", "PASS_WITH_WARNINGS"):
+        reasons.append(f"technical result {technical}")
+    if art != "verified":
+        reasons.append(f"native art {art}")
+    if fw.get("dirty_files") or any("PROVISIONAL" in i["detail"] for i in res.items if i["name"] == "firmware"):
+        reasons.append("provisional inputs (uncommitted firmware files)")
+    return {
+        "input_pinned": "pinned" if not any(i["status"] == FAIL for i in res.items if i["stage"] == "inputs") else "failed",
+        "art_verified": art,
+        "integrated": "integrated into run snapshot" if manifest.get("rendered_from", {}).get("integrated_files") else "no (committed art)",
+        "technical_checks": technical,
+        "visual_review": "pending (Dottie)",
+        "handoff": "prepared (local bundle)",
+        "delivery": "not verified (this tool does not deliver)",
+        "firmware_build": manifest.get("firmware_build") if isinstance(manifest.get("firmware_build"), str) else
+                          f"membership {manifest['firmware_build'].get('membership')} (configured build inspected; no image built)",
+        "hardware": "not run",
+        "ready_for_visual_acceptance": not reasons,
+        "not_ready_because": reasons,
+        "promotion_ready": False,
+    }
+
+
+def finish(out: Path, work: Path, plan: dict, manifest: dict, res: Results, commands: list,
+           evidence: str = "not reached") -> int:
+    technical, code = res.technical()
     manifest["finished_utc"] = now_utc()
-    manifest["overall"] = overall
-    (out / "results.json").write_text(json.dumps({"overall": overall, "results": res.items}, indent=1, default=str))
+    manifest["technical_result"] = technical
+    manifest["readiness"] = readiness(res, manifest, technical, evidence)
+    (out / "results.json").write_text(json.dumps({"technical_result": technical, "readiness": manifest["readiness"],
+                                                  "results": res.items}, indent=1, default=str))
     (out / "commands.json").write_text(json.dumps(commands, indent=1))
     (out / "DOTTIE.md").write_text(dottie(plan, manifest, res, out))
-    manifest["files"] = {str(p.relative_to(out)): sha256(p) for p in sorted(out.rglob("*")) if p.is_file() and p.name != "manifest.json"}
+    leaks = secret_scan(out)
+    if leaks:
+        manifest["sanitization"] = {"status": "BLOCKED", "hits": leaks}
+        (out / "manifest.json").write_text(json.dumps(manifest, indent=1, default=str))
+        shutil.rmtree(work, ignore_errors=True)
+        print(f"\nBUNDLE NOT ZIPPED: possible secrets: {leaks}")
+        return 1
+    manifest["sanitization"] = {"status": "scanned, no matches", "patterns": len(SECRET_PATTERNS),
+                                "private_names_excluded": sorted(PRIVATE_NAMES)}
+    manifest["files"] = {str(p.relative_to(out)): sha256(p) for p in sorted(out.rglob("*"))
+                         if p.is_file() and p.name != "manifest.json"}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1, default=str))
     z = out.with_suffix(".zip")
     with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as zf:
         for p in sorted(out.rglob("*")):
             if p.is_file():
-                zf.write(p, Path(out.name) / p.relative_to(out))
+                zi = zipfile.ZipInfo(str(Path(out.name) / p.relative_to(out)), date_time=(2026, 1, 1, 0, 0, 0))
+                zi.compress_type = zipfile.ZIP_DEFLATED
+                zf.writestr(zi, p.read_bytes())
+    zsha = sha256(z)
+    z.with_suffix(".zip.sha256").write_text(f"{zsha}  {z.name}\n")
     shutil.rmtree(work, ignore_errors=True)
-    print(f"\n{overall}: {out}\nzip: {z} ({z.stat().st_size // 1024} KB)")
+    print(f"\n{technical} ({manifest['readiness']['art_verified']}; visual review pending): {out}\n"
+          f"zip: {z} ({z.stat().st_size // 1024} KB) sha256 {zsha}")
     return code
 
 
 def dottie(plan: dict, manifest: dict, res: Results, out: Path) -> str:
-    fw, sim = manifest["firmware"], manifest["simulator"]
-    overall, _ = res.overall()
-    rows = "\n".join(f"| {i['stage']} | {i['name']} | {i['status']} | {i['detail'].replace('|', '/')[:300]} |" for i in res.items)
+    fw, sim, rd = manifest.get("firmware", {}), manifest.get("simulator", {}), manifest["readiness"]
+    rows = "\n".join(f"| {i['stage']} | {i['name']} | {i['status']}{' *' if i['required'] else ''} | "
+                     f"{i['detail'].replace('|', '/')[:280]} |" for i in res.items)
     hints = [f"- motion `{i['name']}`: {h['detail']} (t={h.get('at_ms', '-')} ms, bbox {h.get('bbox')})"
              for i in res.items if i["stage"] == "motion" for h in i.get("hints", [])]
     questions = "\n".join(f"{n}. {q}" for n, q in enumerate(plan.get("visual_review", []), 1))
-    present = sorted(str(p.relative_to(out)) for p in out.rglob("*.png") if "/frames/" not in str(p) and "@2x" not in p.name)
-    rendered = manifest.get("rendered_from", {})
+    standins = "\n".join(f"- {s}" for s in plan.get("standins", [])) or "- none declared"
+    axes = "\n".join(f"| {k} | {v} |" for k, v in rd.items() if k not in ("not_ready_because",))
+    kind = manifest.get("art", {}).get("evidence_kind", "not reached")
     return f"""# Review request: {plan['name']} ({plan.get('ui', '')})
 
-Deterministic result: **{overall}**. That covers only what a program can check. It does not say
-the art looks good, and nothing here was run on the BOX-3.
+**Technical result: {manifest.get('technical_result')}.** Art evidence: **{kind}**. Visual review: **pending**.
+{'**This bundle shows the art already committed in firmware. It does not validate a native Pixelorama checkpoint.**' if kind != 'checkpoint validation' else ''}
+Not ready for visual acceptance because: {'; '.join(rd['not_ready_because']) or 'nothing (technical and art gates passed)'}.
 
-## What this is
+## Readiness (separate axes; this tool never sets visual, delivery, build or hardware)
 
-- Firmware `{fw.get('branch')}` @ `{fw.get('commit')}`{' with uncommitted files: ' + ', '.join(fw['dirty_files']) if fw.get('dirty_files') else ''}
-- Rendered from: {rendered.get('kind')} ({rendered.get('path')})
-- Simulator `{sim.get('branch')}` @ `{sim.get('commit')}`, LVGL `{(manifest.get('lvgl') or {}).get('commit')}`
-- Target `{plan['target']}`: {manifest.get('target', {}).get('description', '')}
-- Every image is the simulator's own 320x240 RGB565 frame. `*@2x.png` are 2x nearest-neighbour copies for phones.
-  Sheets add labels and red flag borders only in the margins.
+| axis | state |
+|---|---|
+{axes}
+
+## Exactly what was rendered
+
+- Firmware `{fw.get('branch')}` @ `{fw.get('commit')}` (snapshot digest `{fw.get('snapshot_digest', '')[:16]}`,
+  {fw.get('snapshot_files')} files){'; uncommitted: ' + ', '.join(fw['dirty_files']) if fw.get('dirty_files') else ', clean'}
+- Simulator `{sim.get('branch')}` @ `{sim.get('commit')}`, LVGL `{(sim.get('lvgl_submodule') or {}).get('commit')}`,
+  LVGL config `{manifest.get('tools', {}).get('lvgl_config_hash')}`
+- Target `{plan['target']}`, profile `{plan.get('profile')}`: {manifest.get('target', {}).get('description', '')}
+- Native art status: {(plan.get('native_art') or {}).get('status', 'n/a')}
+- Every image is the simulator's own 320x240 RGB565 frame; `*@2x.png` are 2x nearest-neighbour copies.
+
+## Stand-ins (host code that is not the firmware's own behaviour)
+
+{standins}
 
 ## Files to look at first
 
-1. `review-sheet.png`: every still, plus reference scene(s) marked REFERENCE.
-2. `motion/*/contact-sheet.png`: animation frames with times; `motion/*/animation.gif` to watch
-   (GIF uses a palette, so judge pixels from the PNGs). All frames: `motion/*/frames/`.
+1. `review-sheet.png`: every still (and REFERENCE scenes).
+2. `motion/*/contact-sheet.png`, `motion/*/animation.gif` (palette GIF: judge pixels from `motion/*/frames/`).
 3. `focus-crops.png`: enlarged areas the plan asks about.
 
-All PNGs: {', '.join(present)}
-
-## Deterministic checks (program-verified)
+## Deterministic results (* = required stage)
 
 | stage | item | status | detail |
 |---|---|---|---|
@@ -713,26 +1057,15 @@ Motion hints (where to look, not verdicts):
 
 {questions}
 
-General, for every still and motion: grounding (does each object sit on or in something, with
-contact or shadow?), silhouette readability at 320x240, texture and material detail, depth and
-light direction, composition (do the landmarks form one place or float as separate stickers?),
-palette coherence, and motion continuity (does anything pop, vanish, overlap wrongly or freeze?).
-Compare against the REFERENCE scene for the quality bar, not for its content.
+## How to answer
 
-## How to answer, so the next correction can be acted on
-
-For each problem, one line:
-`[still or motion name] [where: element and x,y in 320x240 pixels] [category: art | layout | motion | software | unsure] [severity: blocker | major | minor] [what is wrong] [the correction you suggest]`
-
-Say "art" when the fix is in the Pixelorama artwork, "layout"/"motion" when it is in where or how
-firmware places or animates it, "software" for anything that looks like a bug.
+One line per problem:
+`[still/motion name] [time ms] [element, x,y in 320x240] [art | layout | motion | software | unsure] [blocker | major | minor] [what is wrong] [suggested correction]`
 
 ## Not proven by this bundle
 
-- Physical screen colours, viewing angle, glare, frame rate, touch feel, audio, internal RAM/heap and
-  flash use: the simulator models none of them.
-- An ESP-IDF build: not run here. Device: not flashed, not deployed.
-- Art quality: only your review (and Mike's) can judge it.
+Panel colour, viewing angle, frame rate, touch feel, audio, radar, internal RAM/heap/PSRAM, flash use, an
+ESP-IDF build, delivery to you, and the device. Frame timing here is simulated LVGL time.
 """
 
 

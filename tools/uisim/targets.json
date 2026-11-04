@@ -1188,6 +1188,87 @@
           "test": true
         }
       }
+    },
+    "artifacts_nav": {
+      "kind": "page",
+      "description": "Artifacts & Instruments navigation for review: real ui_home/ui_menu_build_pictures/ui_menu_build/ui_back_button_create/ui_adventure wiring as status_deck_ui() does it (house -> EXPLORE -> TOOLS, back one level, van -> Tour A at Egypt). Stand-ins printed: page switching copy, Newton/Lincoln/maintenance pages, audio, radar. test prints ARTIFACTS_NAV_PASS.",
+      "sources": [
+        "main/ui_home.c",
+        "main/ui_kit.c",
+        "main/ui_adventure.c",
+        "main/ui_story_dialogue.c",
+        "main/voice_listening_widget.c",
+        "main/ui_menu.c",
+        "main/newton_art.c",
+        "main/lincoln_art.c"
+      ],
+      "headers": [
+        "ui_home.h",
+        "ui_adventure.h",
+        "orlando_artifacts.h",
+        "orlando_landmarks.h",
+        "orlando_v3.h",
+        "orlando_v4.h",
+        "orlando_castle_overnight.h",
+        "orlando_sign_overnight.h",
+        "orlando_princess_overnight.h",
+        "orlando_van_door.h",
+        "lincoln_art.h",
+        "newton_art.h",
+        "ui_kit.h",
+        "ui_lincoln.h",
+        "ui_menu.h",
+        "ui_newton.h",
+        "ui_theme.h"
+      ],
+      "adapter": "tools/uisim/targets/artifacts_nav.c",
+      "fields": {
+        "page": {
+          "type": "enum",
+          "values": [
+            "home",
+            "explore",
+            "tools"
+          ],
+          "default": "home"
+        },
+        "disable": {
+          "type": "enum",
+          "values": [
+            "",
+            "menu",
+            "tools"
+          ],
+          "default": ""
+        },
+        "test": {
+          "type": "bool",
+          "default": false
+        },
+        "capture_dir": {
+          "type": "str",
+          "default": ""
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "explore": {
+          "page": "explore"
+        },
+        "tools": {
+          "page": "tools"
+        },
+        "test": {
+          "test": true
+        },
+        "menu_disabled": {
+          "disable": "menu"
+        },
+        "tools_disabled": {
+          "page": "explore",
+          "disable": "tools"
+        }
+      }
     }
   }
 }

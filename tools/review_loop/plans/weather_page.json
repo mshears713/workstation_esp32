@@ -2,7 +2,7 @@
   "name": "weather-page",
   "ui": "WEATHER page (main/ui_weather_page.c, icons main/weather_icons.c)",
   "target": "weather_preview",
-  "about": "Weather icons 48/30 px from Pixelorama projects weather-48 and weather-30 (frames 8-13, mapping from apply_weather.py of the 2026-10-28 native-art handoff).",
+  "about": "Weather icons 48/30 px from Pixelorama projects weather-48 and weather-30 (frames 8-13, mapping from apply_weather.py of the 2026-10-28 native-art handoff). OLD BASELINE PLAN: valid for the November overnight firmware (ae8ff86 lineage); its targets are not registered in the exhibit build and it does not test Artifacts & Instruments.",
   "stills": [
     {
       "name": "weather",
@@ -137,5 +137,13 @@
         "frame": 13
       }
     }
+  ],
+  "baseline": {
+    "label": "orlando-overnight (weather page is not in the exhibit build)",
+    "commit": "ae8ff86d3449d2e34f87140cf698bda9b91a3a05"
+  },
+  "required": [
+    "stills",
+    "tests"
   ]
 }
