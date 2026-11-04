@@ -31,3 +31,7 @@ void ui_menu_build(lv_obj_t *page, const char *title, const ui_menu_item_t *item
 #ifdef __cplusplus
 }
 #endif
+
+/* Picture-card variant extends the existing checked-in LVGL menu builder. */
+typedef struct { const char *label; const lv_image_dsc_t *image; int scale; lv_event_cb_t cb; } ui_menu_picture_item_t;
+void ui_menu_build_pictures(lv_obj_t *,const char *,const ui_menu_picture_item_t *,int,const ui_menu_item_t *);

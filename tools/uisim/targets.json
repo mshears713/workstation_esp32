@@ -2843,6 +2843,125 @@
           "action": "guide2"
         }
       }
+    },
+    "weather_preview": {
+      "kind": "page",
+      "description": "Archived Weather UI reuse WIP with fixture data",
+      "adapter": "tools/uisim/targets/weather_preview.c",
+      "sources": [
+        "main/ui_weather_page.c",
+        "main/ui_weather_stage.c",
+        "main/weather_icons.c",
+        "main/ui_kit.c",
+        "main/voice_listening_widget.c"
+      ],
+      "headers": [
+        "ui_weather_page.h",
+        "ui_home.h"
+      ],
+      "fields": {},
+      "fixtures": {
+        "default": {}
+      }
+    },
+    "menu3_preview": {
+      "kind": "page",
+      "description": "Illustrated menu builder WIP",
+      "adapter": "tools/uisim/targets/menu3_preview.c",
+      "sources": [
+        "main/ui_menu.c",
+        "main/ui_kit.c",
+        "main/weather_icons.c",
+        "main/ui_adventure.c",
+        "main/ui_story_dialogue.c",
+        "main/voice_listening_widget.c"
+      ],
+      "headers": [
+        "ui_menu.h",
+        "ui_adventure.h"
+      ],
+      "fields": {},
+      "fixtures": {
+        "default": {}
+      }
+    },
+    "menu3_flow": {
+      "kind": "page",
+      "description": "Actual LVGL menu builder and historical forecast interaction fixture",
+      "adapter": "tools/uisim/targets/menu3_flow.c",
+      "sources": [
+        "main/ui_menu.c",
+        "main/ui_kit.c",
+        "main/weather_icons.c",
+        "main/ui_weather_page.c",
+        "main/ui_weather_stage.c",
+        "main/ui_adventure.c",
+        "main/ui_story_dialogue.c",
+        "main/voice_listening_widget.c"
+      ],
+      "headers": [
+        "ui_menu.h",
+        "ui_adventure.h",
+        "ui_weather_page.h"
+      ],
+      "fields": {
+        "exercise": {
+          "type": "bool",
+          "default": false
+        },
+        "show_weather": {
+          "type": "bool",
+          "default": false
+        },
+        "show_more": {
+          "type": "bool",
+          "default": false
+        },
+        "pressed": {
+          "type": "bool",
+          "default": false
+        }
+      },
+      "fixtures": {
+        "default": {},
+        "test": {
+          "exercise": true
+        },
+        "pictures": {
+          "show_more": true
+        },
+        "pressed": {
+          "show_more": true,
+          "pressed": true
+        },
+        "weather": {
+          "show_weather": true
+        }
+      }
+    },
+    "menu3_app_callbacks": {
+      "kind": "page",
+      "description": "Actual application navigation callbacks with LVGL pages and backend fixture",
+      "adapter": "tools/uisim/targets/menu3_app_callbacks.c",
+      "sources": [
+        "main/ui_menu.c",
+        "main/ui_kit.c",
+        "main/weather_icons.c",
+        "main/ui_weather_page.c",
+        "main/ui_weather_stage.c",
+        "main/ui_adventure.c",
+        "main/ui_story_dialogue.c",
+        "main/voice_listening_widget.c"
+      ],
+      "headers": [
+        "ui_menu.h",
+        "ui_adventure.h",
+        "ui_weather_page.h"
+      ],
+      "fields": {},
+      "fixtures": {
+        "default": {}
+      }
     }
   }
 }

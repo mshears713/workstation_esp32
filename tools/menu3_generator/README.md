@@ -1,0 +1,7 @@
+# Third-menu source reproduction
+
+The project has no discovered separate graphical LVGL generator. The existing MENU and MORE are built at runtime by handwritten `main/ui_menu.c`, registered through `main/CMakeLists.txt`. This candidate extends that same checked-in builder. These scripts reproduce the changes; they do not claim to be another tool's generated output.
+
+From a clean copy of baseline `6cf8240ca8a1a0da4c8b034f97a59a277beebb11`, make an empty work directory. Copy baseline `main/ui_menu.c`, `main/ui_menu.h`, `main/status_deck_ui.c`, and `main/CMakeLists.txt` into it. Copy this directory's `prepare_weather.py`, `make_menu3.py`, and `weather-original.c` into it. Run `python -X utf8 prepare_weather.py`, then `python -X utf8 make_menu3.py` exactly once. Compare the six resulting files with this candidate's corresponding `main/` files before applying. The scripts intentionally modify their local input copies; do not run them directly on an existing edited tree or twice. `weather-original.c` is the archived `a5a9132:main/ui_home.c`; Windows extraction changes its text encoding to UTF-8, not its logic.
+
+The prior caretaker animation and `ui_mouse_home_create` are intentionally disabled in the standalone Weather page to avoid a second global mouse owner and duplicated large asset arrays. Forecast values/icons remain historical. The source-reproduction test compared SHA256 of all six outputs against this candidate and matched.

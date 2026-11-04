@@ -68,3 +68,39 @@ void ui_menu_build(lv_obj_t *page, const char *title, const ui_menu_item_t *item
         lv_obj_center(l);
     }
 }
+
+void ui_menu_build_pictures(lv_obj_t *page,const char *title,const ui_menu_picture_item_t *items,int count,const ui_menu_item_t *corner)
+{
+    lv_obj_set_style_bg_color(page,lv_color_hex(0x254656),0);
+    lv_obj_set_style_bg_grad_color(page,lv_color_hex(0x507a78),0);
+    lv_obj_set_style_bg_grad_dir(page,LV_GRAD_DIR_VER,0);
+    lv_obj_set_style_bg_opa(page,LV_OPA_COVER,0);
+    ui_menu_build(page,title,NULL,0,corner);
+    lv_obj_set_style_text_color(lv_obj_get_child(page,0),lv_color_hex(0xf6edda),0);
+    for (int i=0;i<count && i<3;i++) {
+        lv_obj_t *card=lv_button_create(page);
+        lv_obj_set_pos(card,8+i*104,70);lv_obj_set_size(card,96,150);
+        lv_obj_set_style_bg_color(card,lv_color_hex(0xe4d2ad),0);
+        lv_obj_set_style_border_width(card,2,0);lv_obj_set_style_border_color(card,lv_color_hex(0x8a6d4b),0);
+        lv_obj_set_style_radius(card,10,0);lv_obj_set_style_pad_all(card,0,0);
+        lv_obj_set_style_shadow_color(card,lv_color_hex(0x132d31),0);
+        lv_obj_set_style_shadow_width(card,5,0);lv_obj_set_style_shadow_offset_y(card,3,0);
+        lv_obj_set_style_translate_y(card,2,LV_STATE_PRESSED);
+        lv_obj_set_style_shadow_width(card,1,LV_STATE_PRESSED);
+        if(items[i].cb)lv_obj_add_event_cb(card,items[i].cb,LV_EVENT_CLICKED,NULL);
+        /* Each picture is inset like a postcard; the whole card is tappable. */
+        lv_obj_t *scene=lv_obj_create(card);lv_obj_remove_style_all(scene);
+        lv_obj_set_pos(scene,5,5);lv_obj_set_size(scene,86,104);
+        lv_obj_set_style_bg_color(scene,lv_color_hex(i==0?0x789cb3:0x7594a7),0);
+        lv_obj_set_style_bg_opa(scene,LV_OPA_COVER,0);lv_obj_set_style_radius(scene,6,0);
+        lv_obj_remove_flag(scene,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *ground=lv_obj_create(scene);lv_obj_remove_style_all(ground);
+        lv_obj_set_pos(ground,0,77);lv_obj_set_size(ground,86,27);
+        lv_obj_set_style_bg_color(ground,lv_color_hex(0x8ca77b),0);lv_obj_set_style_bg_opa(ground,LV_OPA_COVER,0);
+        lv_obj_remove_flag(ground,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *pic=lv_image_create(scene);lv_image_set_src(pic,items[i].image);lv_image_set_scale(pic,items[i].scale);lv_image_set_antialias(pic,false);lv_obj_align(pic,LV_ALIGN_CENTER,0,0);
+        lv_obj_t *label=lv_label_create(card);lv_label_set_text(label,items[i].label);
+        lv_obj_set_style_text_font(label,&lv_font_montserrat_14,0);lv_obj_set_style_text_color(label,lv_color_hex(0x172533),0);
+        lv_obj_align(label,LV_ALIGN_BOTTOM_MID,0,-12);
+    }
+}

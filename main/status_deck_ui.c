@@ -171,6 +171,8 @@
 #include "ui_menu.h"
 #include "ui_theme.h"
 #include "weather_client.h"
+#include "weather_icons.h"
+#include "ui_weather_page.h"
 #include "ui_firmware_page.h"
 #include "ui_diagnostics.h"
 #include "ui_sensors.h"
@@ -902,6 +904,8 @@ typedef enum {
     /* UI suite: MENU's second page, and the notification card stack. */
     APP_PAGE_MORE,
     APP_PAGE_NOTIFY,
+    APP_PAGE_MORE3,
+    APP_PAGE_WEATHER,
     APP_PAGE_COUNT,
 } app_page_t;
 
@@ -914,6 +918,10 @@ static lv_obj_t *page_firmware;     /* FIRMWARE - reached from SETTINGS */
 static lv_obj_t *page_menu;         /* MENU - 1.3.0, reached from HOME */
 static lv_obj_t *page_diag;         /* DIAGNOSTICS - reached from MENU */
 static lv_obj_t *page_more;         /* MENU's second page */
+static lv_obj_t *page_more3, *page_weather;
+static ui_home_t weather_ui;
+static bool weather_force_update;
+static app_page_t current_app_page;
 static lv_obj_t *page_notify;       /* MESSAGES card stack - from MORE */
 static lv_obj_t *app_screen;        /* where experiments open full-screen */
 
@@ -1594,6 +1602,7 @@ static void voice_ui_timer_cb(lv_timer_t *t)
     case BACKEND_HEALTH_UNKNOWN:
     default:                        link = VOICE_WIDGET_LINK_UNKNOWN; break;
     }
+    if (weather_ui.mic) { ui_weather_page_set_link(&weather_ui,link); voice_listening_widget_set_notification(weather_ui.mic,nst.pending); }
     ui_home_set_link(&home_ui, link);   /* the widget, plus its caption */
 }
 
@@ -1812,13 +1821,14 @@ static void set_active_page(app_page_t page)
 {
     lv_obj_t *pages[APP_PAGE_COUNT] = {
         page_home, page_sens, page_log, page_set, page_projects, page_firmware, page_menu, page_diag,
-        page_more, page_notify,
+        page_more, page_notify, page_more3, page_weather,
     };
     /* 1.2.1: which page was on screen, for the crash breadcrumb. Same
      * order as app_page_t. */
     static const char *const page_names[APP_PAGE_COUNT] = {
-        "HOME", "SENS", "LOG", "SET", "PROJECTS", "FIRMWARE", "MENU", "DIAG", "MORE", "NOTIFY",
+        "HOME", "SENS", "LOG", "SET", "PROJECTS", "FIRMWARE", "MENU", "DIAG", "MORE", "NOTIFY", "MORE3", "WEATHER",
     };
+    current_app_page=page;
     diag_set_page(page_names[page]);
     ui_mouse_home_set_active(page == APP_PAGE_HOME);
     ui_home_set_active(page == APP_PAGE_HOME);
@@ -1830,10 +1840,11 @@ static void set_active_page(app_page_t page)
         }
     }
     /* The way back is on every page except the one it leads to. */
-    if (page == APP_PAGE_HOME) {
+    if (page == APP_PAGE_HOME || page == APP_PAGE_WEATHER) {
         lv_obj_add_flag(back_button, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_clear_flag(back_button, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(lv_obj_get_child(back_button,0),page==APP_PAGE_MORE?LV_SYMBOL_LEFT " MENU":page==APP_PAGE_MORE3?LV_SYMBOL_LEFT " MORE":LV_SYMBOL_LEFT " HOME");
     }
 
     /* Mission 15: the LVGL-builtin FPS/CPU readout (CONFIG_LV_USE_PERF_
@@ -1856,6 +1867,12 @@ static void set_active_page(app_page_t page)
 static void home_nav_button_cb(lv_event_t *e)
 {
     set_active_page(APP_PAGE_HOME);
+}
+
+static void back_nav_cb(lv_event_t *e)
+{
+    (void)e;
+    set_active_page(current_app_page==APP_PAGE_MORE?APP_PAGE_MENU:current_app_page==APP_PAGE_MORE3?APP_PAGE_MORE:APP_PAGE_HOME);
 }
 
 static void menu_button_cb(lv_event_t *e)
@@ -1919,6 +1936,10 @@ static void more_nav_button_cb(lv_event_t *e)
     (void)e;
     set_active_page(APP_PAGE_MORE);
 }
+
+static void render_weather(void);
+static void more3_nav_button_cb(lv_event_t *e) { (void)e; set_active_page(APP_PAGE_MORE3); }
+static void weather_nav_button_cb(lv_event_t *e) { (void)e; weather_force_update=true; set_active_page(APP_PAGE_WEATHER); render_weather(); }
 
 static void notify_nav_button_cb(lv_event_t *e)
 {
@@ -2469,7 +2490,7 @@ static void render_weather(void)
         backend_health_get_status(&bh);
         mode = (bh.state == BACKEND_HEALTH_DOWN || bh.state == BACKEND_HEALTH_NO_NETWORK) ? 1 : 0;
     }
-    if (mode == shown_mode && w.seq == shown_seq) {
+    if (mode == shown_mode && w.seq == shown_seq && !weather_force_update) {
         return;
     }
     /* A freshness-only change is not another weather snapshot. Revisit it
@@ -2498,6 +2519,8 @@ static void render_weather(void)
         v.slot[i].icon = w.slot[i].icon;
         v.slot[i].rain = w.slot[i].rain;
     }
+    weather_force_update=false;
+    ui_weather_page_apply_weather(&weather_ui, &v);
     /* A reply received after leaving HOME must not start a paused animation
      * and strand the displayed data until the user returns. */
     bool home_visible = page_home && lv_obj_is_visible(page_home);
@@ -2806,6 +2829,8 @@ void status_deck_ui(lv_obj_t *scr)
     page_diag = pages_init[APP_PAGE_DIAG];
     page_more = pages_init[APP_PAGE_MORE];
     page_notify = pages_init[APP_PAGE_NOTIFY];
+    page_more3 = pages_init[APP_PAGE_MORE3];
+    page_weather = pages_init[APP_PAGE_WEATHER];
     app_screen = scr;
     notify_history = heap_caps_calloc(NOTIFY_HISTORY_LEN, sizeof(notify_done_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     notify_front_text = heap_caps_calloc(1, NOTIFICATION_TEXT_LEN, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -2849,8 +2874,16 @@ void status_deck_ui(lv_obj_t *scr)
         { "SURVEY", survey_open_cb },
         { "ADVENTURE", adventure_open_cb },
     };
-    static const ui_menu_item_t menu_key = { LV_SYMBOL_LEFT " MENU", menu_button_cb };
+    static const ui_menu_item_t menu_key = { "NEXT " LV_SYMBOL_RIGHT, more3_nav_button_cb };
     ui_menu_build(page_more, "MORE", more_items, (int)(sizeof(more_items) / sizeof(more_items[0])), &menu_key);
+    const ui_menu_picture_item_t pictures[] = {
+        { "Weather", weather_icon("partly",true), 320, weather_nav_button_cb },
+        { "Mouse", ui_adventure_original_asset(TOUR_ASSET_MOUSE,0), 768, mouse_open_cb },
+        { "Adventure", ui_adventure_original_asset(TOUR_ASSET_VAN,0), 320, adventure_open_cb },
+    };
+    ui_menu_build_pictures(page_more3,"EXPLORE",pictures,3,NULL);
+    ui_weather_page_build(&weather_ui,page_weather,talk_button_cb,more3_nav_button_cb);
+
 
     static const ui_notify_actions_t notify_actions = { notify_play_cb };
     ui_notify_build(&ui->notify, page_notify, &notify_actions);
@@ -2961,7 +2994,7 @@ void status_deck_ui(lv_obj_t *scr)
      * cover exactly the same area. */
     /* 1.3.0: one "< HOME" button where the HOME corner always was - see
      * ui_back_button_create(). MENU on HOME replaced the other three. */
-    back_button = ui_back_button_create(scr, home_nav_button_cb);
+    back_button = ui_back_button_create(scr, back_nav_cb);
 
     /* Command Window overlay (Mission 12): full-screen, built last so it
      * naturally sits on top of the dashboard - render_command_overlay also
