@@ -1,4 +1,10 @@
 dependencies:
   esp-box-3:
     version: '*'
+  # Kept although nothing in the 1.6 exhibit build calls ESP-SR: removing it
+  # makes the component manager re-solve and silently upgrade the BSP's other
+  # dependencies (button, codec, lvgl port...) away from the deployed set. An
+  # unreferenced static library adds nothing to the image (checked in the map).
+  espressif/esp-sr:
+    version: "^2.4.6"
 description: BSP Display example
