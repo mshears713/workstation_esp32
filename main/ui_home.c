@@ -12,25 +12,28 @@
 #include "orlando_v5_mouse.h"
 #include "orlando_v5_crest.h"
 #include "orlando_v5_end.h"
+#include "orlando_castle_overnight.h"
+#include "orlando_sign_overnight.h"
+#include "orlando_princess_overnight.h"
 
 enum { ACT_HOME=1,ACT_TOUR,ACT_INTRO,ACT_WHEEL,ACT_CASTLE,ACT_COASTER,
        ACT_MENU,ACT_ALL,ACT_TALK,ACT_DISMISS,ACT_NEXT,ACT_CLOSE };
 static struct {
- lv_obj_t *root,*wheel,*car,*peek,*princess,*mouse,*sign,*shade,*tray,*menu_label;
+ lv_obj_t *root,*wheel,*car,*peek,*princess,*mouse,*van,*van_hit,*sign,*shade,*tray,*menu_label;
  lv_obj_t *dialog,*dialog_text,*audio_hint,*guide_nav,*cabins[12],*cues[3];
  lv_timer_t *timer;
  lv_event_cb_t home_cb,tour_cb,intro_cb,menu_cb,talk_cb;
- uint32_t elapsed,wheel_start,castle_start,car_start,last_tick,intro_dismissed;
+ uint32_t elapsed,wheel_start,castle_start,car_start,last_tick,intro_dismissed,van_start,last_peek_cycle;
  int wheel_base,wheel_angle;
  unsigned intro_page;
- bool active,spinning,peeking,launching,menu_open;
+ bool active,spinning,peeking,launching,menu_open,van_running,van_departed,auto_peek;
 } s;
 static void action(lv_event_t *e);
 static void wheel_position(int angle) {
  lv_image_set_rotation(s.wheel,angle);
  for(int i=0;i<12;i++) {
   float a=(angle/10.0f+i*30)*0.0174532925f;
-  lv_obj_set_pos(s.cabins[i],266+(int)lroundf(26*cosf(a)),89+(int)lroundf(26*sinf(a)));
+  lv_obj_set_pos(s.cabins[i],266+(int)lroundf(35*cosf(a)),95+(int)lroundf(35*sinf(a)));
  }
 }
 static void visible(lv_obj_t *o,bool show) {
@@ -70,7 +73,7 @@ static void close_intro(void) {
  s.dialog=NULL;s.dialog_text=NULL;s.audio_hint=NULL;s.guide_nav=NULL;s.intro_dismissed=s.elapsed;
 }
 static const char *guide[]={
- "I'm your curious mouse guide!\nHome and Menu open controls.\nMore adventures are coming.\nTap me whenever you like.",
+ "Hello traveler, welcome to\nMaker Faire 2026!",
  "Tap the Eye to give it a spin.\nThe castle has two shy guests.\nTap the coaster to launch a car.\nTap me again whenever you like."
 };
 static void open_intro(lv_event_t *e) {
@@ -78,39 +81,43 @@ static void open_intro(lv_event_t *e) {
  close_menu();visible(s.sign,false);s.intro_page=0;
  s.dialog=flat(s.root,0,0,320,240,0x142331,180);lv_obj_add_flag(s.dialog,LV_OBJ_FLAG_CLICKABLE);
  lv_obj_t *paper=flat(s.dialog,10,27,300,204,0xF3E9CF,LV_OPA_COVER);lv_obj_set_style_radius(paper,10,0);
- lv_obj_t *portrait=lv_image_create(paper);lv_image_set_src(portrait,ui_adventure_original_asset(TOUR_ASSET_MOUSE,0));
- lv_image_set_pivot(portrait,0,0);lv_image_set_scale(portrait,512);lv_image_set_antialias(portrait,false);lv_obj_set_pos(portrait,12,8);
+ lv_obj_t *portrait=lv_image_create(paper);lv_image_set_src(portrait,orlando_mouse_frames[0]);
+ lv_image_set_pivot(portrait,0,0);lv_image_set_scale(portrait,171);lv_image_set_antialias(portrait,false);lv_obj_set_pos(portrait,12,8);
  label(paper,"Hello, traveler!",54,14,234,&lv_font_montserrat_20,0x25303D);
  s.dialog_text=label(paper,guide[0],12,58,276,&lv_font_montserrat_14,0x25303D);
  /* Routine audio availability is not part of the welcome copy. */
- s.guide_nav=button(paper,"Next",12,151,128,42,ACT_NEXT);button(paper,"Close guide",158,151,130,42,ACT_CLOSE);
- if(s.intro_cb)s.intro_cb(e);
+ button(paper,"Close guide",72,151,156,42,ACT_CLOSE);
+ /* The written greeting opens only on an explicit mouse tap. */
 }
 void ui_home_intro_audio_result(bool accepted) {
  (void)accepted; /* Written guide remains complete whether voice accepts or is busy. */
 }
 static void reset_scene(void) {
- s.spinning=s.peeking=s.launching=false;s.wheel_angle=0;
+ s.spinning=s.peeking=s.launching=s.van_running=s.van_departed=false;s.wheel_angle=0;
  if(s.wheel)wheel_position(0);
  for(int i=0;i<3;i++)visible(s.cues[i],false);
  visible(s.car,false);visible(s.peek,false);visible(s.princess,false);
+ if(s.van)lv_obj_set_pos(s.van,211,150);
+ visible(s.van_hit,true);
+ if(s.mouse){lv_obj_set_pos(s.mouse,126,170);visible(s.mouse,true);if(s.sign)lv_obj_move_to_index(s.mouse,lv_obj_get_index(s.sign)+1);}
  close_intro();close_menu();visible(s.sign,false);s.intro_dismissed=s.elapsed;
 }
 static void action(lv_event_t *e) {
  int id=(int)(intptr_t)lv_event_get_user_data(e);
  if(!s.active)return;
+ if(s.van_running)return;
  if(s.dialog && id!=ACT_NEXT && id!=ACT_CLOSE)return;
  switch(id) {
  case ACT_HOME:
-  s.menu_open=true;visible(s.shade,true);visible(s.tray,true);lv_label_set_text(s.menu_label,"Close");break;
- case ACT_TOUR:break; /* Next scene intentionally deferred. */
+  close_menu();if(s.menu_cb)s.menu_cb(e);break;
+ case ACT_TOUR:if(!s.van_running){close_menu();s.van_start=s.elapsed;s.van_running=true;lv_obj_move_to_index(s.mouse,lv_obj_get_index(s.van));}break;
  case ACT_INTRO:open_intro(e);break;
  case ACT_WHEEL:close_menu();s.wheel_start=s.elapsed;s.wheel_base=s.wheel_angle;s.spinning=true;break;
- case ACT_CASTLE:close_menu();s.castle_start=s.elapsed;s.peeking=true;break;
+ case ACT_CASTLE:close_menu();s.castle_start=s.elapsed;s.auto_peek=false;s.peeking=true;break;
  case ACT_COASTER:close_menu();s.car_start=s.elapsed;s.launching=true;break;
  case ACT_MENU:
   s.menu_open=!s.menu_open;visible(s.shade,s.menu_open);visible(s.tray,s.menu_open);
-  lv_label_set_text(s.menu_label,s.menu_open?"Close":"Menu");break;
+  if(s.menu_label){lv_label_set_text(s.menu_label,s.menu_open?"Close":"Menu");}break;
  case ACT_ALL:close_menu();if(s.menu_cb)s.menu_cb(e);break;
  case ACT_TALK:close_menu();if(s.talk_cb)s.talk_cb(e);break;
  case ACT_DISMISS:close_menu();break;
@@ -130,23 +137,33 @@ static void tick(lv_timer_t *t) {
   s.wheel_angle=(s.wheel_base+(int)(d*3600/3200))%3600;
   wheel_position(s.wheel_angle);
  }
+ uint32_t cycle=s.elapsed/18000,phase=s.elapsed%18000;
+ if(!s.peeking && !s.dialog && !s.van_running && phase>=7000 && phase<9000 && s.last_peek_cycle!=cycle){s.last_peek_cycle=cycle;s.castle_start=s.elapsed;s.auto_peek=true;s.peeking=true;}
  if(s.peeking) {
   uint32_t d=s.elapsed-s.castle_start;
-  int amount=d<600?(int)d*20/600:d<2000?20:d<2600?(int)(2600-d)*20/600:0;
-  lv_obj_set_x(s.peek,131-amount*3/4);visible(s.peek,d<2600);
-  visible(s.princess,d>=400 && d<2200);
+  int amount=d<600?(int)d*8/600:d<2000?8:d<2600?(int)(2600-d)*8/600:0;
+  lv_obj_set_x(s.peek,188-amount/2);visible(s.peek,d<2600);
+  lv_obj_set_pos(s.princess,151,98+(d<400?0:d<1800?(int)(d-400)*42/1400:42));
+  lv_image_set_src(s.princess,princess_walk_frames[(d/250)%2]);
+  visible(s.princess,!s.auto_peek && d>=400 && d<2200);
   if(d>=2600)s.peeking=false;
  }
  if(s.launching) {
   uint32_t d=s.elapsed-s.car_start;
-  int distance=(int)(d*d/8000); if(distance>90)distance=90;
-  if(d<850){lv_image_set_rotation(s.car,3210);lv_obj_set_pos(s.car,12+distance*3/4,119-distance*65*3/(81*4));}
-  else {int t=(d-850)>350?350:(int)(d-850);lv_image_set_rotation(s.car,t<120?0:300);lv_obj_set_pos(s.car,79+t*30/350,65+t*15/350);}
-  visible(s.car,d<1200);
-  if(d>=1200)s.launching=false;
+  if(d<700){lv_image_set_rotation(s.car,3210);lv_obj_set_pos(s.car,12+(int)d*68/700,110-(int)d*50/700);}
+  else {int t=(d-700)>550?550:(int)(d-700);lv_image_set_rotation(s.car,3520);lv_obj_set_pos(s.car,80+t*70/550,60-t*8/550);}
+  visible(s.car,d<1250);
+  if(d>=1250)s.launching=false;
  }
- bool sign=!s.dialog&&!s.menu_open && s.elapsed-s.intro_dismissed>=6000 && (s.elapsed%14000)>=9000;
+ if(s.van_running){
+  uint32_t d=s.elapsed-s.van_start;
+  if(d<1800){int climb=d>1000?(int)(d-1000)*20/800:0;lv_obj_set_pos(s.mouse,126+(int)d*92/1800,170-climb);visible(s.mouse,true);}
+  else {visible(s.mouse,false);lv_obj_set_x(s.van,211+(int)(d-1800)*130/1400);}
+  if(d>=3200){s.van_running=false;s.van_departed=true;visible(s.van_hit,false);}
+ }
+ bool sign=!s.van_running&&!s.van_departed&&!s.dialog&&!s.menu_open && s.elapsed-s.intro_dismissed>=6000 && (s.elapsed%14000)>=9000;
  visible(s.sign,sign);
+ if(sign){lv_obj_move_foreground(s.sign);lv_obj_set_y(s.sign,158-((s.elapsed/300)%2)*2);}
 
  /* Brief hint strokes, no extra permanent buttons; suppressed during overlays/motion. */
  unsigned cue=s.elapsed%18000;
@@ -167,60 +184,45 @@ void ui_home_set_actions(lv_event_cb_t home_cb,lv_event_cb_t tour_cb,lv_event_cb
 ui_home_state_t ui_home_state(void) {
  return (ui_home_state_t){.active=s.active,.menu_open=s.menu_open,.intro_open=s.dialog!=NULL,
  .sign_visible=s.sign&&!lv_obj_has_flag(s.sign,LV_OBJ_FLAG_HIDDEN),.wheel_running=s.spinning,
- .castle_running=s.peeking,.launch_running=s.launching,.timers=s.timer?1u:0u,.intro_page=s.intro_page,
- .wheel_angle=s.wheel_angle,.car_x=s.car?lv_obj_get_x(s.car):0,.peek_x=s.peek?lv_obj_get_x(s.peek):0};
+ .castle_running=s.peeking,.launch_running=s.launching,.van_running=s.van_running,.timers=s.timer?1u:0u,.intro_page=s.intro_page,
+ .wheel_angle=s.wheel_angle,.car_x=s.car?lv_obj_get_x(s.car):0,.peek_x=s.peek?lv_obj_get_x(s.peek):0,
+ .mouse_x=s.mouse?lv_obj_get_x(s.mouse):0,.van_x=s.van?lv_obj_get_x(s.van):0};
 }
 void ui_home_build(ui_home_t *h,lv_obj_t *page,lv_event_cb_t talk_cb,lv_event_cb_t menu_cb) {
  memset(h,0,sizeof(*h));
  /* One app HOME instance. Delete the old owned page before constructing another. */
  if(s.timer){lv_timer_delete(s.timer);s.timer=NULL;}
- memset(&s,0,sizeof(s));s.root=page;s.active=true;s.last_tick=lv_tick_get();s.menu_cb=menu_cb;s.talk_cb=talk_cb;
+ memset(&s,0,sizeof(s));s.root=page;s.active=true;s.last_tick=lv_tick_get();s.last_peek_cycle=UINT32_MAX;s.menu_cb=menu_cb;s.talk_cb=talk_cb;
  lv_obj_add_event_cb(page,deleted,LV_EVENT_DELETE,NULL);
  lv_obj_set_style_bg_color(page,lv_color_hex(0x91AD7A),0);lv_obj_set_style_bg_opa(page,LV_OPA_COVER,0);
  sprite(&orlando_v5_background,0,0,256);
  sprite(&hulk_launch,6,64,192);
  sprite(&orlando_crest,77,65,256);
- sprite(&eye_base,247,91,192);
- s.wheel=sprite(&eye_rim,239,61,192);lv_image_set_pivot(s.wheel,40,40);
- for(int i=0;i<12;i++){s.cabins[i]=sprite(&eye_cabin,0,0,192);}
+ sprite(&eye_base,242,99,256);
+ s.wheel=sprite(&eye_rim,230,59,256);lv_image_set_pivot(s.wheel,40,40);
+ for(int i=0;i<12;i++){s.cabins[i]=sprite(&eye_cabin,0,0,256);}
  wheel_position(0);
- s.peek=sprite(&castle_silhouette,131,81,192);visible(s.peek,false);
- sprite(&center_castle,125,40,192);
- s.princess=sprite(&window_princess_v3,154,87,192);visible(s.princess,false);
+ sprite(&castle_overnight,112,0,256);
+ sprite(&launch_bridge,78,54,256);
+ s.peek=sprite(&castle_silhouette,188,54,96);visible(s.peek,false);
+ s.princess=sprite(princess_walk_frames[0],151,98,256);visible(s.princess,false);
  s.car=sprite(&coaster_car,12,119,120);lv_image_set_pivot(s.car,14,8);visible(s.car,false);
- sprite(&orlando_end,104,74,256);
- sprite(ui_adventure_original_asset(TOUR_ASSET_HOUSE,0),8,124,448);
- sprite(ui_adventure_original_asset(TOUR_ASSET_VAN,0),211,150,384);
+
+ sprite(ui_adventure_original_asset(TOUR_ASSET_HOUSE,0),5,117,512);
+ s.van=sprite(ui_adventure_original_asset(TOUR_ASSET_VAN,0),211,150,384);
+ s.sign=sprite(&guide_sign,80,158,256);visible(s.sign,false);
  s.mouse=sprite(orlando_mouse_frames[0],126,170,256);
  /* Small captions sit within the original objects' hit regions. */
- lv_obj_t *home=label(page,"Home",17,208,66,&lv_font_montserrat_14,0x172533);
- lv_obj_set_style_text_align(home,LV_TEXT_ALIGN_CENTER,0);
- hit(6,132,84,92,ACT_HOME);
+ sprite(&home_plaque,42,156,256);
+ hit(3,120,99,100,ACT_HOME);s.van_hit=hit(208,140,110,54,ACT_TOUR);
  hit(119,160,62,68,ACT_INTRO);hit(235,55,75,75,ACT_WHEEL);
  hit(120,35,82,100,ACT_CASTLE);hit(0,60,90,75,ACT_COASTER);
- /* A held sign is a separate overlay, preserving the original mouse pixels. */
- s.sign=flat(page,115,139,70,70,0,LV_OPA_TRANSP);
- /* Handle meets the mouse paw; board is raised away from bottom controls. */
- flat(s.sign,40,22,3,41,0x866E50,LV_OPA_COVER);
- flat(s.sign,35,61,8,4,0x866E50,LV_OPA_COVER);
- lv_obj_t *board=flat(s.sign,0,0,70,24,0xF3E9CF,LV_OPA_COVER);lv_obj_set_style_border_width(board,1,0);
- lv_obj_set_style_border_color(board,lv_color_hex(0x866E50),0);
- label(board,"Guide",10,3,58,&lv_font_montserrat_14,0x25303D);
- lv_obj_add_flag(s.sign,LV_OBJ_FLAG_CLICKABLE);lv_obj_add_event_cb(s.sign,action,LV_EVENT_CLICKED,(void *)(intptr_t)ACT_INTRO);visible(s.sign,false);
  const int cx[]={56,160,271},cy[]={42,25,66};
  for(int i=0;i<3;i++) {
   s.cues[i]=flat(page,cx[i]-7,cy[i]-7,14,14,0,LV_OPA_TRANSP);
   lv_obj_set_style_border_width(s.cues[i],2,0);lv_obj_set_style_border_color(s.cues[i],lv_color_hex(0xF3D59A),0);lv_obj_set_style_radius(s.cues[i],7,0);visible(s.cues[i],false);
  }
- s.shade=hit(0,0,320,240,ACT_DISMISS);visible(s.shade,false);
- s.tray=flat(page,190,101,122,90,0x172533,LV_OPA_COVER);lv_obj_set_style_radius(s.tray,8,0);
- button(s.tray,"Guide",4,4,114,40,ACT_INTRO);button(s.tray,"Main menu",4,47,114,40,ACT_ALL);visible(s.tray,false);
- lv_obj_t *menu=flat(page,248,194,64,40,0,LV_OPA_TRANSP);
- lv_obj_add_flag(menu,LV_OBJ_FLAG_CLICKABLE);
- lv_obj_add_event_cb(menu,action,LV_EVENT_CLICKED,(void *)(intptr_t)ACT_MENU);
- lv_obj_t *face=flat(menu,0,8,64,32,0xE5C58F,LV_OPA_COVER);lv_obj_set_style_radius(face,7,0);
- s.menu_label=label(face,"Menu",0,0,64,&lv_font_montserrat_14,0x172533);
- lv_obj_set_style_text_align(s.menu_label,LV_TEXT_ALIGN_CENTER,0);lv_obj_center(s.menu_label);
+
  s.timer=lv_timer_create(tick,50,NULL);
 }
 

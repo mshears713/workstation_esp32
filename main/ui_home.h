@@ -89,9 +89,9 @@ void ui_home_set_active(bool active);
 void ui_home_set_actions(lv_event_cb_t home_cb, lv_event_cb_t tour_cb, lv_event_cb_t intro_cb);
 void ui_home_intro_audio_result(bool accepted);
 typedef struct {
- bool active, menu_open, intro_open, sign_visible, wheel_running, castle_running, launch_running;
+ bool active, menu_open, intro_open, sign_visible, wheel_running, castle_running, launch_running, van_running;
  unsigned timers, intro_page;
- int wheel_angle, car_x, peek_x;
+ int wheel_angle, car_x, peek_x, mouse_x, van_x;
 } ui_home_state_t;
 ui_home_state_t ui_home_state(void);
 

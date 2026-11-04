@@ -1,7 +1,5 @@
 #define CARETAKER_NATIVE_ASSETS
 #include "ui_mouse.h"
-#include "ui_mouse_walk.h"
-#include "mouse_station_assets.h"
 #include <stdint.h>
 #include "mouse_pixels.h"
 #ifdef CARETAKER_NATIVE_ASSETS
@@ -18,15 +16,6 @@ void ui_home_caretaker_end(void);
 #define HOME_DOOR_CLIP_RIGHT 295
 #define HOME_APPROACH_X 264
 #define HOME_ROUTE_Y 138
-
-/* Flash-resident original 16x16 frames; exact 3x pixels, no image cache,
- * transform layer, task, or changes to the display DMA allocation. */
-static lv_obj_t *root, *sprite, *hint;
-static lv_timer_t *timer;
-static void (*mouse_exit_callback)(void *);
-static void *exit_context;
-static ui_mouse_walk_t walk;
-static lv_obj_t *stations[3];
 
 static void draw_pixels(lv_event_t *e, int current_frame, int facing, int scale, int clip_right)
 {
@@ -52,124 +41,6 @@ static void draw_pixels(lv_event_t *e, int current_frame, int facing, int scale,
             col = end;
         }
     }
-}
-
-static void draw_mouse(lv_event_t *e) { draw_pixels(e, walk.frame, walk.direction, 3, 32767); }
-
-static void step(lv_timer_t *t)
-{
-    (void)t;
-    if (walk.paused) return;
-    int before = walk.station;
-    ui_mouse_walk_step(&walk);
-    if (before != walk.station) {
-        if (before >= 0) lv_obj_set_style_border_opa(stations[before], LV_OPA_TRANSP, 0);
-        if (walk.station >= 0) lv_obj_set_style_border_opa(stations[walk.station], LV_OPA_COVER, 0);
-    }
-    lv_obj_set_x(sprite, walk.x);
-    lv_obj_invalidate(sprite);
-}
-
-static void toggle(lv_event_t *e)
-{
-    (void)e;
-    walk.paused = !walk.paused;
-    lv_label_set_text(hint, walk.paused ? "Paused - tap to walk" : "Tap to pause");
-}
-
-static void leave(lv_event_t *e)
-{
-    (void)e;
-    void (*cb)(void *) = mouse_exit_callback;
-    void *ctx = exit_context;
-    ui_mouse_close();
-    if (cb) cb(ctx);
-}
-
-void ui_mouse_close(void)
-{
-    if (timer) { lv_timer_delete(timer); timer = NULL; }
-    if (root) { lv_obj_delete_async(root); root = NULL; }
-    sprite = hint = NULL;
-    for (int i=0; i<3; ++i) stations[i] = NULL;
-    mouse_exit_callback = NULL;
-    exit_context = NULL;
-}
-
-void ui_mouse_open(lv_obj_t *screen, void (*exit_cb)(void *), void *ctx)
-{
-    if (root) return;
-    mouse_exit_callback = exit_cb;
-    exit_context = ctx;
-    ui_mouse_walk_reset(&walk);
-    root = lv_obj_create(screen);
-    lv_obj_remove_style_all(root);
-    lv_obj_set_size(root, 320, 240);
-    lv_obj_set_style_bg_color(root, lv_color_hex(0x101923), 0);
-    lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
-    lv_obj_remove_flag(root, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(root, toggle, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *home = lv_button_create(root);
-    lv_obj_set_pos(home, 8, 8);
-    lv_obj_set_size(home, 104, 48);
-    lv_obj_set_style_bg_color(home, lv_color_hex(0x284962), 0);
-    lv_obj_add_event_cb(home, leave, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *label = lv_label_create(home);
-    lv_label_set_text(label, LV_SYMBOL_LEFT " HOME");
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
-    lv_obj_center(label);
-
-    label = lv_label_create(root);
-    lv_label_set_text(label, "MOUSE");
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
-    lv_obj_align(label, LV_ALIGN_TOP_RIGHT, -16, 22);
-
-    static const char *const names[3] = {"STEAM", "TRANSISTOR", "AI"};
-    for (int i=0; i<3; ++i) {
-        int cx=56 + i*104;
-        label=lv_label_create(root);
-        lv_label_set_text(label,names[i]);
-        lv_obj_set_style_text_font(label,&lv_font_montserrat_12,0);
-        lv_obj_set_style_text_color(label,lv_color_hex(0xc5d5df),0);
-        lv_obj_set_width(label,100);
-        lv_obj_set_style_text_align(label,LV_TEXT_ALIGN_CENTER,0);
-        lv_obj_set_pos(label,cx-50,60);
-        lv_obj_remove_flag(label,LV_OBJ_FLAG_CLICKABLE);
-        stations[i]=lv_obj_create(root);
-        lv_obj_remove_style_all(stations[i]);
-        lv_obj_set_pos(stations[i],cx-36,76);
-        lv_obj_set_size(stations[i],72,68);
-        lv_obj_set_style_border_color(stations[i],lv_color_hex(0x91c6dc),0);
-        lv_obj_set_style_border_width(stations[i],1,0);
-        lv_obj_set_style_border_opa(stations[i],LV_OPA_TRANSP,0);
-        lv_obj_remove_flag(stations[i],LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-        if (station_icons[i]) {
-            lv_obj_t *icon=lv_image_create(stations[i]);
-            lv_image_set_src(icon,station_icons[i]);
-            lv_image_set_pivot(icon,0,0);
-            lv_image_set_scale(icon,512);
-            lv_image_set_antialias(icon,false);
-            lv_obj_set_pos(icon,3,1);
-            lv_obj_remove_flag(icon,LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-        }
-    }
-
-    sprite = lv_obj_create(root);
-    lv_obj_remove_style_all(sprite);
-    lv_obj_set_size(sprite, 48, 48);
-    lv_obj_set_pos(sprite, walk.x, 148);
-    lv_obj_remove_flag(sprite, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(sprite, draw_mouse, LV_EVENT_DRAW_MAIN, NULL);
-
-    hint = lv_label_create(root);
-    lv_label_set_text(hint, "Tap to pause");
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(hint, lv_color_hex(0xc5d5df), 0);
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -24);
-    timer = lv_timer_create(step, 167, NULL);
 }
 
 /* HOME keeps its existing weather and controls. The free 106x32 strip
@@ -253,7 +124,7 @@ static void house_draw(lv_event_t *e)
 static void home_step(lv_timer_t *t)
 {
     (void)t;
-    if (!home_mouse || !lv_obj_is_visible(lv_obj_get_parent(home_mouse)) || root) return;
+    if (!home_mouse || !lv_obj_is_visible(lv_obj_get_parent(home_mouse))) return;
     position_carry();
     if (home_smoke) { smoke_frame = (smoke_frame + 1) % 4; lv_image_set_src(home_smoke, smoke_frames[smoke_frame]); }
     if (message_ticks > 0 && --message_ticks == 0 && refresh_message) lv_label_set_text(refresh_message, "");

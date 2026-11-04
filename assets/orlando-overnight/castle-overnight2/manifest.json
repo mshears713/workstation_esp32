@@ -1,0 +1,48 @@
+{
+  "initial": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "45def0571f8a39e62853180490cd6e11",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "fresh": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "6ac23bdac8827de4280b79d619d0484a",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "projects": [
+    {
+      "project": "castle-overnight",
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 116,
+        "layers": [
+          "Layer 1",
+          "Roofs and spires",
+          "Masonry detail",
+          "Windows and arches"
+        ],
+        "width": 96
+      },
+      "sha256": "78a90e56d03d32e8daf5a9e95b91bf3f95aecdd6bc2c0bbb067bc8b557101e70"
+    },
+    {
+      "project": "launch-bridge",
+      "info": {
+        "actions": [],
+        "frames": 1,
+        "height": 20,
+        "layers": [
+          "Layer 1",
+          "Highlights"
+        ],
+        "width": 80
+      },
+      "sha256": "822f12a267d59fd1b5848b85dc8a039931f4bde88798456c1fb9d8f4821e2746"
+    }
+  ]
+}

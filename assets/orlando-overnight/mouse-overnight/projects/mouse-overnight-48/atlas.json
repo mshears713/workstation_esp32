@@ -1,0 +1,64 @@
+{
+  "schema": "pixelorama-workshop/atlas-v1",
+  "project": "mouse-overnight-48",
+  "image": "atlas.png",
+  "width": 288,
+  "height": 48,
+  "frames": [
+    {
+      "duration_ms": 167,
+      "height": 48,
+      "index": 0,
+      "width": 48,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "duration_ms": 167,
+      "height": 48,
+      "index": 1,
+      "width": 48,
+      "x": 48,
+      "y": 0
+    },
+    {
+      "duration_ms": 167,
+      "height": 48,
+      "index": 2,
+      "width": 48,
+      "x": 96,
+      "y": 0
+    },
+    {
+      "duration_ms": 167,
+      "height": 48,
+      "index": 3,
+      "width": 48,
+      "x": 144,
+      "y": 0
+    },
+    {
+      "duration_ms": 167,
+      "height": 48,
+      "index": 4,
+      "width": 48,
+      "x": 192,
+      "y": 0
+    },
+    {
+      "duration_ms": 167,
+      "height": 48,
+      "index": 5,
+      "width": 48,
+      "x": 240,
+      "y": 0
+    }
+  ],
+  "actions": [
+    {
+      "end": 5,
+      "name": "walk",
+      "start": 0
+    }
+  ]
+}

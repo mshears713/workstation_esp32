@@ -193,7 +193,6 @@
 #include "newton_art.h"
 #include "newton_store.h"
 #include "ui_music_mock.h"
-#include "ui_companion.h"
 #include "ui_mouse.h"
 #include "esp_wifi.h"
 #include "backend_health.h"
@@ -1941,7 +1940,7 @@ static void render_weather(void);
 static void more3_nav_button_cb(lv_event_t *e) { (void)e; set_active_page(APP_PAGE_MORE3); }
 static void weather_nav_button_cb(lv_event_t *e) { (void)e; weather_force_update=true; set_active_page(APP_PAGE_WEATHER); render_weather(); }
 
-static void notify_nav_button_cb(lv_event_t *e)
+static __attribute__((unused)) void notify_nav_button_cb(lv_event_t *e)
 {
     (void)e;
     refresh_notify_page();
@@ -2231,37 +2230,8 @@ static void audio_test_open_cb(lv_event_t *e)
     audio_test_timer=lv_timer_create(audio_test_poll,1000,NULL);audio_test_poll(NULL);
 }
 
-/* Original mouse atlas demo: isolated overlay, all existing pages retained. */
-static void mouse_exit(void *ctx)
-{
-    (void)ctx;
-    set_active_page(APP_PAGE_HOME);
-}
-static void mouse_open_cb(lv_event_t *e)
-{
-    (void)e;
-    ui_mouse_open(app_screen, mouse_exit, NULL);
-}
-
-/* FACE: the companion eyes. */
-static void face_exit(void *ctx)
-{
-    (void)ctx;
-    ui_companion_close();
-    experiment_closed(NULL);
-}
-
-static void face_open_cb(lv_event_t *e)
-{
-    (void)e;
-    static const ui_companion_config_t cfg = {
-        .style = UI_COMPANION_STYLE_ROBO,
-        .mood = UI_COMPANION_MOOD_NEUTRAL,
-        .doze_s = 60,
-        .exit = face_exit,
-    };
-    ui_companion_open(app_screen, &cfg);
-}
+/* The standalone Mouse and Face screens are retired. Shared HOME mouse and
+ * notification/audio ownership remain in their existing modules. */
 
 /* Asks the updater to fetch CLAWBOX's manifest now rather than waiting for
  * the next poll. It does NOT force an install - the device still installs
@@ -2867,10 +2837,7 @@ void status_deck_ui(lv_obj_t *scr)
 
     /* UI suite: the second page - the card stack and three experiments. */
     static const ui_menu_item_t more_items[] = {
-        { "MESSAGES", notify_nav_button_cb },
         { "AUDIO TEST", audio_test_open_cb },
-        { "FACE", face_open_cb },
-        { "MOUSE", mouse_open_cb },
         { "SURVEY", survey_open_cb },
         { "ADVENTURE", adventure_open_cb },
     };
@@ -2878,15 +2845,14 @@ void status_deck_ui(lv_obj_t *scr)
     ui_menu_build(page_more, "MORE", more_items, (int)(sizeof(more_items) / sizeof(more_items[0])), &menu_key);
     const ui_menu_picture_item_t pictures[] = {
         { "Weather", weather_icon("partly",true), 320, weather_nav_button_cb },
-        { "Mouse", ui_adventure_original_asset(TOUR_ASSET_MOUSE,0), 768, mouse_open_cb },
         { "Adventure", ui_adventure_original_asset(TOUR_ASSET_VAN,0), 320, adventure_open_cb },
     };
-    ui_menu_build_pictures(page_more3,"EXPLORE",pictures,3,NULL);
+    ui_menu_build_pictures(page_more3,"EXPLORE",pictures,(int)(sizeof(pictures)/sizeof(pictures[0])),NULL);
     ui_weather_page_build(&weather_ui,page_weather,talk_button_cb,more3_nav_button_cb);
 
 
     static const ui_notify_actions_t notify_actions = { notify_play_cb };
-    ui_notify_build(&ui->notify, page_notify, &notify_actions);
+    (void)notify_actions; /* Messages screen retired; notification playback stays. */
 
     /* ---- SETTINGS (UI suite, ui_settings.c): Hazard Industrial blocks ---- */
 

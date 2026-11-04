@@ -1,0 +1,20 @@
+{
+  "initial": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "9fe0b27670a3f0daaad02ba1e8746242",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "fresh": {
+    "api": 9,
+    "backend": "Pixelorama",
+    "boot_id": "602e5bbdb3515822ffd6b081e0cdc021",
+    "open_projects": 0,
+    "version": "v1.2.3-stable"
+  },
+  "sha256": {
+    "guide-sign": "13bacb2ae7dea8071bf3ba8cd6a3f2db5ab0a5baea30ad6c71c15582397a7130",
+    "house-home-plaque": "9ca9d7ee9925602c7739fa81792ad7b2730f60d55afe3a5e8c69f6483e6fceee"
+  }
+}

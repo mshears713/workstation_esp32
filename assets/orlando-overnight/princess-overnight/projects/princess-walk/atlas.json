@@ -1,0 +1,32 @@
+{
+  "schema": "pixelorama-workshop/atlas-v1",
+  "project": "princess-walk",
+  "image": "atlas.png",
+  "width": 36,
+  "height": 32,
+  "frames": [
+    {
+      "duration_ms": 167,
+      "height": 32,
+      "index": 0,
+      "width": 18,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "duration_ms": 167,
+      "height": 32,
+      "index": 1,
+      "width": 18,
+      "x": 18,
+      "y": 0
+    }
+  ],
+  "actions": [
+    {
+      "end": 1,
+      "name": "walk",
+      "start": 0
+    }
+  ]
+}

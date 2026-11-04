@@ -1,7 +1,5 @@
 #pragma once
 #include "lvgl.h"
-void ui_mouse_open(lv_obj_t *screen, void (*exit_cb)(void *), void *ctx);
-void ui_mouse_close(void);
 
 void ui_mouse_home_create(lv_obj_t *page);
 void ui_mouse_home_set_active(bool active);

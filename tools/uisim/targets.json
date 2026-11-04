@@ -2962,6 +2962,69 @@
       "fixtures": {
         "default": {}
       }
+    },
+    "orlando_overnight": {
+      "kind": "page",
+      "description": "Orlando v5 isolated interaction and lifecycle test",
+      "sources": [
+        "main/ui_home.c",
+        "main/ui_kit.c",
+        "main/ui_menu.c",
+        "main/ui_adventure.c",
+        "main/ui_story_dialogue.c",
+        "main/voice_listening_widget.c"
+      ],
+      "headers": [
+        "ui_home.h",
+        "ui_adventure.h",
+        "orlando_landmarks.h",
+        "orlando_v3.h",
+        "orlando_v4.h",
+        "orlando_castle_overnight.h",
+        "orlando_sign_overnight.h"
+      ],
+      "adapter": "tools/uisim/targets/orlando_overnight.c",
+      "fields": {
+        "action": {
+          "type": "str",
+          "default": ""
+        },
+        "test": {
+          "type": "bool",
+          "default": false
+        },
+        "capture_dir": {
+          "type": "str",
+          "default": ""
+        }
+      },
+      "fixtures": {
+        "wheel": {
+          "action": "wheel"
+        },
+        "castle": {
+          "action": "castle"
+        },
+        "coaster": {
+          "action": "coaster"
+        },
+        "guide": {
+          "action": "guide"
+        },
+        "van": {
+          "action": "van"
+        },
+        "home": {
+          "action": "home"
+        },
+        "all": {
+          "action": "all"
+        },
+        "default": {},
+        "test": {
+          "test": true
+        }
+      }
     }
   }
 }
