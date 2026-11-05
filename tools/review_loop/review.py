@@ -62,8 +62,11 @@ SNAPSHOT_FILES = ["sdkconfig", "sdkconfig.defaults", "CMakeLists.txt", "dependen
 # Never copied, hashed into the manifest or bundled (private device configuration).
 PRIVATE_NAMES = {"wifi_credentials.h"}
 PRIVATE_SUFFIXES = (".key", ".pem.key")
+# The LVGL sources the renderer compiles are part of what a render depends on: hashed at the
+# start (provenance) and again at the end (drift), like the simulator's own files. LVGL's
+# configuration comes from the firmware sdkconfig, which the snapshot already freezes.
 SIM_IDENTITY = ["bin", "wsui", "simulator/main.c", "simulator/ws_fixture.c", "simulator/hal",
-                "simulator/export", "simulator/include"]
+                "simulator/export", "simulator/include", "simulator/lib/lvgl/src", "simulator/lib/lvgl/lvgl.h"]
 SECRET_PATTERNS = [re.compile(p) for p in (
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----", r"\bgh[pousr]_[A-Za-z0-9]{30,}", r"\bgithub_pat_[A-Za-z0-9_]{30,}",
     r"\bAKIA[0-9A-Z]{16}\b", r"\bsk-[A-Za-z0-9]{32,}", r"(?i)\b(password|passwd|api[_-]?key|secret|token)\s*[=:]\s*\S{8,}",
@@ -94,6 +97,65 @@ def run(cmd: list[str], cwd: Path | None = None, timeout: int = 120) -> tuple[in
 
 def is_private(path: Path) -> bool:
     return path.name in PRIVATE_NAMES or path.name.endswith(PRIVATE_SUFFIXES)
+
+
+RENDER_GROUPS = ("stills", "motion", "tests", "references")
+ENTRY_KEYS = {"stills": ("name",), "motion": ("name", "advance_ms"), "tests": ("name", "require", "advance_ms"),
+              "references": ("name", "target"), "art": ("symbol", "file")}
+
+
+def load_plan(path: Path) -> tuple[dict, list[str]]:
+    """The plan and every structural problem in it. A broken plan is reported, never a traceback;
+    a required stage that lists nothing can never pass."""
+    try:
+        plan = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        return {"name": path.stem}, [f"unreadable plan {path}: {e}"]
+    if not isinstance(plan, dict):
+        return {"name": path.stem}, [f"plan {path} is not a JSON object"]
+    errors = [f"plan has no '{k}'" for k in ("name", "target") if not isinstance(plan.get(k), str)]
+    if not isinstance(plan.get("name"), str):
+        plan["name"] = path.stem
+    required = plan.get("required", ["stills", "tests"])
+    if not isinstance(required, list):
+        return {"name": path.stem, **plan}, errors + ["'required' must be a list"]
+    unknown = sorted(set(required) - set(ENTRY_KEYS))
+    if unknown:
+        errors.append(f"unknown required stage(s) {unknown}; known: {sorted(ENTRY_KEYS)}")
+    for group, keys in ENTRY_KEYS.items():
+        entries = plan.get(group, [])
+        if not isinstance(entries, list):
+            errors.append(f"'{group}' must be a list")
+            continue
+        if group in required and not entries:
+            errors.append(f"plan requires '{group}' but lists none: an empty required stage cannot pass")
+        for n, e in enumerate(entries):
+            gone = [k for k in keys if not isinstance(e, dict) or k not in e]
+            if gone:
+                errors.append(f"{group}[{n}] lacks {gone}")
+        names = [e.get("name") for e in entries if isinstance(e, dict) and "name" in e]
+        dup = sorted({x for x in names if names.count(x) > 1})
+        if dup:
+            errors.append(f"{group}: duplicate names {dup} (their files would overwrite each other)")
+    return plan, errors
+
+
+def native_receipt(manifest: dict, files: dict[str, str]) -> tuple[str, str]:
+    """What the package says about native editability. This tool cannot reopen a .pxo, so the best
+    it can report is a consistent Workshop receipt (a CLAIM); a filename or hash is never evidence."""
+    nc = manifest.get("native_check")
+    if not isinstance(nc, dict):
+        return UNAVAILABLE, ("UNVERIFIED: the package manifest has no native_check receipt (no fresh Pixelorama "
+                             "reopen recorded); a .pxo name or matching SHA-256 does not establish native validity")
+    if nc.get("match") is not True or nc.get("same_structure") is False:
+        return FAIL, "the package's native_check receipt records a failed or incomplete native check"
+    atlas = next((sha for name, sha in files.items() if name.endswith("-atlas.png")), None)
+    if atlas is None or nc.get("atlas_sha256") != atlas:
+        return FAIL, "native_check atlas_sha256 is not the packaged atlas: the receipt is not about these bytes"
+    if not nc.get("verify_boot_id") or nc.get("verify_boot_id") == nc.get("reference_boot_id"):
+        return FAIL, "native_check has no separate verify process (verify_boot_id missing or equal to the reference)"
+    return INFO, (f"CLAIMED by the Workshop receipt: fresh reopen (boot {str(nc['verify_boot_id'])[:12]}) matched the "
+                  f"{nc.get('reference', '?')} reference; not re-run by this tool")
 
 
 class Results:
@@ -211,17 +273,26 @@ def target_files(repo: Path, target: dict) -> list[str]:
 
 
 def build_membership(build_dir: Path, repo: Path, sources: list[str]) -> tuple[str, str]:
-    """Effective configured build evidence: is each source a compile unit in compile_commands.json?"""
+    """Effective configured build evidence: is each source (by its project-relative path, not its
+    basename) a compile unit in compile_commands.json? Each entry's project root is the parent of
+    its build 'directory' (ESP-IDF builds in <project>/build), so a build configured in another
+    checkout still maps main/x.c to main/x.c, and components/y/x.c never counts as main/x.c."""
     cc = build_dir / "compile_commands.json"
     if not cc.is_file():
         return UNAVAILABLE, f"{cc} not found: firmware build membership not verified (configure an ESP-IDF build first)"
+    units = set()
     try:
-        units = {Path(e["file"]).name if not Path(e["file"]).is_absolute() else str(Path(e["file"]).resolve())
-                 for e in json.loads(cc.read_text())}
-    except (ValueError, KeyError, TypeError) as e:
+        for e in json.loads(cc.read_text()):
+            bdir = Path(e.get("directory") or build_dir)
+            f = Path(e["file"])
+            f = Path(os.path.normpath(f if f.is_absolute() else bdir / f))
+            try:
+                units.add(f.relative_to(Path(os.path.normpath(bdir)).parent).as_posix())
+            except ValueError:
+                pass   # outside that project (toolchain, managed components elsewhere)
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
         return FAIL, f"unreadable compile_commands.json: {e}"
-    names = {Path(u).name for u in units}
-    missing = [s for s in sources if Path(s).name not in names]
+    missing = [s for s in sources if s not in units]
     if missing:
         return WARN, f"simulator links sources this configured build does not compile: {missing}"
     return PASS, f"all {len(sources)} sources are compile units of the configured build {build_dir}"
@@ -549,7 +620,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
 
     plan_path = Path(a.plan if a.plan.endswith(".json") else HERE / "plans" / f"{a.plan}.json")
-    plan = json.loads(plan_path.read_text())
+    plan, plan_errors = load_plan(plan_path)
     repo, simdir = a.repo.resolve(), a.sim.resolve()
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
     out = (a.out or Path.home() / "workstation-reviews" / f"{stamp}-{plan['name']}").resolve()
@@ -560,12 +631,22 @@ def main(argv=None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     work.mkdir(parents=True)
     res, commands = Results(), []
-    required = set(plan.get("required", ["stills", "tests"]))
+    req = plan.get("required", ["stills", "tests"])
+    required = {r for r in req if isinstance(r, str)} if isinstance(req, list) else set()
     print(f"review {plan['name']} -> {out}")
     manifest = {"schema": "workstation-review/v2", "run_id": out.name, "plan": plan["name"],
-                "plan_sha256": sha256(plan_path), "started_utc": now_utc(), "required_stages": sorted(required),
+                "plan_sha256": sha256(plan_path) if plan_path.is_file() else None, "started_utc": now_utc(),
+                "required_stages": sorted(required) if isinstance(plan.get("required", []), list) else None,
                 "arguments": {k: (str(v) if isinstance(v, Path) else [str(x) for x in v] if isinstance(v, list) else v)
                               for k, v in vars(a).items()}}
+
+    # 0. the plan itself -------------------------------------------------------
+    for err in plan_errors:
+        res.add("plan", "structure", FAIL, err, required=True)
+    if plan_errors:
+        return finish(out, work, plan, manifest, res, commands)
+    res.add("plan", "structure", PASS, f"{plan_path.name}: required {sorted(required)}; "
+            + ", ".join(f"{len(plan.get(g, []))} {g}" for g in (*RENDER_GROUPS, "art")))
 
     # 1. freeze inputs --------------------------------------------------------
     if not (simdir / "bin" / "ws-ui").is_file():
@@ -575,6 +656,11 @@ def main(argv=None) -> int:
         res.add("inputs", "firmware", FAIL, f"{repo} has no tools/uisim/targets.json")
         return finish(out, work, plan, manifest, res, commands)
     fw = git_info(repo)
+    if not fw["commit"]:
+        manifest["firmware"] = {**fw, "path": str(repo)}
+        res.add("inputs", "firmware", FAIL, f"{repo} is not a git checkout with a commit: the renders could not be "
+                "tied to a firmware revision", required=True)
+        return finish(out, work, plan, manifest, res, commands)
     snap = work / "firmware-snapshot"
     fw_hashes, excluded = freeze(repo, snap)
     sim_before = tree_hashes(simdir, SIM_IDENTITY)
@@ -605,7 +691,13 @@ def main(argv=None) -> int:
         res.add("inputs", "lvgl-identity", FAIL, manifest["tools"]["lvgl_identity_error"])
 
     # 2. target, lineage and build membership --------------------------------------
-    reg = json.loads((snap / "tools/uisim/targets.json").read_text())["targets"]
+    try:
+        reg = json.loads((snap / "tools/uisim/targets.json").read_text())["targets"]
+        if not isinstance(reg, dict):
+            raise TypeError("'targets' is not an object")
+    except (ValueError, KeyError, TypeError) as e:
+        res.add("target", "registry", FAIL, f"tools/uisim/targets.json unreadable: {e}", required=True)
+        return finish(out, work, plan, manifest, res, commands)
     targets_used = {plan["target"], *[x.get("target", plan["target"]) for g in ("stills", "motion", "tests")
                                       for x in plan.get(g, [])], *[r["target"] for r in plan.get("references", [])]}
     for name in sorted(targets_used):
@@ -613,6 +705,10 @@ def main(argv=None) -> int:
         if not t:
             res.add("target", name, FAIL, f"not registered in tools/uisim/targets.json of {fw['commit'][:12]}"
                     + (" (this plan is for a different firmware baseline)" if plan.get("baseline") else ""))
+            continue
+        if not isinstance(t, dict) or not isinstance(t.get("adapter"), str) or not isinstance(t.get("sources"), list):
+            res.add("target", name, FAIL, "registration lacks an 'adapter' string or a 'sources' list", required=True)
+            reg[name] = None
             continue
         missing = [p for p in [t["adapter"], *t["sources"]] if not (snap / p).is_file()]
         missing += [f"main/{h}" for h in t.get("headers", []) if not (snap / "main" / h).is_file()]
@@ -658,8 +754,9 @@ def main(argv=None) -> int:
     # 4. art: exact checkpoint validation, or a labelled diagnostic -------------------
     bindings = plan.get("art", [])
     art_required = "art" in required
-    evidence = "committed-art diagnostic"
+    evidence = "none (no --art-lock and no diagnostic flag)"
     receipts = []
+    frozen = {}   # project -> {file: sha256} of the frozen copy the renders read
     if a.art_lock:
         evidence = "checkpoint validation"
         try:
@@ -676,10 +773,21 @@ def main(argv=None) -> int:
                     pkg, pj, others = select_package(a.art, sel)
                     dest = out / "inputs" / "art" / f"{project}-r{sel['revision']:04d}"
                     shutil.copytree(pkg, dest)   # the exact verified bytes, frozen with the run
+                    # Verify the COPY: it, not the source folder, is what the renders read.
+                    try:
+                        got, pj, _ = select_package([dest], sel)
+                    except ArtError as e:
+                        raise ArtError(f"frozen copy differs from the verified package: {e}") from e
+                    if got.resolve() != dest.resolve():
+                        raise ArtError(f"frozen copy at {dest} did not verify as itself (found {got})")
+                    frozen[project] = {"dir": str(dest), "sha256": {n: sha256(dest / n) for n in [*sel["files"], "manifest.json"]}}
                     packages[project] = (dest, pj)
-                    res.add("art", f"package:{project}", PASS, f"r{sel['revision']} {sel['checkpoint']} verified "
-                            f"(manifest + {len(sel['files'])} files by SHA-256)" + (f"; ignored other packages: {others}" if others else ""),
+                    res.add("art", f"package:{project}", PASS, f"r{sel['revision']} {sel['checkpoint']}: package integrity "
+                            f"(manifest + {len(sel['files'])} files by SHA-256) verified at the source and again in the "
+                            f"frozen copy" + (f"; ignored other packages: {others}" if others else ""),
                             required=True)
+                    nstatus, ndetail = native_receipt(pj, sel["files"])
+                    res.add("native", project, nstatus, ndetail)
                 except ArtError as e:
                     res.add("art", f"package:{project}", FAIL, f"selected candidate BLOCKED: {e}", required=True)
             for b in bindings:
@@ -717,6 +825,7 @@ def main(argv=None) -> int:
         res.add("art", "checkpoint", UNAVAILABLE if art_required else INFO,
                 "loose exports compared for diagnosis only: no checkpoint was selected or validated", required=art_required)
     elif a.committed_art_diagnostic:
+        evidence = "committed-art diagnostic"
         res.add("art", "checkpoint", SKIPPED, "diagnostic run requested: renders show the art already committed in "
                 "firmware; this is NOT validation of a native checkpoint")
     else:
@@ -724,6 +833,7 @@ def main(argv=None) -> int:
         res.add("art", "checkpoint", UNAVAILABLE, (native.get("status") or "no --art-lock given")
                 + ": native checkpoint validation cannot run; use --committed-art-diagnostic for a labelled diagnostic",
                 required=art_required)
+        manifest["art_frozen"] = {}
     manifest["art"] = {"evidence_kind": evidence, "native_art": plan.get("native_art"), "receipts": receipts}
     changed = {f: sha256(snap / f) for f in {r["file"] for r in receipts if r.get("integrated")}}
     if changed:
@@ -737,10 +847,18 @@ def main(argv=None) -> int:
                                  "integrated_files": changed}
 
     # 5. renders ---------------------------------------------------------------------
+    # Renders show whatever art is in the snapshot. They run only for a verified lock or an
+    # explicitly requested, labelled diagnostic; otherwise nothing is rendered at all.
+    manifest["art_frozen"] = frozen
+    blocked = None
     if evidence == "checkpoint validation" and not res.stage_ok("art"):
-        # Renders depend on the selected art; with it blocked they would show other pixels.
-        for g in sorted(required & {"stills", "motion", "tests"}):
-            res.add(g, "group", UNAVAILABLE, "not rendered: the selected art checkpoint is blocked (see art stage)", required=True)
+        blocked = "the selected art checkpoint is blocked (see art stage)"
+    elif evidence.startswith("none"):
+        blocked = ("no --art-lock and no explicit diagnostic flag: renders would show unselected art "
+                   "(pass --art-lock, or --committed-art-diagnostic / --art-loose for a labelled diagnostic)")
+    if blocked:
+        for g in sorted(required & set(RENDER_GROUPS)):
+            res.add(g, "group", UNAVAILABLE, f"not rendered: {blocked}", required=True)
         return finish(out, work, plan, manifest, res, commands, evidence=evidence)
     simr = Sim(simdir, snap, commands)
     groups = set(a.only or ["stills", "motion", "tests", "references"])
@@ -875,7 +993,7 @@ def main(argv=None) -> int:
 
     # 6. review images ---------------------------------------------------------------
     if stills:
-        label = "COMMITTED ART (diagnostic)" if evidence != "checkpoint validation" else "art from the locked checkpoint"
+        label = "art from the locked checkpoint" if evidence == "checkpoint validation" else evidence.upper()
         cells = [(img, f"{s['name']} ({s.get('target', plan['target'])}:{s.get('fixture') or 'default'} @{s.get('advance_ms', 400)}ms)", False)
                  for s, img in stills]
         cells += [(img, f"REFERENCE {r['name']} (not under review)", False) for r, img in refs]
@@ -906,6 +1024,17 @@ def main(argv=None) -> int:
         res.add("inputs", "unchanged-during-run", PASS, "firmware checkout identical at start and end", required=True)
     if sim_moved:
         res.add("inputs", "simulator-unchanged", FAIL, f"simulator files changed during the run: {sim_moved[:8]}", required=True)
+    snap_now = tree_hashes(snap, SNAPSHOT_DIRS + SNAPSHOT_FILES)
+    snap_moved = sorted(f for f in drift({**fw_hashes, **changed}, snap_now))
+    res.add("inputs", "snapshot-unchanged", FAIL if snap_moved else PASS,
+            f"the run snapshot changed while rendering: {snap_moved[:8]}" if snap_moved else
+            "run snapshot (incl. integrated art) identical before and after the renders", required=True)
+    for project, fz in frozen.items():
+        dest = Path(fz["dir"])
+        bad = sorted(n for n, h in fz["sha256"].items() if not (dest / n).is_file() or sha256(dest / n) != h)
+        res.add("art", "frozen-unchanged", FAIL if bad else PASS,
+                f"{project}: frozen package files changed during the run: {bad}" if bad else
+                f"{project}: frozen package identical at the end of the run", required=True)
     return finish(out, work, plan, manifest, res, commands, evidence=evidence)
 
 
@@ -942,31 +1071,48 @@ def integrate(b: dict, img: Image.Image, snap: Path, res: Results, required: boo
 def readiness(res: Results, manifest: dict, technical: str, evidence: str) -> dict:
     fw = manifest.get("firmware", {})
     art_items = [i for i in res.items if i["stage"] == "art"]
+    native_items = [i for i in res.items if i["stage"] == "native"]
     if evidence == "checkpoint validation":
-        art = "verified" if art_items and all(i["status"] not in BLOCKING for i in art_items) else "blocked"
+        art = ("verified (SHA-256 against the art lock, at the source and in the frozen copy the renders read)"
+               if art_items and all(i["status"] not in BLOCKING for i in art_items) else "blocked")
+        if not native_items:
+            native = "UNVERIFIED: no package passed integrity, so no native receipt was read"
+        elif any(i["status"] == FAIL for i in native_items):
+            native = "FAILED: " + "; ".join(i["detail"] for i in native_items if i["status"] == FAIL)
+        elif all(i["status"] == INFO for i in native_items):
+            native = "CLAIMED by Workshop native_check receipt(s), consistent with the packaged bytes; not re-run by this tool"
+        else:
+            native = ("UNVERIFIED: no native_check receipt for " +
+                      ", ".join(i["name"] for i in native_items if i["status"] != INFO) +
+                      " (a .pxo filename or matching hash is not native evidence)")
     else:
         art = f"not established ({evidence})"
+        native = f"not established ({evidence})"
     reasons = []
     if technical not in ("PASS", "PASS_WITH_WARNINGS"):
         reasons.append(f"technical result {technical}")
-    if art != "verified":
-        reasons.append(f"native art {art}")
+    if not art.startswith("verified"):
+        reasons.append(f"art package {art}")
     if fw.get("dirty_files") or any("PROVISIONAL" in i["detail"] for i in res.items if i["name"] == "firmware"):
         reasons.append("provisional inputs (uncommitted firmware files)")
     return {
         "input_pinned": "pinned" if not any(i["status"] == FAIL for i in res.items if i["stage"] == "inputs") else "failed",
-        "art_verified": art,
+        "art_package_integrity": art,
+        "art_native_editable": native,
         "integrated": "integrated into run snapshot" if manifest.get("rendered_from", {}).get("integrated_files") else "no (committed art)",
         "technical_checks": technical,
         "visual_review": "pending (Dottie)",
         "handoff": "prepared (local bundle)",
         "delivery": "not verified (this tool does not deliver)",
-        "firmware_build": manifest.get("firmware_build") if isinstance(manifest.get("firmware_build"), str) else
-                          f"membership {manifest['firmware_build'].get('membership')} (configured build inspected; no image built)",
+        "firmware_build": (manifest["firmware_build"] if isinstance(manifest.get("firmware_build"), str) else
+                           f"membership {manifest['firmware_build'].get('membership')} (configured build inspected; no image built)"
+                           if isinstance(manifest.get("firmware_build"), dict) else "not run (run stopped before the build stage)"),
         "hardware": "not run",
         "ready_for_visual_acceptance": not reasons,
         "not_ready_because": reasons,
         "promotion_ready": False,
+        "promotion_needs": ["visual acceptance by Mike/Dottie", "native editability verified by a fresh Pixelorama "
+                            "reopen (this tool reads receipts only)", "ESP-IDF build", "hardware check"],
     }
 
 
@@ -1002,7 +1148,8 @@ def finish(out: Path, work: Path, plan: dict, manifest: dict, res: Results, comm
     zsha = sha256(z)
     z.with_suffix(".zip.sha256").write_text(f"{zsha}  {z.name}\n")
     shutil.rmtree(work, ignore_errors=True)
-    print(f"\n{technical} ({manifest['readiness']['art_verified']}; visual review pending): {out}\n"
+    print(f"\n{technical} (art package: {manifest['readiness']['art_package_integrity'][:40]}; native: "
+          f"{manifest['readiness']['art_native_editable'][:40]}; visual review pending): {out}\n"
           f"zip: {z} ({z.stat().st_size // 1024} KB) sha256 {zsha}")
     return code
 
@@ -1035,7 +1182,7 @@ Not ready for visual acceptance because: {'; '.join(rd['not_ready_because']) or 
   {fw.get('snapshot_files')} files){'; uncommitted: ' + ', '.join(fw['dirty_files']) if fw.get('dirty_files') else ', clean'}
 - Simulator `{sim.get('branch')}` @ `{sim.get('commit')}`, LVGL `{(sim.get('lvgl_submodule') or {}).get('commit')}`,
   LVGL config `{manifest.get('tools', {}).get('lvgl_config_hash')}`
-- Target `{plan['target']}`, profile `{plan.get('profile')}`: {manifest.get('target', {}).get('description', '')}
+- Target `{plan.get('target')}`, profile `{plan.get('profile')}`: {manifest.get('target', {}).get('description', '')}
 - Native art status: {(plan.get('native_art') or {}).get('status', 'n/a')}
 - Every image is the simulator's own 320x240 RGB565 frame; `*@2x.png` are 2x nearest-neighbour copies.
 

@@ -114,8 +114,13 @@ def main() -> int:
         print(f"{'PASS' if ok else 'FAIL'} {name}: {detail}", flush=True)
 
     # 1. checkpoint validation requested implicitly (no lock, no diagnostic flag) -> INCOMPLETE
+    # and NOTHING is rendered: no simulator call, no stills folder, no still results.
     rc, r = review_run(a.sim, runs / "no-lock", plan(tmp, "FIXTURE-no-lock"))
-    case("no art lock blocks", rc == 2 and UNAV in status(r, "art", "checkpoint"), f"exit {rc}, art {status(r, 'art')}")
+    renders = [c for c in json.loads((runs / "no-lock/commands.json").read_text())] if (runs / "no-lock/commands.json").exists() else ["?"]
+    made = sorted(str(p.relative_to(runs / "no-lock")) for p in (runs / "no-lock").rglob("*.png"))
+    case("no art lock blocks and renders nothing", rc == 2 and UNAV in status(r, "art", "checkpoint") and not renders
+         and not made and not status(r, "still") and status(r, "stills", "group") == [UNAV],
+         f"exit {rc}, art {status(r, 'art')}, simulator calls {len(renders)}, png files {made[:3]}")
 
     # 2. the real exhibit bindings have no native source: a lock cannot satisfy them
     other = package(art / "unrelated", "FIXTURE-unrelated", 1, bush)
@@ -130,8 +135,15 @@ def main() -> int:
     same = package(art / "same", "FIXTURE-bush", 1, bush)
     rc, r = review_run(a.sim, runs / "identical", plan(tmp, "FIXTURE-identical", **one),
                        "--art-lock", lock(tmp, "same", same), "--art", art / "same")
+    rd = r.get("readiness", {})
     case("exact locked package (identical bytes) passes", rc == 0 and status(r, "art", SLOT["symbol"]) == ["PASS"]
-         and status(r, "still", "home") == ["PASS"], f"exit {rc}, readiness art {r.get('readiness', {}).get('art_verified')}")
+         and status(r, "still", "home") == ["PASS"] and status(r, "art", "frozen-unchanged") == ["PASS"]
+         and rd.get("art_package_integrity", "").startswith("verified"),
+         f"exit {rc}, package {rd.get('art_package_integrity', '')[:20]}")
+    # 3b. ...but its FIXTURE .pxo is not native evidence (Dottie's second defect)
+    case("fixture .pxo is not native-verified", rd.get("art_native_editable", "").startswith("UNVERIFIED")
+         and "art_verified" not in rd and rd.get("promotion_ready") is False,
+         f"native: {rd.get('art_native_editable', '')[:90]}")
 
     # 4. changed pixels -> integrated into the snapshot, render differs only around the bush, checkout untouched
     before = sha(REPO / SLOT["file"])
