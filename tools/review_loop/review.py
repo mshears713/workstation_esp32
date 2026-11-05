@@ -826,8 +826,9 @@ def main(argv=None) -> int:
                 "loose exports compared for diagnosis only: no checkpoint was selected or validated", required=art_required)
     elif a.committed_art_diagnostic:
         evidence = "committed-art diagnostic"
-        res.add("art", "checkpoint", SKIPPED, "diagnostic run requested: renders show the art already committed in "
-                "firmware; this is NOT validation of a native checkpoint")
+        res.add("art", "checkpoint", UNAVAILABLE if art_required else SKIPPED, "diagnostic run requested: renders "
+                "show the art already committed in firmware; this is NOT validation of a native checkpoint"
+                + ("; the plan requires art, so the run cannot PASS" if art_required else ""), required=art_required)
     else:
         native = plan.get("native_art", {})
         res.add("art", "checkpoint", UNAVAILABLE, (native.get("status") or "no --art-lock given")

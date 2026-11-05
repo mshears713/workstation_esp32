@@ -357,6 +357,11 @@ class WholeRun(unittest.TestCase):
         self.assertTrue(self.rendered())
         self.assertTrue((out / "stills/home.png").is_file())
 
+    def test_committed_diagnostic_cannot_pass_a_plan_that_requires_art(self):
+        code, r, out = self.run_review("--committed-art-diagnostic")
+        self.assertEqual((code, r["technical_result"]), (2, "INCOMPLETE"))
+        self.assertTrue((out / "stills/home.png").is_file())        # the labelled diagnostic still renders
+
     def test_no_art_lock_renders_nothing(self):
         code, r, out = self.run_review()
         self.assertEqual(code, 2)
