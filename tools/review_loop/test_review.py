@@ -175,7 +175,7 @@ class Inputs(unittest.TestCase):
     def test_build_membership_needs_a_configured_build(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(review.build_membership(Path(tmp), Path(tmp), ["main/ui_home.c"])[0], review.UNAVAILABLE)
-            (Path(tmp) / "compile_commands.json").write_text(json.dumps([{"file": "/x/main/ui_home.c", "command": "cc"}]))
+            (Path(tmp) / "compile_commands.json").write_text(json.dumps([{"directory": "/x/build", "file": "/x/main/ui_home.c", "command": "cc"}]))
             self.assertEqual(review.build_membership(Path(tmp), Path(tmp), ["main/ui_home.c"])[0], review.PASS)
             self.assertEqual(review.build_membership(Path(tmp), Path(tmp), ["main/ui_home.c", "main/ui_mouse.c"])[0], review.WARN)
 
@@ -230,15 +230,281 @@ class Verdicts(unittest.TestCase):
         rd = review.readiness(r, {"firmware": {}, "firmware_build": "not run"}, "PASS", "committed-art diagnostic")
         self.assertFalse(rd["ready_for_visual_acceptance"])
         self.assertFalse(rd["promotion_ready"])
-        self.assertIn("native art not established (committed-art diagnostic)", rd["not_ready_because"])
+        self.assertIn("art package not established (committed-art diagnostic)", rd["not_ready_because"])
+        self.assertEqual(rd["art_native_editable"], "not established (committed-art diagnostic)")
         self.assertEqual(rd["delivery"], "not verified (this tool does not deliver)")
 
     def test_blocked_checkpoint_is_not_verified(self):
         r = review.Results()
         r.add("art", "package:thing", review.FAIL, "", required=True)
         rd = review.readiness(r, {"firmware": {}, "firmware_build": "not run"}, "FAIL", "checkpoint validation")
-        self.assertEqual(rd["art_verified"], "blocked")
+        self.assertEqual(rd["art_package_integrity"], "blocked")
         self.assertFalse(rd["ready_for_visual_acceptance"])
+
+
+
+# ------------------------------------------------------------------ whole-run regressions (MOCKED simulator)
+#
+# These call review.main() in-process against a throwaway git firmware repo and a FAKE ws-ui that
+# records every call it receives. They prove what the runner does (render or not, what readiness
+# says); they are not LVGL rendering. Real-simulator evidence comes from e2e_controls.py.
+
+FAKE_WSUI = r"""#!/usr/bin/env python3
+import os, sys, json
+from pathlib import Path
+from PIL import Image
+out = Path(os.environ["FAKE_SIM_OUT"])
+out.mkdir(parents=True, exist_ok=True)
+with open(out / "CALLS", "a") as f:
+    f.write(" ".join(sys.argv[1:]) + "\n")
+n = len((out / "CALLS").read_text().splitlines())
+d = out / f"render-{n}"
+d.mkdir()
+Image.new("RGB", (320, 240), (10, 20, 30)).save(d / "screen.png")
+(d / "checks.json").write_text("[]")
+(d / "log.txt").write_text("FAKE adapter log\nFAKE_PASS\n")
+print(f"files: {d}/screen.png")
+"""
+
+
+def firmware(root: Path, git: bool = True, targets: dict | None = None) -> Path:
+    """FIXTURE firmware checkout: one target 'fake' whose source holds one 2x2 ARGB8888 image 'ai_x'."""
+    import subprocess
+    repo = root / "fw"
+    (repo / "main").mkdir(parents=True)
+    (repo / "tools/uisim/targets").mkdir(parents=True)
+    (repo / "tools/uisim/targets/fake.c").write_text('#include "ui_fake.h"\n')
+    (repo / "main/ui_fake.h").write_text(header("ai_x", 2, 2, [7] * 16))
+    (repo / "main/ui_fake.c").write_text('#include "ui_fake.h"\n')
+    (repo / "sdkconfig").write_text("CONFIG_LV_COLOR_DEPTH=16\n")
+    reg = targets or {"fake": {"adapter": "tools/uisim/targets/fake.c", "sources": ["main/ui_fake.c"],
+                               "description": "FIXTURE"}}
+    (repo / "tools/uisim/targets.json").write_text(json.dumps({"targets": reg}))
+    if git:
+        for cmd in (["init", "-q"], ["add", "-A"],
+                    ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "fixture"]):
+            subprocess.run(["git", "-C", str(repo), *cmd], check=True, capture_output=True)
+    return repo
+
+
+def fake_sim(root: Path) -> Path:
+    sim = root / "sim"
+    (sim / "bin").mkdir(parents=True)
+    cli = sim / "bin/ws-ui"
+    cli.write_text(FAKE_WSUI.replace("#!/usr/bin/env python3", "#!" + sys.executable, 1))
+    cli.chmod(0o755)
+    return sim
+
+
+def plan_file(root: Path, **over) -> Path:
+    p = {"name": "FIXTURE-plan", "target": "fake", "required": ["stills", "tests", "art"],
+         "stills": [{"name": "home", "advance_ms": 100}],
+         "tests": [{"name": "t", "advance_ms": 100, "require": "FAKE_PASS"}],
+         "art": [{"symbol": "ai_x", "file": "main/ui_fake.h", "source": {"project": "thing", "frame": 1}}], **over}
+    path = root / "plan.json"
+    path.write_text(json.dumps(p))
+    return path
+
+
+class WholeRun(unittest.TestCase):
+    def setUp(self):
+        import os
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.calls = self.root / "sim-out"
+        self._env = os.environ.get("FAKE_SIM_OUT")
+        os.environ["FAKE_SIM_OUT"] = str(self.calls)
+        self._identity = review.tool_identity
+        review.tool_identity = lambda sim, snap: {"python": "x", "lvgl_commit": "FAKE", "lvgl_config_hash": "FAKE"}
+        self.sim = fake_sim(self.root)
+
+    def tearDown(self):
+        import os
+        review.tool_identity = self._identity
+        if self._env is None:
+            os.environ.pop("FAKE_SIM_OUT", None)
+        else:
+            os.environ["FAKE_SIM_OUT"] = self._env
+        self._tmp.cleanup()
+
+    def run_review(self, *args, repo=None, plan=None):
+        import contextlib
+        import io
+        out = self.root / "out"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = review.main(["--plan", str(plan or plan_file(self.root)), "--repo", str(repo or firmware(self.root)),
+                                "--sim", str(self.sim), "--out", str(out), *map(str, args)])
+        results = json.loads((out / "results.json").read_text())
+        return code, results, out
+
+    def rendered(self) -> list[str]:
+        return (self.calls / "CALLS").read_text().splitlines() if (self.calls / "CALLS").exists() else []
+
+    def statuses(self, results, stage, name=None):
+        return [i["status"] for i in results["results"] if i["stage"] == stage and (name is None or i["name"] == name)]
+
+    def lock_for(self, pkg_root: Path, **pkg) -> Path:
+        _, sel = package(pkg_root, colour=(1, 2, 3, 255), **pkg)
+        p = self.root / "lock.json"
+        p.write_text(json.dumps({"schema": "workstation-review/art-lock-v1", "selection": [sel]}))
+        return p
+
+    # -- defect 1 (Dottie, real simulator): no art lock reported INCOMPLETE but still rendered home.png
+    def test_harness_detects_rendering(self):
+        """Positive control: an explicit committed-art diagnostic does call the renderer."""
+        code, r, out = self.run_review("--committed-art-diagnostic")
+        self.assertTrue(self.rendered())
+        self.assertTrue((out / "stills/home.png").is_file())
+
+    def test_no_art_lock_renders_nothing(self):
+        code, r, out = self.run_review()
+        self.assertEqual(code, 2)
+        self.assertEqual(r["technical_result"], "INCOMPLETE")
+        self.assertEqual(self.rendered(), [], "the simulator was called without an art lock")
+        self.assertFalse((out / "stills").exists(), "stills were produced without an art lock")
+        self.assertFalse(self.statuses(r, "still"))
+        self.assertIn("UNAVAILABLE", self.statuses(r, "stills", "group"))
+
+    def test_no_art_lock_renders_nothing_even_when_art_is_not_required(self):
+        code, r, out = self.run_review(plan=plan_file(self.root, required=["stills", "tests"]))
+        self.assertEqual(self.rendered(), [])
+        self.assertFalse((out / "stills").exists())
+        self.assertEqual(code, 2)
+
+    # -- defect 2 (Dottie): a synthetic PXO got readiness 'art verified'
+    def test_fixture_pxo_is_not_native_verified(self):
+        lock = self.lock_for(self.root / "art")
+        code, r, out = self.run_review("--art-lock", lock, "--art", self.root / "art")
+        rd = r["readiness"]
+        self.assertEqual(code, 0, r)
+        self.assertNotEqual(rd.get("art_verified"), "verified")
+        self.assertTrue(rd["art_package_integrity"].startswith("verified"), rd)
+        self.assertTrue(rd["art_native_editable"].startswith("UNVERIFIED"), rd)
+        self.assertEqual(rd["visual_review"], "pending (Dottie)")
+        self.assertFalse(rd["promotion_ready"])
+
+    def test_forged_consistent_receipt_is_only_a_claim(self):
+        """A manifest native_check receipt is the Workshop's claim; this tool never re-runs a reopen."""
+        art = self.root / "art"
+        pkg, sel = package(art, colour=(1, 2, 3, 255))
+        m = json.loads((pkg / "manifest.json").read_text())
+        atlas = next(f for f in m["files"] if f["name"].endswith("-atlas.png"))
+        m["native_check"] = {"match": True, "same_structure": True, "atlas_sha256": atlas["sha256"],
+                             "reference": "live editor", "reference_boot_id": "a", "verify_boot_id": "b"}
+        (pkg / "manifest.json").write_text(json.dumps(m))
+        sel["manifest_sha256"] = sha(pkg / "manifest.json")
+        lock = self.root / "lock.json"
+        lock.write_text(json.dumps({"schema": "workstation-review/art-lock-v1", "selection": [sel]}))
+        code, r, out = self.run_review("--art-lock", lock, "--art", art)
+        native = r["readiness"]["art_native_editable"]
+        self.assertTrue(native.startswith("CLAIMED"), native)
+        self.assertIn("not re-run", native)
+
+    def test_inconsistent_receipt_fails(self):
+        self.assertEqual(review.native_receipt({"native_check": {"match": False}}, {})[0], review.FAIL)
+        files = {"x-atlas.png": "a" * 64}
+        bad = {"native_check": {"match": True, "same_structure": True, "atlas_sha256": "b" * 64,
+                                "reference_boot_id": "a", "verify_boot_id": "b"}}
+        self.assertEqual(review.native_receipt(bad, files)[0], review.FAIL)
+        same_boot = {"native_check": {"match": True, "same_structure": True, "atlas_sha256": "a" * 64,
+                                      "reference_boot_id": "a", "verify_boot_id": "a"}}
+        self.assertEqual(review.native_receipt(same_boot, files)[0], review.FAIL)   # not a fresh process
+
+    # -- priority 3: the frozen copy (what renders use) is re-verified
+    def test_package_mutated_while_freezing_blocks_renders(self):
+        lock = self.lock_for(self.root / "art")
+        real = review.shutil.copytree
+
+        def copy_then_mutate(src, dst, *a, **k):
+            got = real(src, dst, *a, **k)
+            for p in Path(dst).glob("*-atlas.png"):
+                Image.new("RGBA", (4, 2), (9, 9, 9, 255)).save(p)    # changed after verification
+            return got
+        review.shutil.copytree = copy_then_mutate
+        try:
+            code, r, out = self.run_review("--art-lock", lock, "--art", self.root / "art")
+        finally:
+            review.shutil.copytree = real
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL", self.statuses(r, "art", "package:thing"))
+        self.assertEqual(self.rendered(), [])
+        self.assertNotEqual(r["readiness"]["art_package_integrity"][:8], "verified")
+
+    def test_frozen_package_mutated_during_renders_fails(self):
+        lock = self.lock_for(self.root / "art")
+        real = review.Sim.render
+
+        def render_then_mutate(sim_self, *a, **k):
+            for p in (self.root / "out/inputs/art").rglob("*-atlas.png"):
+                p.write_bytes(b"changed during the run")
+            return real(sim_self, *a, **k)
+        review.Sim.render = render_then_mutate
+        try:
+            code, r, out = self.run_review("--art-lock", lock, "--art", self.root / "art")
+        finally:
+            review.Sim.render = real
+        self.assertEqual(code, 1)
+        self.assertEqual(self.statuses(r, "art", "frozen-unchanged"), ["FAIL"])
+
+    # -- priority 2: structured results, no tracebacks; empty required groups never pass
+    def test_empty_required_group_fails(self):
+        code, r, out = self.run_review("--committed-art-diagnostic", plan=plan_file(self.root, tests=[]))
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL", self.statuses(r, "plan"))
+
+    def test_unknown_required_stage_fails(self):
+        code, r, out = self.run_review("--committed-art-diagnostic", plan=plan_file(self.root, required=["still"]))
+        self.assertEqual(code, 1)
+        self.assertEqual(self.rendered(), [])
+
+    def test_malformed_plan_entry_is_structured(self):
+        code, r, out = self.run_review("--committed-art-diagnostic",
+                                       plan=plan_file(self.root, tests=[{"name": "t", "advance_ms": 100}]))
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL", self.statuses(r, "plan"))
+        self.assertEqual(self.rendered(), [])
+
+    def test_unreadable_plan_is_structured(self):
+        bad = self.root / "broken.json"
+        bad.write_text("{not json")
+        code, r, out = self.run_review("--committed-art-diagnostic", plan=bad)
+        self.assertEqual(code, 1)
+        self.assertEqual(self.statuses(r, "plan"), ["FAIL"])
+
+    def test_not_a_git_checkout_is_structured(self):
+        code, r, out = self.run_review("--committed-art-diagnostic", repo=firmware(self.root, git=False))
+        self.assertIn(code, (1, 2))
+        self.assertIn("FAIL", self.statuses(r, "inputs", "firmware"))
+
+    def test_missing_simulator_is_structured(self):
+        import shutil as sh
+        sh.rmtree(self.sim)
+        code, r, out = self.run_review("--committed-art-diagnostic")
+        self.assertEqual(code, 2)
+        self.assertEqual(self.statuses(r, "inputs", "simulator"), ["UNAVAILABLE"])
+
+    def test_malformed_target_registration_is_structured(self):
+        repo = firmware(self.root, targets={"fake": {"adapter": "tools/uisim/targets/fake.c"}})   # no sources
+        code, r, out = self.run_review("--committed-art-diagnostic", repo=repo)
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL", self.statuses(r, "target", "fake"))
+        self.assertEqual(self.rendered(), [])
+
+
+class BuildMembershipPaths(unittest.TestCase):
+    def test_same_basename_elsewhere_does_not_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "proj"
+            build = proj / "build"
+            build.mkdir(parents=True)
+            (build / "compile_commands.json").write_text(json.dumps([
+                {"directory": str(build), "file": str(proj / "components/other/ui_home.c"), "command": "cc"},
+                {"directory": str(build), "file": "../main/ui_kit.c", "command": "cc"}]))
+            status, detail = review.build_membership(build, proj, ["main/ui_home.c", "main/ui_kit.c"])
+            self.assertEqual(status, review.WARN, detail)
+            self.assertIn("main/ui_home.c", detail)
+            self.assertNotIn("main/ui_kit.c'", detail)
 
 
 if __name__ == "__main__":
